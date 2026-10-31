@@ -209,11 +209,15 @@ class _AccountScreenState extends State<AccountScreen> {
   final _code = TextEditingController();
   bool _busy = false;
   bool _created = false; // the code finishes a brand-new account
+  static const _resendWait = 30; // seconds between two "Send a new code" taps
+  int _wait = 0; // seconds left before "Send a new code" can be tapped again
+  Timer? _tick;
   String _error = '';
   String _info = '';
 
   @override
   void dispose() {
+    _tick?.cancel();
     _email.dispose();
     _pass.dispose();
     _code.dispose();
@@ -232,11 +236,52 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  void _go(AccountMode m, {String info = ''}) => setState(() {
-        _mode = m;
-        _error = '';
-        _info = info;
-      });
+  void _go(AccountMode m, {String info = ''}) {
+    setState(() {
+      _mode = m;
+      _error = '';
+      _info = info;
+    });
+    if (m == AccountMode.verify) _startWait(); // a code was just sent: the next one can be asked for in 30 seconds
+  }
+
+  void _startWait([int secs = _resendWait]) {
+    _tick?.cancel();
+    setState(() => _wait = secs);
+    _tick = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _wait = _wait > 0 ? _wait - 1 : 0);
+      if (_wait == 0) t.cancel();
+    });
+  }
+
+  /// "Send a new code". The server decides how soon another one may be sent; when it says "wait N seconds", the button counts that down.
+  Future<void> _resend() async {
+    if (_busy || _wait > 0) return;
+    setState(() {
+      _busy = true;
+      _error = '';
+      _info = '';
+    });
+    final r = await Cloud.resendCode(_email.text);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (r.ok) {
+      _go(AccountMode.verify, info: 'A new code is on its way.');
+      return;
+    }
+    final left = r.body['retryAfter'];
+    if (r.error == 'rate_limited' && left is num && left > 0) {
+      final s = left.ceil().clamp(1, _resendWait);
+      _startWait(s);
+      setState(() => _error = 'Please wait $s seconds before asking for another code.');
+    } else {
+      setState(() => _error = Cloud.errorText(r.error));
+    }
+  }
 
   Future<void> _run(Future<CloudResult> Function() job, void Function(CloudResult r) onOk) async {
     if (_busy) return;
@@ -291,6 +336,8 @@ class _AccountScreenState extends State<AccountScreen> {
       AccountMode.forgot => 'Forgot password',
       AccountMode.reset => 'Choose a new password',
     };
+    // Once a code has been emailed to an address, that address is fixed: a code for one address must not be typed into a screen for another.
+    final emailLocked = _mode == AccountMode.verify || _mode == AccountMode.reset;
     final primary = switch (_mode) {
       AccountMode.signIn => 'Sign in',
       AccountMode.verify => 'Verify',
@@ -304,10 +351,10 @@ class _AccountScreenState extends State<AccountScreen> {
           constraints: BoxConstraints(maxWidth: 32 * rem),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (_info.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text(_info, style: TextStyle(color: t.textMuted))),
-            PekField(label: 'Email', controller: _email, keyboardType: TextInputType.emailAddress, autofocus: true, onSubmitted: _mode == AccountMode.forgot ? _submit : null),
+            PekField(label: 'Email', controller: _email, keyboardType: TextInputType.emailAddress, autofocus: !emailLocked, enabled: !emailLocked, onSubmitted: _mode == AccountMode.forgot ? _submit : null),
             if (_mode == AccountMode.signIn || _mode == AccountMode.reset)
               PekField(label: _mode == AccountMode.reset ? 'New password (8 or more characters)' : 'Password', controller: _pass, obscure: true, onSubmitted: _mode == AccountMode.signIn ? _submit : null),
-            if (_mode == AccountMode.verify || _mode == AccountMode.reset) PekField(label: '6-digit code', controller: _code, keyboardType: TextInputType.number, onSubmitted: _mode == AccountMode.verify ? _submit : null),
+            if (_mode == AccountMode.verify || _mode == AccountMode.reset) PekField(label: '6-digit code', controller: _code, keyboardType: TextInputType.number, autofocus: true, onSubmitted: _mode == AccountMode.verify ? _submit : null),
             if (_error.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text(_error, style: const TextStyle(color: Colors.redAccent))),
             Align(alignment: Alignment.centerLeft, child: PekButton(label: _busy ? 'Please wait\u2026' : primary, primary: true, onTap: _busy ? null : _submit)),
             SizedBox(height: 1.25 * rem),
@@ -320,10 +367,8 @@ class _AccountScreenState extends State<AccountScreen> {
               if (_mode == AccountMode.verify)
                 PekButton(
                   compact: true,
-                  label: 'Send a new code',
-                  onTap: _busy
-                      ? null
-                      : () => _run(() => Cloud.resendCode(_email.text), (r) => _go(AccountMode.verify, info: 'A new code is on its way.')),
+                  label: _wait > 0 ? 'Send a new code (${_wait}s)' : 'Send a new code',
+                  onTap: (_busy || _wait > 0) ? null : _resend,
                 ),
               if (_mode == AccountMode.forgot || _mode == AccountMode.reset) PekButton(compact: true, label: 'Back to sign in', onTap: () => _go(AccountMode.signIn)),
             ]),

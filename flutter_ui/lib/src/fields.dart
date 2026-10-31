@@ -7,7 +7,7 @@ import 'suggest.dart' show SuggestAnchor;
 
 /// A text box in the app's look (the web UI's `ui.textInput`).
 class PekField extends StatelessWidget {
-  const PekField({super.key, required this.label, required this.controller, this.hint, this.obscure = false, this.onSubmitted, this.autofocus = false, this.keyboardType, this.onChanged});
+  const PekField({super.key, required this.label, required this.controller, this.hint, this.obscure = false, this.onSubmitted, this.autofocus = false, this.keyboardType, this.onChanged, this.enabled = true});
   final String label;
   final TextEditingController controller;
   final String? hint;
@@ -16,6 +16,7 @@ class PekField extends StatelessWidget {
   final bool autofocus;
   final TextInputType? keyboardType;
   final ValueChanged<String>? onChanged;
+  final bool enabled; // false: shown greyed out and cannot be edited (the email once its code has been sent)
 
   @override
   Widget build(BuildContext context) {
@@ -32,6 +33,7 @@ class PekField extends StatelessWidget {
           controller: controller,
           obscureText: obscure,
           autofocus: autofocus,
+          enabled: enabled,
           autocorrect: false,
           enableSuggestions: false,
           keyboardType: keyboardType,
@@ -47,6 +49,7 @@ class PekField extends StatelessWidget {
             filled: true,
             fillColor: t.surface,
             enabledBorder: border(Colors.transparent),
+            disabledBorder: border(Colors.transparent),
             focusedBorder: border(t.text.withAlpha(70)),
             border: border(Colors.transparent),
           ),

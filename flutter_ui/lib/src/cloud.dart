@@ -190,6 +190,10 @@ class Cloud {
         return 'That code ran out. Here is a new one.';
       case 'already_linked':
         return 'That code was already used.';
+      case 'email_failed':
+        return 'The email could not be sent. Try again in a minute.';
+      case 'email_not_configured':
+        return 'Sign-in email is not set up on the server yet.';
       case 'server_busy':
         return 'The PEK cloud is busy. Try again in a minute.';
       case 'unknown_profile':
@@ -277,7 +281,7 @@ class Cloud {
     try {
       final r = await _request('POST', path, body: body);
       if (r.status == 200 && r.body['ok'] == true) return CloudResult(ok: true, status: 200, body: r.body);
-      return CloudResult(ok: false, status: r.status, error: _failure(r.status, r.body));
+      return CloudResult(ok: false, status: r.status, error: _failure(r.status, r.body), body: r.body);
     } catch (_) {
       return const CloudResult(ok: false, error: 'offline');
     }

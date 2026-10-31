@@ -85,6 +85,7 @@ const SESSION_REFRESH_BELOW = 60 * 24 * 3600 * 1000;
 const RESET_TTL = 15 * 60 * 1000;
 const RESET_MAX_TRIES = 5;
 const VERIFY_TTL = 30 * 60 * 1000;
+const RESEND_GAP = 30 * 1000;               // least time between two "send a new code" requests for one address
 const REJECT_TTL = 3 * 24 * 3600 * 1000;   // the "Wasn't you? Reject this login" link in an email works for 3 days
 const INVITE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';   // 31 characters, no 0 / O / 1 / I / L
 const INVITE_MAX_NEW = 20;          // codes made per request
@@ -560,13 +561,26 @@ async function handleResend(request, env) {
     const email = cleanEmail(body.email);
     if (!email) return json({ error: 'bad_email' }, 400);
     if (await limited(db, 'resend:ip:' + clientIp(request), 20, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
+    // One new code per address every 30 seconds (the same for every address, so it tells nobody whether an account exists).
+    if (await limited(db, 'resend:gap:' + email, 1, RESEND_GAP, now)) {
+        const gap = await db.prepare('SELECT reset_at FROM throttle WHERE k = ?').bind('resend:gap:' + email).first();
+        const retryAfter = Math.min(RESEND_GAP / 1000, Math.max(1, Math.ceil(((gap ? gap.reset_at : now) - now) / 1000)));
+        return json({ error: 'rate_limited', retryAfter }, 429);   // the app and the site count down this many seconds
+    }
     const user = await db.prepare('SELECT id, verified FROM users WHERE email = ?').bind(email).first();
-    if (user && !user.verified) await issueVerification(env, db, user.id, email, now);
+    // The per-hour code limits used to stop a resend silently while the app said "a new code is on its way": say so now.
+    if (user && !user.verified) {
+        if (!(await issueVerification(env, db, user.id, email, now))) return json({ error: 'rate_limited' }, 429);
+    }
     else if (user) {
         // A confirmed account: only while a sign-in is waiting for its code (the password was right in the last few hours),
         // so nobody can use this to fill someone else's inbox.
         const pending = await db.prepare('SELECT expires FROM verifs WHERE user_id = ?').bind(user.id).first();
-        if (pending && pending.expires + 2 * 3600 * 1000 > now) await issueLoginCode(env, db, user.id, email, now, deviceFrom(body.device, now, request));
+        if (pending && pending.expires + 2 * 3600 * 1000 > now) {
+            const sent = await issueLoginCode(env, db, user.id, email, now, deviceFrom(body.device, now, request));
+            if (sent === 'limited') return json({ error: 'rate_limited' }, 429);
+            if (sent === 'failed') return json({ error: 'email_failed' }, 502);
+        }
     }
     return json({ ok: true });
 }
