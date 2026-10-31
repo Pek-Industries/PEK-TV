@@ -30,7 +30,8 @@ import textwrap
 import zipfile
 import zlib
 
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.1.0"
+OFFICIAL_MODE = False   # set by --official: lets the stock ids use the reserved official host (owner builds only)
 
 # ----------------------------------------------------------------------------
 # Format constants (see PEK_FORMAT.md)
@@ -238,6 +239,7 @@ def check_manifest(files, P, W, official):
 def check_plugin(files, pid, official=False):
     """files: dict path -> bytes.  Returns (problems, warnings, manifest)."""
     P, W, manifest = [], [], None
+    official = official or OFFICIAL_MODE
     if not valid_id(pid):
         P.append("the plugin id %r is not valid: use 1-40 lowercase letters, digits, - or _, "
                  "starting with a letter or digit" % (pid,))
@@ -918,6 +920,8 @@ def main(argv=None):
               pektool.py verify weather.PEK && echo safe
             Anything that is not a correct PEK plugin is rejected in red (exit code 1)."""))
     ap.add_argument("--no-color", action="store_true", help="plain output (also: NO_COLOR=1)")
+    ap.add_argument("--official", action="store_true",
+                    help="OWNER ONLY: allow the stock plugin ids (weather, tmdb-discover, skin-maker) to use the reserved official host")
     ap.add_argument("-V", "--version", action="version", version="pektool %s (PEK format v%d)" % (TOOL_VERSION, FORMAT_VERSION))
     sub = ap.add_subparsers(dest="cmd", metavar="COMMAND")
 
@@ -971,6 +975,8 @@ def main(argv=None):
     sp.add_argument("file")
 
     a = ap.parse_args(argv)
+    global OFFICIAL_MODE
+    OFFICIAL_MODE = bool(a.official)
     _setup_terminal(a.no_color)
     if not a.cmd:
         ap.print_help()

@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 
 import 'activity.dart';
 
 import 'api.dart';
 import 'plugin_host.dart';
+import 'plugin_pek.dart';
 import 'store.dart';
 
 /// The PEK Store: the data half of the plugin store and installer screens.
@@ -18,14 +20,17 @@ import 'store.dart';
 ///   check / install  hand the files to PEK TV's own server (/api/plugins/install). The server's safety checks decide
 ///                    what is allowed; nothing here installs anything by itself, the person confirms on a screen first.
 class PekStoreApi {
-  /// The PEK Store worker. See cloud/STORE-DEPLOY.md.
+  /// Plugins: the PEK Plugins worker (cloud/pek-plugins-worker, see its SETUP.md). Plugins are real .PEK files kept in R2.
+  static const pluginBase = 'https://pek-plugins.aquariusibeats.workers.dev';
+
+  /// Skins still come from the older PEK Store worker (skins are not .PEK files). See cloud/STORE-DEPLOY.md.
   static const base = 'https://pek-store.aquariusibeats.workers.dev';
   static final http.Client _client = http.Client();
 
-  static Future<Map<String, dynamic>> _get(String path) async {
+  static Future<Map<String, dynamic>> _get(String path, {String from = base}) async {
     http.Response r;
     try {
-      r = await _client.get(Uri.parse('$base$path')).timeout(const Duration(seconds: 25));
+      r = await _client.get(Uri.parse('$from$path')).timeout(const Duration(seconds: 25));
     } catch (_) {
       throw const StoreException("Couldn't reach the PEK Store. Check your connection.");
     }
@@ -41,12 +46,14 @@ class PekStoreApi {
 
   /// shelf: 'official' or 'community'. [kind]: 'plugin' or 'skin' (the same worker keeps both).
   static Future<List<StoreItem>> list(String shelf, {String kind = 'plugin'}) async {
+    if (kind == 'plugin') return _items(await _get('/v1/plugins?shelf=${Uri.encodeQueryComponent(shelf)}&inline_icons=1', from: pluginBase));
     final j = await _get('/v1/store?shelf=${Uri.encodeQueryComponent(shelf)}&kind=${Uri.encodeQueryComponent(kind)}');
     return _items(j);
   }
 
   /// Both shelves in one request (what the full-page store shows). Every item says which shelf it is on.
   static Future<List<StoreItem>> listAll({String kind = 'plugin'}) async {
+    if (kind == 'plugin') return _items(await _get('/v1/plugins?inline_icons=1', from: pluginBase));
     final j = await _get('/v1/store?kind=${Uri.encodeQueryComponent(kind)}');
     return _items(j);
   }
@@ -58,6 +65,25 @@ class PekStoreApi {
   /// Downloads an item's chunks, checks the fingerprint and unpacks the files (plugins and skins are packed the same way).
   /// [onProgress] gets (chunk, of chunks). Nothing is installed.
   static Future<List<PluginFile>> fetchFiles(StoreItem item, {void Function(int, int)? onProgress}) async {
+    // A plugin is one .PEK file. No account is needed in the app. The file is checked twice: against the hash the store
+    // listed, and by the full .PEK reader (signature, checksums, size caps), exactly like a file picked from the phone.
+    if (item.sha256.isNotEmpty) {
+      onProgress?.call(0, 1);
+      http.Response r;
+      try {
+        r = await _client.get(Uri.parse('$pluginBase/v1/app/plugins/${Uri.encodeComponent(item.id)}/download')).timeout(const Duration(seconds: 60));
+      } catch (_) {
+        throw const StoreException("Couldn't reach the PEK Store. Check your connection.");
+      }
+      if (r.statusCode == 404) throw const StoreException('That plugin is no longer in the store.');
+      if (r.statusCode != 200) throw const StoreException('The PEK Store gave an unexpected answer.');
+      final bytes = r.bodyBytes;
+      if (crypto.sha256.convert(bytes).toString() != item.sha256) throw const StoreException('The download was damaged or changed. Try again.');
+      final pek = PluginPek.read(bytes);
+      if (pek.id != item.id) throw StoreException('${PluginPek.rejected}the file inside is for "${pek.id}", not "${item.id}".');
+      onProgress?.call(1, 1);
+      return pek.files;
+    }
     final parts = StringBuffer();
     for (var i = 0; i < item.chunks; i++) {
       onProgress?.call(i, item.chunks);
@@ -112,11 +138,14 @@ class StoreException implements Exception {
 }
 
 class StoreItem {
-  const StoreItem({required this.id, required this.name, required this.version, required this.author, required this.description, required this.size, required this.fp, required this.chunks, this.icon = '', this.shelf = '', this.updated = 0});
+  const StoreItem({required this.id, required this.name, required this.version, required this.author, required this.description, required this.size, required this.fp, required this.chunks, this.sha256 = '', this.icon = '', this.shelf = '', this.updated = 0});
   final String id, name, version, author, description, fp;
 
   /// 'official' or 'community' (which shelf of the store the item is on).
   final String shelf;
+
+  /// SHA-256 (hex) of the .PEK file, set for plugins (they are .PEK files). Empty for skins, which still use chunks.
+  final String sha256;
 
   /// When the item was uploaded or last updated (ms since epoch, set by the store), 0 = unknown.
   final int updated;
@@ -134,6 +163,7 @@ class StoreItem {
         size: (j['size'] as num?)?.toInt() ?? 0,
         fp: '${j['fp'] ?? ''}',
         chunks: (j['chunks'] as num?)?.toInt() ?? 0,
+        sha256: RegExp(r'^[a-f0-9]{64}$').hasMatch('${j['sha256'] ?? ''}') ? '${j['sha256']}' : '',
         icon: '${j['icon'] ?? ''}'.startsWith('data:image/') ? '${j['icon']}' : '',
         shelf: j['shelf'] == 'official' ? 'official' : 'community',
         updated: (j['updated'] as num?)?.toInt() ?? 0,
