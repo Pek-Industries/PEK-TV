@@ -109,6 +109,11 @@ tasks.register('copyHesperGuard', Copy) {
     into 'src/main/python'
 }
 preBuild.dependsOn copyHesperGuard
+// Gradle 8.14 validates that any task reading src/main/python declares the task that writes it.
+// Chaquopy's merge<Variant>PythonSources reads that folder, so it must run after the copy.
+tasks.matching { it.name ==~ /merge.*PythonSources/ }.configureEach {
+    dependsOn 'copyHesperGuard'
+}
 
 // Branding artwork (launcher icon, TV banner, splash videos) lives in the repo's top-level assets/ folder.
 android.sourceSets.main.res.srcDir new File(rootDir, '../assets/android/res')
