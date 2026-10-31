@@ -559,7 +559,7 @@ class _DashboardPageState extends State<DashboardPage> {
         if (items.isEmpty) return null;
         return _row(context, 'Continue Watching', widget.onOpenResume, scale: 1.3, [
           for (final r in items)
-            PosterCard(onLongPress: hold, holdSelect: true, 
+            PosterCard(onLongPress: () => showResumePreview(context, r), holdSelect: true, // hold: picture, description, Continue / Start over
               title: r.title,
               subtitle: r.duration > 0 ? '${(100 * r.position / r.duration).round()}% watched' : formatTime(r.position),
               // A library title uses its library artwork; a stream started from a plugin carries its own picture.

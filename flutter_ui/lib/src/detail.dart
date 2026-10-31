@@ -36,26 +36,135 @@ Future<void> playMedia(BuildContext context, Progress item, {double startSec = 0
   );
 }
 
-/// Pressing something you stopped partway: ask whether to carry on from where you were or start from the beginning.
-/// (Under 15 seconds in there is nothing worth resuming, so it just plays.)
-Future<void> playResumeOrStart(BuildContext context, Progress item) async {
-  if (item.position < 15) {
-    await playMedia(context, item);
-    return;
-  }
-  final from = await showDialog<double>(
-    context: context,
-    builder: (c) => AlertDialog(
-      title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        PekButton(label: 'Resume from ${_fmt(item.position)}', primary: true, autofocus: true, onTap: () => Navigator.pop(c, item.position)),
-        const SizedBox(height: 8),
-        PekButton(label: 'Start over', onTap: () => Navigator.pop(c, 0.0)),
-      ]),
-    ),
+/// Pressing something you stopped partway (Continue Watching, Watch History) opens the same page as holding it
+/// ([showResumePreview]): picture, description, Continue / Start over.
+Future<void> playResumeOrStart(BuildContext context, Progress item) => showResumePreview(context, item);
+
+/// Press and hold (touch, or the held centre button on a remote) on something you stopped partway: a page with its picture
+/// (the still for an episode), its description, and Continue / Start over.
+Future<void> showResumePreview(BuildContext context, Progress item) async {
+  final from = await Navigator.push<double>(
+    context,
+    MaterialPageRoute<double>(builder: (_) => ResumePreviewScreen(item: item)),
   );
   if (from == null || !context.mounted) return;
   await playMedia(context, item, startSec: from);
+}
+
+class _Preview {
+  const _Preview({this.heading = '', this.overview = '', this.image = '', this.wide = false});
+  final String heading; // an episode's own title
+  final String overview;
+  final String image;
+  final bool wide; // a 16:9 still (episode) rather than a poster
+}
+
+class ResumePreviewScreen extends StatelessWidget {
+  const ResumePreviewScreen({super.key, required this.item});
+  final Progress item;
+
+  Future<_Preview> _load() async {
+    try {
+      if (item.isTorrent) return _Preview(image: item.image);
+      if (item.kind == 'episode' && item.showTitle.isNotEmpty && item.season > 0 && item.episode > 0) {
+        final e = await Api.episodeDetails(item.showTitle, item.season, item.episode);
+        return _Preview(heading: e.name, overview: e.overview, image: e.still.isNotEmpty ? e.still : item.image, wide: e.still.isNotEmpty);
+      }
+      if (item.kind == 'movie') {
+        final d = await Api.movieDetails(item.id);
+        return _Preview(overview: d.overview, image: d.poster.isNotEmpty ? d.poster : item.image);
+      }
+      if (item.showTitle.isNotEmpty) {
+        final d = await Api.showDetails(item.showTitle);
+        return _Preview(overview: d.overview, image: d.poster.isNotEmpty ? d.poster : item.image);
+      }
+    } catch (_) {}
+    return _Preview(image: item.image);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final t = p.tokens;
+    final rem = p.rem;
+    final canResume = item.position >= 15;
+    final frac = item.duration > 0 ? (item.position / item.duration).clamp(0.0, 1.0) : 0.0;
+    final load = _load();
+    Widget noPicture() => Center(child: Icon(Icons.movie_outlined, color: t.textMuted, size: 2.5 * rem));
+    Widget picture(_Preview? d) {
+      final url = d?.image ?? '';
+      final wide = d?.wide ?? (item.kind == 'episode');
+      final art = ColoredBox(
+        color: t.surface,
+        child: url.startsWith('http')
+            ? ArtImage(url, fit: BoxFit.cover, cacheWidth: 800, errorBuilder: (_, __, ___) => noPicture())
+            : noPicture(),
+      );
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(t.radius),
+        child: Stack(children: [
+          AspectRatio(aspectRatio: wide ? 16 / 9 : 2 / 3, child: art),
+          if (frac > 0)
+            Positioned(left: 0, right: 0, bottom: 0, child: LinearProgressIndicator(value: frac, minHeight: 5, color: t.accent, backgroundColor: Colors.black54)),
+        ]),
+      );
+    }
+
+    final body = FutureBuilder<_Preview>(
+      future: load,
+      builder: (_, snap) {
+        final d = snap.data;
+        final done = snap.connectionState == ConnectionState.done;
+        final overview = d?.overview ?? '';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(item.title, style: TextStyle(fontSize: 1.5 * rem, fontWeight: FontWeight.w800, height: 1.15)),
+            if ((d?.heading ?? '').isNotEmpty) ...[
+              SizedBox(height: 0.25 * rem),
+              Text(d!.heading, style: TextStyle(color: t.accent, fontWeight: FontWeight.w700)),
+            ],
+            SizedBox(height: 0.4 * rem),
+            Text(
+              item.duration > 0 ? '${_fmt(item.position)} of ${_fmt(item.duration)} watched' : 'Stopped at ${_fmt(item.position)}',
+              style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem),
+            ),
+            SizedBox(height: 0.75 * rem),
+            // The whole description: no line limit here.
+            Text(overview.isNotEmpty ? overview : (done ? 'No description available.' : 'Loading...'), style: TextStyle(color: t.textMuted, height: 1.4)),
+            SizedBox(height: 1.25 * rem),
+            Wrap(spacing: 0.75 * rem, runSpacing: 0.75 * rem, children: [
+              PekButton(label: canResume ? 'Continue from ${_fmt(item.position)}' : 'Play', primary: true, autofocus: true, onTap: () => Navigator.pop(context, canResume ? item.position : 0.0)),
+              if (canResume) PekButton(label: 'Start over', onTap: () => Navigator.pop(context, 0.0)),
+            ]),
+          ],
+        );
+      },
+    );
+    final pic = FutureBuilder<_Preview>(future: load, builder: (_, snap) => picture(snap.data));
+    final portrait = item.kind != 'episode' || item.isTorrent;
+    return Scaffold(
+      backgroundColor: t.bg,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, foregroundColor: t.text, title: Text(item.showTitle.isNotEmpty ? item.showTitle : item.title), actions: weatherActions(context)),
+      body: p.narrow
+          ? SingleChildScrollView(
+              padding: EdgeInsets.all(rem),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (portrait) Center(child: SizedBox(width: p.size.width * 0.5, child: pic)) else pic,
+                SizedBox(height: rem),
+                body,
+              ]),
+            )
+          : Padding(
+              padding: EdgeInsets.fromLTRB(2 * rem + p.safeX, rem, 2 * rem + p.safeX, rem),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(width: (portrait ? 14 : 26) * rem, child: pic),
+                SizedBox(width: 2 * rem),
+                Expanded(child: SingleChildScrollView(child: body)),
+              ]),
+            ),
+    );
+  }
 }
 
 /// The episode after [currentId] in [show]: the rest of the season, then the next season. Specials never come "next".

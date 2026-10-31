@@ -553,6 +553,7 @@ class HistoryPage extends StatelessWidget {
                 title: it.title,
                 subtitle: it.duration > 0 ? '${formatTime(it.position)} of ${formatTime(it.duration)}' : 'Stopped at ${formatTime(it.position)}',
                 onTap: () => playResumeOrStart(context, it),
+                onLongPress: () => showResumePreview(context, it), // hold: picture, description, Continue / Start over
                 trailing: IconButton(
                   tooltip: 'Remove',
                   icon: Icon(Icons.close, color: p.tokens.textMuted),

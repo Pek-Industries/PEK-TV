@@ -28,7 +28,7 @@ class ArtCache {
   // busy and slow down the pictures that come after it. The old shared client left those requests running.
   static final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 8)
-    ..maxConnectionsPerHost = 8
+    ..maxConnectionsPerHost = 12
     ..idleTimeout = const Duration(seconds: 10);
 
   /// Addresses whose file is known to exist, so a grid that scrolls back does not wait on a disk check again.
@@ -36,7 +36,7 @@ class ArtCache {
   static final Map<String, Future<File?>> _inflight = {};
   static int _running = 0;
   static final List<Completer<void>> _waiting = []; // newest last: the newest request (what is on screen now) goes first
-  static const _parallel = 8;
+  static const _parallel = 12;
 
   /// Pictures that no widget wants any more (it was scrolled away / closed) are not downloaded while they wait in the queue.
   static final Set<String> _dropped = HashSet();
@@ -47,12 +47,22 @@ class ArtCache {
   /// into view they come straight from disk. Only [_prefetchLanes] downloads run at once for this, which leaves the other
   /// slots free for pictures that are on screen right now, and a picture that is already known or already downloading is
   /// skipped. Safe to call again and again with the same list (the screen is redrawn often).
-  static const _prefetchLanes = 3;
+  static const _prefetchLanes = 5;
   static final List<String> _prefetchQueue = [];
   static final Set<String> _prefetchQueued = HashSet();
   static int _prefetchRunning = 0;
 
   static void prefetch(Iterable<String> urls) {
+    // The list is "what the screen shows now": pictures still waiting from a screen the person already left (the browse rows
+    // while a title's cast is opening) are dropped, so they never hold up the pictures that are wanted now.
+    final now = urls is Set<String> ? urls : urls.toSet();
+    if (_prefetchQueue.isNotEmpty) {
+      _prefetchQueue.removeWhere((u) {
+        final stale = !now.contains(u);
+        if (stale) _prefetchQueued.remove(u);
+        return stale;
+      });
+    }
     for (final u in urls) {
       if (!_cacheable(u) || _known.containsKey(u) || _inflight.containsKey(u) || _gone.contains(u) || !_prefetchQueued.add(u)) continue;
       _prefetchQueue.add(u);

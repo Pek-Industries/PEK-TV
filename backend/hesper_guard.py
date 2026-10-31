@@ -38,6 +38,7 @@ import sysconfig
 import threading
 import time
 import types
+import zlib
 import urllib.parse
 import importlib.util
 
@@ -284,8 +285,34 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
+_ssl_ctx = None
+_ssl_lock = threading.Lock()
+
+
+def _shared_ssl_context():
+    """ssl.create_default_context() loads the whole CA bundle: on a phone that alone took a good part of a second per
+    request. One verified context is built once and reused (it is safe to share between threads)."""
+    global _ssl_ctx
+    with _ssl_lock:
+        if _ssl_ctx is None:
+            _ssl_ctx = ssl.create_default_context()
+        return _ssl_ctx
+
+
+_DNS_TTL = 300.0
+_dns_cache = {}          # (host, port) -> (checked at, public ip)
+_dns_lock = threading.Lock()
+
+
 def _resolve_public(host, port):
-    """Resolves host and returns one public IP, or raises PermissionError."""
+    """Resolves host and returns one public IP, or raises PermissionError. A good answer is reused for a few minutes
+    (a browse screen sends several requests to the same host at once)."""
+    key = (host, port)
+    now = time.monotonic()
+    with _dns_lock:
+        hit = _dns_cache.get(key)
+        if hit and now - hit[0] < _DNS_TTL:
+            return hit[1]
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as e:
@@ -294,7 +321,12 @@ def _resolve_public(host, port):
         ip = ipaddress.ip_address(addr[0])
         if not ip.is_global:
             raise PermissionError("%s resolves to a non-public address; blocked" % host)
-    return infos[0][4][0]
+    ip = infos[0][4][0]
+    with _dns_lock:
+        if len(_dns_cache) > 64:
+            _dns_cache.clear()
+        _dns_cache[key] = (now, ip)
+    return ip
 
 
 def build_host_module(plugin_id, folder, manifest):
@@ -331,10 +363,10 @@ def build_host_module(plugin_id, folder, manifest):
                 port = u.port or 443
                 ip = _resolve_public(u.hostname, port)
                 conn = _PinnedHTTPS(u.hostname, ip, port=port, timeout=min(float(timeout), 10.0),
-                                    context=ssl.create_default_context())
+                                    context=_shared_ssl_context())
                 try:
                     path = (u.path or "/") + ("?" + u.query if u.query else "")
-                    hdrs = {"User-Agent": "PEK-Plugin/" + plugin_id, "Accept-Encoding": "identity"}
+                    hdrs = {"User-Agent": "PEK-Plugin/" + plugin_id, "Accept-Encoding": "gzip"}
                     for k, v in (headers or {}).items():
                         if str(k).lower() not in ("host", "cookie", "authorization", "proxy-authorization"):
                             hdrs[str(k)] = str(v)
@@ -348,7 +380,12 @@ def build_host_module(plugin_id, folder, manifest):
                         continue
                     if resp.status != 200:
                         raise ConnectionError("HTTP %d" % resp.status)
-                    body = resp.read(max_bytes + 1)
+                    gz = str(resp.getheader("Content-Encoding") or "").lower() in ("gzip", "x-gzip")
+                    body = resp.read((max_bytes if not gz else 4 * max_bytes) + 1)
+                    if gz:
+                        # Unpack with a ceiling, so a tiny "zip bomb" cannot become a huge string.
+                        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                        body = d.decompress(body, max_bytes + 1)
                     if len(body) > max_bytes:
                         raise ValueError("response larger than %d bytes" % max_bytes)
                     return body
@@ -490,7 +527,7 @@ def build_host_module(plugin_id, folder, manifest):
             port = u.port or 443
             ip = _resolve_public(u.hostname, port)
             conn = _PinnedHTTPS(u.hostname, ip, port=port, timeout=min(float(timeout), 10.0),
-                                context=ssl.create_default_context())
+                                context=_shared_ssl_context())
             try:
                 path = (u.path or "/") + ("?" + u.query if u.query else "")
                 hdrs = {"User-Agent": "PEK-Plugin/" + plugin_id, "Accept-Encoding": "identity", "Accept": "application/json"}

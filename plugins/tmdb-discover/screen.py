@@ -483,8 +483,9 @@ def ensure_loaded():
             load_page(cur["src"], cur["page"])
         elif e.get("total"):
             cur["total"] = e["total"]
-        if cur["src"].get("paged", True) and cur["page"] < (cur["total"] or 0):
-            load_page(cur["src"], cur["page"] + 1)       # so Next is instant
+        if (e and not e.get("loading") and not e.get("error") and cur["src"].get("paged", True)
+                and cur["page"] < (cur["total"] or 0)):
+            load_page(cur["src"], cur["page"] + 1)       # so Next is instant (after this page, never competing with it)
         return
     load_providers(S["tab"])
     for sec in sections_for(S["tab"]):
@@ -616,17 +617,26 @@ def video_langs():
 
 def open_detail(item):
     push_view()
-    d = {"item": item, "loading": True, "info": None, "error": ""}
+    d = {"item": item, "loading": True, "info": None, "error": "", "extras": False}
     S["detail"] = d
     ui.scroll_top()
 
-    def work():
-        return api("/%s/%s" % (item["type"], item["id"]), {
-            "append_to_response": "watch/providers,videos,credits,recommendations,similar",
-            "include_video_language": video_langs()})
+    # Two quick requests at the same time instead of one heavy one: the basics (title, text, runtime: a few KB) put the
+    # page on screen with its buttons at once, and the extras (trailer, cast, where to watch, more like this) fill in
+    # when they arrive. Either can come first.
+    def merge(j):
+        if d["info"] is None:
+            d["info"] = dict(j)
+        else:
+            for k, v in j.items():
+                if k not in d["info"] or d["info"][k] in (None, "", [], {}):
+                    d["info"][k] = v
 
-    def done(j):
-        d["info"] = j
+    def basics_work():
+        return api("/%s/%s" % (item["type"], item["id"]))
+
+    def basics_done(j):
+        merge(j)
         d["loading"] = False
         # A title opened from Favorites only knew its id: fill in the rest from TMDb's answer.
         name = j.get("name") if item["type"] == "tv" else j.get("title")
@@ -645,13 +655,30 @@ def open_detail(item):
         if not item["overview"]:
             item["overview"] = str(j.get("overview") or "")
 
-    def fail(msg):
+    def basics_fail(msg):
         if is_auth(msg):
             S["auth_error"] = True
-        d["error"] = err_text(msg)
+        if d["info"] is None:           # the extras may have answered already: keep the page then
+            d["error"] = err_text(msg)
         d["loading"] = False
 
-    ui.background(work, done, fail)
+    def extras_work():
+        return api("/%s/%s" % (item["type"], item["id"]), {
+            "append_to_response": "watch/providers,videos,credits,recommendations,similar",
+            "include_video_language": video_langs()})
+
+    def extras_done(j):
+        merge(j)
+        d["extras"] = True
+        if d["loading"] or d["error"]:  # the basics failed or are still on their way: this answer has them too
+            d["error"] = ""
+            basics_done(j)
+
+    def extras_fail(msg):
+        d["extras"] = True              # no extras: the page stays as it is
+
+    ui.background(basics_work, basics_done, basics_fail)
+    ui.background(extras_work, extras_done, extras_fail)
 
 
 def on_launch(intent):
@@ -958,8 +985,6 @@ def detail_view():
         is_fav = fav_key(item) in S["favs"]
         top = [back_btn, ui.button("In your favorites" if is_fav else "Add to favorites",
                                    lambda: toggle_fav(item), selected=is_fav)]
-        if trailer:
-            top.append(ui.button("Open in YouTube", lambda: ui.open_trailer(trailer["key"])))
         kids.append(ui.row(top))
         if item["type"] == "movie":
             seen = watched_state(item)
@@ -980,7 +1005,9 @@ def detail_view():
         kids.append(ui.text("Genres: " + ", ".join([g["name"] for g in info["genres"] if g.get("name")])))
     if d["error"]:
         kids.append(ui.text(d["error"]))
-    if not d["loading"] and not d["error"]:
+    if not d["loading"] and not d["error"] and not d.get("extras"):
+        kids.append(ui.spinner("Loading cast, trailer and where to watch\u2026"))
+    if not d["loading"] and not d["error"] and d.get("extras"):
         if not is_out(item, info):
             date = (info.get("first_air_date") if item["type"] == "tv" else info.get("release_date")) or ""
             kids.append(ui.text("Not out yet" + (" \u2014 " + date if date > today() else "") + "."))
@@ -1068,7 +1095,7 @@ def settings_view():
     kids.append(ui.heading("Trailers"))
     kids.append(ui.toggle("Auto-play trailers when a title opens", S["autoplay"], set_autoplay))
     kids.append(ui.toggle("Trailer sound", S["sound"], set_sound))
-    kids.append(ui.text("Trailers play from YouTube. If your device blocks sound from starting by itself, turn Trailer sound off."))
+    kids.append(ui.text("Trailers play as a plain video from PEK TV's own server (YouTube's player is only a fallback). On a TV, press Up at the top of a title to fill the screen with the trailer and Down to come back. If your device blocks sound from starting by itself, turn Trailer sound off."))
     kids.append(attribution())
     return ui.column(kids)
 

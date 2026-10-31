@@ -136,6 +136,16 @@ class Api {
         return Details(overview: (j['overview'] ?? '') as String, poster: abs((j['poster'] ?? '') as String));
       });
 
+  /// The plain video stream of a YouTube trailer (the server looks it up and proxies it: backend/trailer.h). null = not
+  /// available for this one, and the caller falls back to the YouTube frame. Quiet: no loading ring.
+  static Future<Map<String, dynamic>?> trailerStream(String id) async {
+    try {
+      final j = await _getRaw('/api/trailer?id=${Uri.encodeQueryComponent(id)}', const Duration(seconds: 15));
+      if (j is Map && j['ok'] == true && '${j['video'] ?? ''}'.isNotEmpty) return Map<String, dynamic>.from(j);
+    } catch (_) {}
+    return null;
+  }
+
   static final Map<String, Future<EpisodeInfo>> _episodeInfo = {};
 
   /// Title, synopsis and still picture of one episode: the library's own .nfo / thumbnail first, else TMDb (the server

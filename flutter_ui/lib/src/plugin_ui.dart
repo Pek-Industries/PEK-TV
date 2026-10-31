@@ -72,6 +72,7 @@ class _InputState {
 class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
   final ScrollController _scroll = ScrollController();
   _TrailerHolder? _trailer; // the trailer's web view (see _TrailerHolder)
+  bool _trailerFull = false; // TV: the trailer fills the screen and the page under it is not kept in memory
   bool _trailerSeen = true; // enough of the trailer is on screen
   bool _covered = false; // another page (the player, a dialog) is on top of this one
   bool _foreground = true; // the app itself is in front
@@ -335,8 +336,45 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
     }
   }
 
+  /// TV: Up on the very top of the page (nothing above to move to) makes the trailer fill the screen, and the page under it
+  /// (posters, cast pictures) is dropped from memory. Down brings the page back exactly as it was.
+  KeyEventResult _onPageKey(FocusNode node, KeyEvent e) {
+    if (e is! KeyDownEvent || e.logicalKey != LogicalKeyboardKey.arrowUp) return KeyEventResult.ignored;
+    if (_trailerFull || _tree == null || _error != null || !context.pek.isTv) return KeyEventResult.ignored;
+    if (_findVideo(_tree!) == null || _trailer?.controller == null) return KeyEventResult.ignored;
+    final before = FocusManager.instance.primaryFocus;
+    if (before == null) return KeyEventResult.ignored;
+    if (before.focusInDirection(TraversalDirection.up)) {
+      final after = FocusManager.instance.primaryFocus;
+      if (after != null && after.ancestors.contains(node)) return KeyEventResult.handled; // something above on this page
+      before.requestFocus(); // it left the page (a bar above): stay, and take the trailer full screen instead
+    }
+    _enterTrailerFull();
+    return KeyEventResult.handled;
+  }
+
+  void _enterTrailerFull() {
+    setState(() => _trailerFull = true);
+    _trailerSeen = true;
+    _syncTrailer();
+    _syncBack();
+    // Let go of the decoded pictures too (they come back from the saved copies on disk when the page returns).
+    final cache = PaintingBinding.instance.imageCache;
+    cache.clear();
+    cache.clearLiveImages();
+  }
+
+  void _exitTrailerFull() {
+    if (!_trailerFull) return;
+    setState(() => _trailerFull = false);
+    _syncBack();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) FocusScope.of(context).nextFocus(); // the top of the page, where the person was
+    });
+  }
+
   void _syncBack() {
-    if (widget.embedded && _back) {
+    if (widget.embedded && (_back || _trailerFull)) {
       PluginBack.current = _backFn;
     } else if (PluginBack.current == _backFn) {
       PluginBack.current = null;
@@ -344,6 +382,10 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
   }
 
   bool _onBack() {
+    if (_trailerFull) {
+      _exitTrailerFull();
+      return true;
+    }
     _send('back');
     return true;
   }
@@ -613,7 +655,37 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
     } else if (_tree == null) {
       body = Center(child: CircularProgressIndicator(color: t.accent));
     } else {
-      body = LayoutBuilder(builder: (context, box) {
+      if (_trailerFull && video == null) _trailerFull = false; // the page lost its trailer
+      body = (_trailerFull && video != null)
+          ? Focus(
+              autofocus: true,
+              onKeyEvent: (n, e) {
+                if (e is! KeyDownEvent) return KeyEventResult.ignored;
+                if (e.logicalKey == LogicalKeyboardKey.arrowDown || e.logicalKey == LogicalKeyboardKey.escape || e.logicalKey == LogicalKeyboardKey.goBack) {
+                  _exitTrailerFull();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.handled; // the other keys do nothing while the trailer is full screen
+              },
+              child: Stack(fit: StackFit.expand, children: [
+                _PluginTrailer(key: ValueKey('trailer-${video['id']}'), id: '${video['id']}', autoplay: video['autoplay'] == true, muted: video['muted'] == true, holder: _holderFor('${video['id']}')),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 1.2 * p.rem,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 1.0 * p.rem, vertical: 0.4 * p.rem),
+                        decoration: BoxDecoration(color: const Color(0x99000000), borderRadius: BorderRadius.circular(999)),
+                        child: Text('Press Down to go back', style: TextStyle(color: Colors.white70, fontSize: 0.8 * p.rem)),
+                      ),
+                    ),
+                  ),
+                ),
+              ]),
+            )
+          : LayoutBuilder(builder: (context, box) {
         final heroH = video == null
             ? 0.0
             : (p.isTv ? box.maxHeight * 0.5 : math.min(box.maxWidth * 9 / 16, box.maxHeight * 0.5));
@@ -642,16 +714,21 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
     final bar = (_busy || _pending > 0)
         ? LinearProgressIndicator(minHeight: 3, color: t.accent, backgroundColor: Colors.transparent)
         : const SizedBox(height: 3);
-    final content = Column(children: [
+    final content = Focus(canRequestFocus: false, skipTraversal: true, onKeyEvent: _onPageKey, child: Column(children: [
       bar,
       if (widget.embedded) Padding(padding: EdgeInsets.fromLTRB(widget.padding.left, 0.5 * p.rem, widget.padding.right, 0), child: const Align(alignment: Alignment.centerRight, child: WeatherBadge())),
       Expanded(child: body),
-    ]);
+    ]));
     if (widget.embedded) return content;
     return PopScope(
-      canPop: !_back,
+      canPop: !_back && !_trailerFull,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _send('back');
+        if (didPop) return;
+        if (_trailerFull) {
+          _exitTrailerFull();
+        } else {
+          _send('back');
+        }
       },
       child: content,
     );
@@ -926,6 +1003,7 @@ class _TrailerHolder {
   _TrailerHolder(this.id);
   final String id;
   WebViewController? controller;
+  bool fellBack = false; // the plain stream failed: the YouTube frame is showing instead
   bool _active = true;
 
   void _command(String fn) {
@@ -967,18 +1045,71 @@ class _PluginTrailerState extends State<_PluginTrailer> {
   }
 
   void _start({required bool play}) {
-    final c = WebViewController()
+    final holder = widget.holder;
+    final id = widget.id;
+    final muted = widget.muted;
+    late final WebViewController c;
+    c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
+      ..addJavaScriptChannel('PekTrailer', onMessageReceived: (m) {
+        // The plain stream would not play: use the YouTube frame instead (once).
+        if (m.message == 'error' && holder.controller == c && !holder.fellBack) {
+          holder.fellBack = true;
+          _loadYoutube(c, id, play, muted);
+        }
+      })
       ..setNavigationDelegate(NavigationDelegate(onNavigationRequest: (req) {
         final u = Uri.tryParse(req.url);
-        final ok = u != null && u.scheme == 'https' && u.host == 'www.youtube-nocookie.com';
-        return ok ? NavigationDecision.navigate : NavigationDecision.prevent;
+        final yt = u != null && u.scheme == 'https' && u.host == 'www.youtube-nocookie.com';
+        final local = u != null && u.scheme == 'http' && u.host == '127.0.0.1' && u.port == 8080;
+        return (yt || local || req.url == 'about:blank') ? NavigationDecision.navigate : NavigationDecision.prevent;
       }));
     final platform = c.platform;
     if (platform is AndroidWebViewController) {
       unawaited(platform.setMediaPlaybackRequiresUserGesture(false)); // let the trailer start by itself
     }
+    _controller = c;
+    unawaited(_loadStream(c, holder, id, play, muted));
+  }
+
+  /// The trailer as a plain video from this app's own server: no YouTube page, no YouTube scripts, a lot lighter to load.
+  /// The server may send the picture and the sound as two streams; the page keeps them together.
+  Future<void> _loadStream(WebViewController c, _TrailerHolder holder, String id, bool play, bool muted) async {
+    final info = await Api.trailerStream(id);
+    if (holder.controller != c) return; // the page was closed while the server was looking it up
+    if (info == null) {
+      holder.fellBack = true;
+      _loadYoutube(c, id, play, muted);
+      return;
+    }
+    final video = Api.abs('${info['video']}');
+    final audioPath = '${info['audio'] ?? ''}';
+    final audio = audioPath.isEmpty ? '' : Api.abs(audioPath);
+    const css = 'html,body{margin:0;height:100%;background:#000;overflow:hidden}'
+        'video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .4s}'
+        'video.on{opacity:1}';
+    final js = "var v=document.getElementById('v'),a=document.getElementById('a'),want=${play ? 'true' : 'false'},muted=${muted ? 'true' : 'false'},ok=false;"
+        "function bad(){if(!ok){ok=true;try{PekTrailer.postMessage('error')}catch(e){}}}"
+        "v.muted=a?true:muted;if(a)a.muted=muted;"
+        "function go(){if(!want)return;var p=v.play();if(p&&p.catch)p.catch(function(){});if(a){var q=a.play();if(q&&q.catch)q.catch(function(){})}}"
+        "function stop(){v.pause();if(a)a.pause()}"
+        "function post(o){if(!o||o.event!=='command')return;if(o.func==='playVideo'){want=true;go()}else if(o.func==='pauseVideo'){want=false;stop()}}"
+        "v.addEventListener('playing',function(){ok=true;v.className='on'});"
+        "v.addEventListener('error',bad);if(a)a.addEventListener('error',bad);"
+        "if(a){setInterval(function(){if(v.paused||v.readyState<3)return;if(Math.abs(a.currentTime-v.currentTime)>0.35)a.currentTime=v.currentTime;if(a.paused&&want)go()},400);"
+        "v.addEventListener('waiting',function(){a.pause()});v.addEventListener('playing',function(){if(want)a.play().catch(function(){})})}"
+        "setTimeout(function(){if(!ok)bad()},12000);go();";
+    final html = '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<style>$css</style></head><body>'
+        '<video id="v" src="$video" loop playsinline preload="auto"></video>'
+        '${audio.isEmpty ? '' : '<audio id="a" src="$audio" loop preload="auto"></audio>'}'
+        '<script>$js</script></body></html>';
+    await c.loadHtmlString(html, baseUrl: '${Api.base}/');
+  }
+
+  /// The old way: YouTube's own player in a locked-down frame. Only used when the plain stream is not available.
+  void _loadYoutube(WebViewController c, String idRaw, bool play, bool muted) {
     // "Error 153 / Video player configuration error" is YouTube refusing an embed that has no referrer. A page loaded from
     // a bare URL sends none, so the player sits in an iframe of a page whose base address is YouTube's own host (the only
     // one the navigation filter above allows) and says where it is embedded from.
@@ -990,8 +1121,8 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     //  - It stays invisible until the player reports "playing" (so the big play button and thumbnail never show), hides
     //    again if it pauses or ends, and loops.
     const origin = 'https://www.youtube-nocookie.com';
-    final id = Uri.encodeComponent(widget.id);
-    final q = 'autoplay=${play ? 1 : 0}&mute=${widget.muted ? 1 : 0}&controls=0&disablekb=1&fs=0&iv_load_policy=3&cc_load_policy=0'
+    final id = Uri.encodeComponent(idRaw);
+    final q = 'autoplay=${play ? 1 : 0}&mute=${muted ? 1 : 0}&controls=0&disablekb=1&fs=0&iv_load_policy=3&cc_load_policy=0'
         '&playsinline=1&rel=0&modestbranding=1&loop=1&playlist=$id&enablejsapi=1&origin=${Uri.encodeComponent(origin)}';
     const css = 'html,body{margin:0;height:100%;background:#000;overflow:hidden}'
         'iframe{position:absolute;left:50%;top:50%;border:0;pointer-events:none;opacity:0;transition:opacity .4s;'
@@ -1017,7 +1148,6 @@ class _PluginTrailerState extends State<_PluginTrailer> {
         '<body><iframe id="f" src="$origin/embed/$id?$q" title="Trailer" referrerpolicy="strict-origin-when-cross-origin" '
         'allow="autoplay; encrypted-media; picture-in-picture" tabindex="-1"></iframe><script>$js</script></body></html>';
     unawaited(c.loadHtmlString(html, baseUrl: '$origin/'));
-    _controller = c;
   }
 
   @override

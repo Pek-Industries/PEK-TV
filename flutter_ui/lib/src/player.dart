@@ -67,6 +67,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Progress? _next;
   bool _nextDismissed = false;
   bool _nextEverShown = false;
+  bool _allowExit = false; // set when leaving needs no question (the film ended); otherwise Back asks first
+  bool _askingExit = false;
   bool _leaving = false; // replaced by the next episode: the shared player must not be torn down
   bool _hookStarted = false; // plugins with the "playback" permission were told playback began
   bool _hookPaused = false;
@@ -189,7 +191,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _nextDismissed = true;
     _countdown.value = null;
     _nextVisible.value = false;
-    if (_player.ended.value && mounted) Navigator.of(context).maybePop();
+    if (_player.ended.value && mounted) _exit();
   }
 
   void _playNext() {
@@ -284,7 +286,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _toast('This channel is not working right now.'); // a dead stream must not close the player: the person is flicking through channels
       return;
     }
-    Navigator.of(context).maybePop();
+    _exit();
   }
 
   void _onEnded() {
@@ -293,7 +295,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_next != null && !_nextDismissed && _nextEverShown) {
       _startCountdown();
     } else {
-      Navigator.of(context).maybePop();
+      _exit();
     }
   }
 
@@ -405,6 +407,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _controls = false;
     });
     _applyRect(force: true);
+  }
+
+  /// Leaves the player without asking (the film ended, the file would not open). The person's own Back asks first: [_confirmExit].
+  void _exit() {
+    if (!mounted) return;
+    if (_allowExit) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    setState(() => _allowExit = true); // PopScope lets the pop through once this has been rebuilt
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).maybePop();
+    });
+  }
+
+  /// Back (the remote, the system gesture or the arrow button) while watching: ask before leaving. Keeps playing underneath.
+  Future<void> _confirmExit() async {
+    if (_askingExit || !mounted) return;
+    _askingExit = true;
+    _poke();
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (c) => Theme(
+        data: ThemeData.dark(useMaterial3: true),
+        child: AlertDialog(
+          title: const Text('Stop watching?'),
+          content: Text(widget.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Exit')),
+            FilledButton(autofocus: true, onPressed: () => Navigator.pop(c, false), child: const Text('Keep watching')),
+          ],
+        ),
+      ),
+    );
+    _askingExit = false;
+    if (leave == true) _exit();
+    if (mounted) _rootNode.requestFocus();
   }
 
   void _closeGuide() {
@@ -541,9 +580,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     }
     return PopScope(
-      canPop: !_guideOpen, // Back closes the guide first, then the player
+      canPop: _allowExit && !_guideOpen, // Back closes the guide first, then asks before leaving the player
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _guideOpen) _closeGuide();
+        if (didPop) return;
+        if (_guideOpen) {
+          _closeGuide();
+        } else {
+          unawaited(_confirmExit());
+        }
       },
       child: _screen(),
     );
@@ -735,7 +779,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
           child: Row(
             children: [
-              _glassBtn(Icons.arrow_back, () => Navigator.of(context).maybePop()),
+              _glassBtn(Icons.arrow_back, () => unawaited(_confirmExit())),
               const SizedBox(width: 12),
               Expanded(child: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17.5, fontWeight: FontWeight.w600, letterSpacing: 0.2, color: _fg))),
             ],
