@@ -178,22 +178,44 @@ class TorrentTitle {
 Future<void> playTorrent(BuildContext context, {required Progress track, double startSec = 0, String? pluginId}) async {
   final t = track.torrent;
   if (t == null) return;
-  if (!await _mayStream(track, pluginId)) {
-    if (context.mounted) await _noPluginDialog(context, track);
+  if (pluginId == null || pluginId.isEmpty) {
+    // A saved entry (Resume Watching, Watch History, another device): list the installed video plugins and open the title
+    // in the one the person taps, which finds the release and plays it. With none installed, say so.
+    final players = await _installedPlayers();
+    if (!context.mounted) return;
+    if (players.isEmpty) {
+      await _noPluginDialog(context, track);
+      return;
+    }
+    final pick = await _askPlayer(context, track.title, players);
+    if (pick == null || !context.mounted) return;
+    await _openInPlugin(context, track, pick);
     return;
   }
-  if (!context.mounted) return;
   final label = track.title.length > 40 ? track.title.substring(0, 40) : track.title;
   Activity.note('Starting stream${label.isEmpty ? '' : ': $label'}\u2026');
   await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => TorrentLoadingScreen(track: track, startSec: startSec, pluginId: pluginId)));
 }
 
 /// Whether a plugin is behind this stream: the open plugin screen that handed it over ([pluginId]), or, for a saved entry,
-/// an installed plugin that can stream and is the one that started it.
+/// an installed plugin that can stream.
+///
+/// The list of installed plugins is read fresh every time (a cached list could be empty from an early failed load, or from
+/// before the plugin was installed). A saved entry plays when the plugin that started it is installed; when that exact plugin
+/// can't be matched (an entry from an older version or another device saved a different name or folder for it) any other
+/// installed video plugin is accepted, so the dialog only shows when there truly is no video plugin.
 Future<bool> _mayStream(Progress track, String? pluginId) async {
   if (pluginId != null && pluginId.isNotEmpty) return true;
-  if (PluginHost.streamers == null) await PluginHost.refreshStreamers();
-  return (PluginHost.streamers ?? const <Map<String, String>>[]).any((e) => e['id'] == track.origin && e['stream'] == 'true');
+  await PluginHost.refreshStreamers();
+  final players = [
+    for (final e in PluginHost.streamers ?? const <Map<String, String>>[])
+      if (e['stream'] == 'true') e,
+  ];
+  if (players.isEmpty) return false;
+  final origin = track.origin.trim().toLowerCase();
+  if (origin.isNotEmpty && players.any((e) => (e['id'] ?? '').toLowerCase() == origin || (e['name'] ?? '').toLowerCase() == origin)) return true;
+  // TMDb Discover ships with the app and only shows titles; it is not a video plugin for this purpose.
+  return players.any((e) => e['id'] != 'tmdb-discover');
 }
 
 /// The pass the torrent server wants before it starts a stream, or null when no plugin is behind this one. The pass comes from
@@ -208,6 +230,82 @@ Future<String?> _streamGrant(Progress track, String? pluginId) async {
   }
 }
 
+/// The installed plugins that can play a title ("provides": {"stream": true}), read fresh. TMDb Discover only shows titles.
+Future<List<Map<String, String>>> _installedPlayers() async {
+  await PluginHost.refreshStreamers();
+  return [
+    for (final e in PluginHost.streamers ?? const <Map<String, String>>[])
+      if (e['stream'] == 'true' && e['id'] != 'tmdb-discover') e,
+  ];
+}
+
+/// "Play with\u2026": one row per installed video plugin.
+Future<Map<String, String>?> _askPlayer(BuildContext context, String title, List<Map<String, String>> players) {
+  final p = context.pek;
+  final t = p.tokens;
+  final rem = p.rem;
+  return showModalBottomSheet<Map<String, String>>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: t.glassStrong,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(t.radius))),
+    builder: (c) => SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.all(1.25 * rem),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Play with\u2026', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.text)),
+          SizedBox(height: 0.25 * rem),
+          Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textMuted)),
+          SizedBox(height: 0.75 * rem),
+          for (var i = 0; i < players.length; i++)
+            ListRow(autofocus: i == 0, title: players[i]['name'] ?? players[i]['id'] ?? '', onTap: () => Navigator.pop(c, players[i])),
+        ]),
+      ),
+    ),
+  );
+}
+
+/// The title's TMDb id: the one kept with the entry, else looked up by name; 0 when it can't be found.
+Future<int> _tmdbIdFor(Progress track) async {
+  final tv = track.kind == 'episode';
+  final name = tv ? track.showTitle : track.title.replaceAll(RegExp(r'\s*\(\d{4}\)\s*$'), '');
+  var id = (track.torrent?['tmdb'] as num?)?.toInt() ?? 0;
+  if (id <= 0) {
+    try {
+      id = tv ? await RecFeed.tvIdByName(name) : await RecFeed.movieIdByName(name, year: track.year);
+    } catch (_) {
+      id = 0;
+    }
+  }
+  return id;
+}
+
+/// Opens the movie or series in the chosen plugin and tells it to play (an episode opens on its season and episode).
+Future<void> _openInPlugin(BuildContext context, Progress track, Map<String, String> plugin) async {
+  final tv = track.kind == 'episode';
+  final name = tv ? track.showTitle : track.title.replaceAll(RegExp(r'\s*\(\d{4}\)\s*$'), '');
+  final id = await _tmdbIdFor(track);
+  if (!context.mounted) return;
+  if (id <= 0) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Could not find this title on TMDb.')));
+    return;
+  }
+  await openPluginScreen(
+    context,
+    pluginId: plugin['id']!,
+    title: plugin['name'] ?? plugin['id']!,
+    launch: {
+      'type': tv ? 'tv' : 'movie',
+      'id': id,
+      'title': name,
+      'year': tv ? 0 : track.year,
+      if (tv) 'season': track.season,
+      if (tv) 'episode': track.episode,
+      'autoplay': true,
+    },
+  );
+}
+
 /// A saved stream that no installed plugin can play: the progress is kept (Resume Watching and the cloud still have it), and
 /// the person can open the title in TMDb Discover, which ships with PEK, and play it with whatever plugin they install.
 Future<void> _noPluginDialog(BuildContext context, Progress track) async {
@@ -215,7 +313,15 @@ Future<void> _noPluginDialog(BuildContext context, Progress track) async {
     context: context,
     builder: (c) => AlertDialog(
       title: const Text('No plugin can play this'),
-      content: Text('\u201c${track.title}\u201d was started from a plugin, and no installed plugin can play it now. Your progress is saved. You can open it in TMDb Discover and play it from there once a video plugin is installed.'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('You can open \u201c${track.title}\u201d in TMDb Discover to view it, but to play it you need a plugin. Your progress is saved.'),
+          const SizedBox(height: 16),
+          Text('PEK TV is not responsible for what you play.', style: Theme.of(c).textTheme.bodySmall),
+        ],
+      ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
         TextButton(autofocus: true, onPressed: () => Navigator.pop(c, true), child: const Text('Open in TMDb Discover')),
