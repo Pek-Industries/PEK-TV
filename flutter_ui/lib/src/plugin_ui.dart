@@ -549,7 +549,7 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
           episode: episode,
           tmdb: (raw['tmdb'] as num?)?.toInt() ?? 0,
         );
-        unawaited(playTorrent(context, track: tt.track(src, origin: widget.pluginId, image: _artwork('${raw['image'] ?? ''}'))));
+        unawaited(playTorrent(context, pluginId: widget.pluginId, track: tt.track(src, origin: widget.pluginId, image: _artwork('${raw['image'] ?? ''}'))));
       } else if (op == 'live.play') {
         // A plugin with the "live" permission started a channel (pek_ui.live_play): PEK's own player takes over. When the plugin
         // also ships a live file, the player offers the channel switcher and the TV guide, asking the plugin for the answers.

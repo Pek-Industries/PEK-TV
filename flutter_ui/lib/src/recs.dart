@@ -212,6 +212,25 @@ class RecFeed {
   static const _base = 'https://hesper-tmdb.aquariusibeats.workers.dev'; // the proxy that holds the TMDb key
   static const _ttlMs = 6 * 3600 * 1000;
   static final _c = http.Client();
+  /// The TMDb id of the movie called [name] (an exact title match first, else the top result), or 0 when none is found.
+  static Future<int> movieIdByName(String name, {int year = 0}) async {
+    final q = name.trim();
+    if (q.isEmpty) return 0;
+    final found = await _get('/search/movie?query=${Uri.encodeQueryComponent(q)}${year > 0 ? '&year=$year' : ''}');
+    final res = found?['results'];
+    if (res is! List || res.isEmpty) return 0;
+    Map? pick;
+    for (final e in res) {
+      if (e is Map && Store.normalize('${e['title'] ?? ''}') == Store.normalize(q)) {
+        pick = e;
+        break;
+      }
+    }
+    pick ??= res.first is Map ? res.first as Map : null;
+    final id = pick?['id'];
+    return id is num ? id.toInt() : 0;
+  }
+
   static final _cache = <String, (int, Map<String, dynamic>)>{};
 
   /// What the feed is built from: a change here means the rows should be asked for again.

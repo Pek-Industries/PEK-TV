@@ -11,6 +11,8 @@ import 'common.dart';
 import 'fields.dart';
 import 'player.dart';
 import 'plugin_host.dart' show PluginHost;
+import 'plugin_ui.dart' show openPluginScreen;
+import 'recs.dart' show RecFeed;
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -162,12 +164,54 @@ class TorrentTitle {
 }
 
 /// Starts a torrent behind a loading screen and opens the player when enough is downloaded.
-Future<void> playTorrent(BuildContext context, {required Progress track, double startSec = 0}) async {
+///
+/// PEK itself never starts a torrent on its own: a release only plays when a plugin (Stream Media and the like) fed it in.
+/// - [pluginId] set: a plugin screen that is open right now handed the release over (the "torrent.play" effect).
+/// - not set: a saved entry is being replayed (Resume Watching, Watch History, another device). It only plays while the plugin
+///   that started it ([Progress.origin]) is still installed and can stream; a pasted link, a search of PEK's own, a stream whose
+///   plugin was removed (or never installed on this device) does not start, and the person is told to install the plugin.
+Future<void> playTorrent(BuildContext context, {required Progress track, double startSec = 0, String? pluginId}) async {
   final t = track.torrent;
   if (t == null) return;
+  if (pluginId == null || pluginId.isEmpty) {
+    if (PluginHost.streamers == null) await PluginHost.refreshStreamers();
+    final found = (PluginHost.streamers ?? const <Map<String, String>>[]).where((e) => e['id'] == track.origin && e['stream'] == 'true').firstOrNull;
+    if (found == null) {
+      if (context.mounted) await _noPluginDialog(context, track);
+      return;
+    }
+  }
+  if (!context.mounted) return;
   final label = track.title.length > 40 ? track.title.substring(0, 40) : track.title;
   Activity.note('Starting stream${label.isEmpty ? '' : ': $label'}\u2026');
   await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => TorrentLoadingScreen(track: track, startSec: startSec)));
+}
+
+/// A saved stream that no installed plugin can play: the progress is kept (Resume Watching and the cloud still have it), and
+/// the person can open the title in TMDb Discover, which ships with PEK, and play it with whatever plugin they install.
+Future<void> _noPluginDialog(BuildContext context, Progress track) async {
+  final open = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: const Text('No plugin can play this'),
+      content: Text('\u201c${track.title}\u201d was started from a plugin, and no installed plugin can play it now. Your progress is saved. You can open it in TMDb Discover and play it from there once a video plugin is installed.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+        TextButton(autofocus: true, onPressed: () => Navigator.pop(c, true), child: const Text('Open in TMDb Discover')),
+      ],
+    ),
+  );
+  if (open != true || !context.mounted) return;
+  final tv = track.kind == 'episode';
+  final name = tv ? track.showTitle : track.title.replaceAll(RegExp(r'\s*\(\d{4}\)\s*$'), '');
+  var id = (track.torrent?['tmdb'] as num?)?.toInt() ?? 0;
+  if (id <= 0) id = tv ? await RecFeed.tvIdByName(name) : await RecFeed.movieIdByName(name, year: track.year);
+  if (!context.mounted) return;
+  if (id <= 0) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Could not find this title on TMDb.')));
+    return;
+  }
+  await openPluginScreen(context, pluginId: 'tmdb-discover', title: 'TMDb Discover', launch: {'type': tv ? 'tv' : 'movie', 'id': id, 'title': name, 'year': tv ? 0 : track.year});
 }
 
 /// The "starting stream" box of torrent.js: contacts the swarm, shows how far the loading is, opens the player when ready.
