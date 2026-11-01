@@ -9,7 +9,6 @@ import 'link_login.dart';
 import 'profile_pages.dart';
 import 'plan_ui.dart';
 import 'plugin_backup_ui.dart';
-import 'plugin_host.dart';
 import 'profiles.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -30,14 +29,60 @@ class AccountSection extends StatefulWidget {
   State<AccountSection> createState() => _AccountSectionState();
 }
 
-class _AccountSectionState extends State<AccountSection> {
+class _AccountSectionState extends State<AccountSection> with WidgetsBindingObserver {
   bool _busy = false;
   String _note = '';
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(Cloud.refreshPlan()); // paid on the website since the app was last open? (at most once a minute)
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Back from the website (after paying or changing the plan): look at the plan again, and start the first backup when it just became paid.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !Cloud.linked) return;
+    final was = Cloud.entitled;
+    Cloud.refreshPlan(force: true).then((now) {
+      if (now && !was) unawaited(Cloud.sync(light: false));
+    });
+  }
+
+  /// What this plan costs, as listed on the website.
+  static String _planPrice(String plan) => switch (plan) {
+        'monthly' => '\$${PlanPrices.monthly} a month',
+        'yearly' => '\$${PlanPrices.yearly.toStringAsFixed(0)} a year',
+        'lifetime' => '\$${PlanPrices.lifetime.toStringAsFixed(0)} once (lifetime)',
+        'grandfathered' => 'Nothing to pay, included with your account',
+        _ => 'Free',
+      };
+
+  Widget _detail(String label, String value) {
+    final p = context.pek;
+    return Padding(
+      padding: EdgeInsets.only(top: 0.4 * p.rem),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(width: 8 * p.rem, child: Text(label, style: TextStyle(color: p.tokens.textMuted))),
+        Expanded(child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600))),
+      ]),
+    );
+  }
+
+  /// Free: straight to the page where a plan is bought (a TV has no browser, so it shows the QR code instead).
+  Future<void> _upgrade() async {
+    if (context.pek.tvDevice) {
+      await showUpgradeDialog(context);
+    } else {
+      await openSitePage(context, Cloud.accountPage);
+    }
   }
 
   Future<void> _syncNow() async {
@@ -134,19 +179,25 @@ class _AccountSectionState extends State<AccountSection> {
             ]),
             SizedBox(height: 0.75 * rem),
             const PlanBadge(),
+            _detail('Signed in as', Cloud.email),
+            _detail('Username', Cloud.username.isEmpty ? 'Not chosen yet' : Cloud.username),
+            _detail('Plan price', _planPrice(Cloud.entitled ? Cloud.plan : 'free')),
             SizedBox(height: 0.4 * rem),
             if (Cloud.entitled) Text('Last synced: ${_ago(Cloud.lastSync)}', style: TextStyle(color: p.tokens.textMuted)),
             if (Cloud.username.isEmpty) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text('This account has no username yet. Every account needs one: choose it on the website.', style: TextStyle(color: p.tokens.textMuted))),
             if (_note.isNotEmpty) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text(_note, style: TextStyle(color: p.tokens.textMuted))),
-            if (!Cloud.entitled) ...[
-              SizedBox(height: 0.75 * rem),
-              const SubscribeBox(), // updates by itself, and this page with it, when the payment goes through
-            ],
+            if (Cloud.entitled && (Cloud.plan == 'lifetime' || Cloud.plan == 'grandfathered'))
+              Padding(
+                padding: EdgeInsets.only(top: 0.6 * rem),
+                child: Text(Cloud.plan == 'lifetime' ? 'You have the lifetime plan. There is nothing more to buy.' : 'Your account already includes everything.', style: TextStyle(color: p.tokens.textMuted)),
+              ),
             SizedBox(height: 0.75 * rem),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (Cloud.username.isEmpty) PekButton(label: 'Choose a username', primary: true, onTap: () => openSitePage(context, Cloud.accountPage)),
               if (Cloud.entitled) PekButton(label: _busy ? 'Syncing\u2026' : 'Sync now', primary: true, onTap: _busy ? null : _syncNow),
-              if (Cloud.entitled && Cloud.plan != 'grandfathered') PekButton(label: 'Manage plan', onTap: () => PluginHost.openUrl(Cloud.accountPage)),
+              if (!Cloud.entitled) PekButton(label: 'Upgrade', primary: true, onTap: _upgrade),
+              // Monthly and yearly: change, cancel or move up to lifetime on the website. Lifetime and included accounts have nothing to buy.
+              if (Cloud.entitled && (Cloud.plan == 'monthly' || Cloud.plan == 'yearly')) PekButton(label: 'Manage or upgrade plan', onTap: () => openSitePage(context, Cloud.accountPage)),
               PekButton(label: 'Switch profile', onTap: () {
                 Navigator.of(context).popUntil((r) => r.isFirst);
                 Profiles.openPicker();
