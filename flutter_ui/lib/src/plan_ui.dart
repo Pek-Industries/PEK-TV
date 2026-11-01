@@ -39,7 +39,7 @@ class PlanBadge extends StatelessWidget {
     final rem = p.rem;
     final paid = Cloud.entitled;
     final detail = !paid
-        ? 'No cloud backup \u00b7 1 profile'
+        ? 'Saved on this device only \u00b7 1 profile'
         : switch (Cloud.plan) {
             'monthly' || 'yearly' => Cloud.planUntil > 0 ? '${Cloud.planLabel} \u00b7 active until ${_date(Cloud.planUntil)}' : Cloud.planLabel,
             _ => Cloud.planLabel,

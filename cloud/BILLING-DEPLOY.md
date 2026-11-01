@@ -1,7 +1,7 @@
 # PEK Cloud plans and Stripe payments
 
-Accounts are free. **PEK Cloud** is the paid part: cloud backup (watch history, resume points, plugin backup)
-and up to 5 profiles. A free account keeps working with 1 profile and no cloud backup.
+Accounts are free. **PEK Cloud** is the paid part: cloud backup and sync (watch history, resume points, plugin backup)
+and up to 5 profiles. A free account keeps working with 1 profile and watch history and resume points kept on the device only (no backup or sync).
 
 | Plan | Price | Stripe mode |
 |---|---|---|

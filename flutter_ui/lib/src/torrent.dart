@@ -178,6 +178,7 @@ class TorrentTitle {
 Future<void> playTorrent(BuildContext context, {required Progress track, double startSec = 0, String? pluginId}) async {
   final t = track.torrent;
   if (t == null) return;
+  if (pluginId != null && pluginId.isNotEmpty && startSec <= 0) startSec = _resumePoint(track);
   if (pluginId == null || pluginId.isEmpty) {
     // A saved entry (Resume Watching, Watch History, another device): list the installed video plugins and open the title
     // in the one the person taps, which finds the release and plays it. With none installed, say so.
@@ -189,6 +190,7 @@ Future<void> playTorrent(BuildContext context, {required Progress track, double 
     }
     final pick = await _askPlayer(context, track.title, players);
     if (pick == null || !context.mounted) return;
+    _chosenStart[track.id] = startSec; // the plugin hands the release back: it starts here (0 = Start over)
     await _openInPlugin(context, track, pick);
     return;
   }
@@ -304,6 +306,29 @@ Future<void> _openInPlugin(BuildContext context, Progress track, Map<String, Str
       'autoplay': true,
     },
   );
+}
+
+/// Where the person chose to start a saved title they picked a plugin for (0 = "Start over"), until the plugin hands the release back.
+final Map<String, double> _chosenStart = {};
+
+/// Where a stream a plugin hands over should start: the point the person chose when they picked it from Continue Watching,
+/// otherwise the saved resume point of the same movie or episode, otherwise the start.
+double _resumePoint(Progress track) {
+  final chosen = _chosenStart.remove(track.id);
+  if (chosen != null) return chosen;
+  var saved = Store.progressFor(track.id);
+  if (saved == null) {
+    final key = Store.keyFor(kind: track.kind, title: track.title, showTitle: track.showTitle, year: track.year, season: track.season, episode: track.episode);
+    if (key != null) {
+      for (final e in Store.resumeItems()) {
+        if (Store.keyFor(kind: e.kind, title: e.title, showTitle: e.showTitle, year: e.year, season: e.season, episode: e.episode) == key) {
+          saved = e;
+          break;
+        }
+      }
+    }
+  }
+  return saved?.position ?? 0;
 }
 
 /// A saved stream that no installed plugin can play: the progress is kept (Resume Watching and the cloud still have it), and

@@ -156,7 +156,7 @@ class _AccountSectionState extends State<AccountSection> {
               PekButton(label: 'Delete account', onTap: _delete),
             ]),
             SizedBox(height: 0.5 * rem),
-            Text(Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'Your watch history stays on this device. PEK Cloud backs it up and adds up to 5 profiles.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
+            Text(Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'Your watch history and resume points stay on this device. PEK Cloud backs them up, syncs them across your devices and adds up to 5 profiles.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
             if (Cloud.entitled) const PluginBackupSettings(),
           ],
         );

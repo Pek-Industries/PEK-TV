@@ -115,14 +115,19 @@ class Cloud {
   }
 
   /// Asks the cloud which plan this account has (at most once a minute unless [force]). Returns whether cloud backup is unlocked.
+  /// True when the last [refreshPlan] really heard from the cloud (false while offline or after an error).
+  static bool planVerified = false;
+
   static Future<bool> refreshPlan({bool force = false}) async {
     if (!linked) return false;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (!force && now - _planCheckedAt < 60 * 1000) return entitled;
     _planCheckedAt = now;
     try {
+      planVerified = false;
       final r = await _request('GET', '/v1/me', withToken: true);
       if (r.status == 200 && r.body['ok'] == true) {
+        planVerified = true;
         final u = r.body['username'];
         if (u is String && u.isNotEmpty && u != username) {
           await Store.strSet(_kUser, u, scoped: false); // chosen on the website (older accounts had none)

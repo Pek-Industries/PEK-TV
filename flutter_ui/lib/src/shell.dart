@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'activity.dart';
+import 'backup_reminder.dart';
 import 'api.dart' show Api, PluginInfo;
 import 'cloud.dart';
 import 'common.dart';
@@ -68,7 +69,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final PageController _pager = PageController();
   int _page = 0; // phone: index into _swipePages
   final ValueNotifier<int> _pageN = ValueNotifier(0); // only the tab bar listens, so a swipe does not rebuild every page
@@ -79,6 +80,16 @@ class _AppShellState extends State<AppShell> {
   late String _tab = _home; // TV: sidebar selection
   Timer? _syncTimer;
   Timer? _backupTimer;
+  Timer? _reminderTimer;
+
+  void _remind() {
+    if (mounted) unawaited(BackupReminder.maybeShow(context));
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) Future<void>.delayed(const Duration(seconds: 2), _remind); // back in front: it may be time
+  }
 
   // A plugin was installed, updated or removed: back up a moment later (lets a removal reach the cloud first).
   void _backupSoon() {
@@ -170,6 +181,9 @@ class _AppShellState extends State<AppShell> {
       News.loadCache();
       unawaited(News.refresh()); // the unread dot on Updates
     }
+    WidgetsBinding.instance.addObserver(this);
+    Future<void>.delayed(const Duration(seconds: 8), _remind); // on start, once the app has settled
+    _reminderTimer = Timer.periodic(const Duration(minutes: 30), (_) => _remind()); // while it stays open (the 6 hours are kept inside)
     unawaited(DeepLink.start()); // the website's "back to the app" link after creating an account
     // Cloud sync: once at the start, then every 5 minutes when something changed on this device.
     if (Cloud.linked) {
@@ -191,6 +205,8 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _reminderTimer?.cancel();
     PluginHost.changed.removeListener(_loadPluginScreens);
     PluginPins.changed.removeListener(_pinsChanged);
     Store.profile.removeListener(_pinsChanged);
