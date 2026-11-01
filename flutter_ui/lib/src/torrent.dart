@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:http/http.dart' as http;
 
 import 'activity.dart';
@@ -71,11 +72,15 @@ class TorrentApi {
 
   /// Starts the torrent and returns its hash. A pasted https .torrent link is vouched for first (the server only downloads
   /// .torrent files it was told about); a magnet link needs nothing.
-  static Future<String> start(String source, {int season = 0, int episode = 0}) async {
+  ///
+  /// The server only starts a torrent for a request that carries a [grant] (backend/torrent_routes.cpp), and a grant only comes
+  /// from [_streamGrant], which only hands one out for a stream a plugin is behind.
+  static Future<String> start(String source, {int season = 0, int episode = 0, required String grant}) async {
+    final h0 = {'X-Pek-Grant': grant};
     if (!source.startsWith('magnet:?')) {
-      await Api.postForm('/api/torrent/allow', {'url': source});
+      await Api.postForm('/api/torrent/allow', {'url': source}, headers: h0);
     }
-    final j = await Api.postForm('/api/torrent/start', {'source': source, 'season': '$season', 'episode': '$episode'});
+    final j = await Api.postForm('/api/torrent/start', {'source': source, 'season': '$season', 'episode': '$episode'}, headers: h0);
     final h = '${j['hash'] ?? ''}';
     if (h.isEmpty) throw ApiError('Could not start the torrent.');
     return h;
@@ -173,18 +178,34 @@ class TorrentTitle {
 Future<void> playTorrent(BuildContext context, {required Progress track, double startSec = 0, String? pluginId}) async {
   final t = track.torrent;
   if (t == null) return;
-  if (pluginId == null || pluginId.isEmpty) {
-    if (PluginHost.streamers == null) await PluginHost.refreshStreamers();
-    final found = (PluginHost.streamers ?? const <Map<String, String>>[]).where((e) => e['id'] == track.origin && e['stream'] == 'true').firstOrNull;
-    if (found == null) {
-      if (context.mounted) await _noPluginDialog(context, track);
-      return;
-    }
+  if (!await _mayStream(track, pluginId)) {
+    if (context.mounted) await _noPluginDialog(context, track);
+    return;
   }
   if (!context.mounted) return;
   final label = track.title.length > 40 ? track.title.substring(0, 40) : track.title;
   Activity.note('Starting stream${label.isEmpty ? '' : ': $label'}\u2026');
-  await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => TorrentLoadingScreen(track: track, startSec: startSec)));
+  await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => TorrentLoadingScreen(track: track, startSec: startSec, pluginId: pluginId)));
+}
+
+/// Whether a plugin is behind this stream: the open plugin screen that handed it over ([pluginId]), or, for a saved entry,
+/// an installed plugin that can stream and is the one that started it.
+Future<bool> _mayStream(Progress track, String? pluginId) async {
+  if (pluginId != null && pluginId.isNotEmpty) return true;
+  if (PluginHost.streamers == null) await PluginHost.refreshStreamers();
+  return (PluginHost.streamers ?? const <Map<String, String>>[]).any((e) => e['id'] == track.origin && e['stream'] == 'true');
+}
+
+/// The pass the torrent server wants before it starts a stream, or null when no plugin is behind this one. The pass comes from
+/// the app's own native side (not from an HTTP route), so only this code path can get one.
+Future<String?> _streamGrant(Progress track, String? pluginId) async {
+  if (!await _mayStream(track, pluginId)) return null;
+  try {
+    final g = await const MethodChannel('pek/host').invokeMethod<String>('torrentGrant');
+    return g == null || g.isEmpty ? null : g;
+  } catch (_) {
+    return null;
+  }
 }
 
 /// A saved stream that no installed plugin can play: the progress is kept (Resume Watching and the cloud still have it), and
@@ -216,9 +237,10 @@ Future<void> _noPluginDialog(BuildContext context, Progress track) async {
 
 /// The "starting stream" box of torrent.js: contacts the swarm, shows how far the loading is, opens the player when ready.
 class TorrentLoadingScreen extends StatefulWidget {
-  const TorrentLoadingScreen({super.key, required this.track, this.startSec = 0});
+  const TorrentLoadingScreen({super.key, required this.track, this.startSec = 0, this.pluginId});
   final Progress track;
   final double startSec;
+  final String? pluginId; // the plugin screen that handed the release over; null for a saved entry
   @override
   State<TorrentLoadingScreen> createState() => _TorrentLoadingScreenState();
 }
@@ -243,7 +265,9 @@ class _TorrentLoadingScreenState extends State<TorrentLoadingScreen> {
   Future<void> _run() async {
     final t = widget.track.torrent!;
     try {
-      _hash = await TorrentApi.start('${t['source']}', season: (t['season'] as num?)?.toInt() ?? 0, episode: (t['episode'] as num?)?.toInt() ?? 0);
+      final grant = await _streamGrant(widget.track, widget.pluginId);
+      if (grant == null) throw ApiError('This stream plays through the plugin that started it. Install that plugin to watch it.');
+      _hash = await TorrentApi.start('${t['source']}', season: (t['season'] as num?)?.toInt() ?? 0, episode: (t['episode'] as num?)?.toInt() ?? 0, grant: grant);
       if (_cancelled) {
         unawaited(TorrentApi.stop(_hash));
         return;

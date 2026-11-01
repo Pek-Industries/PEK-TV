@@ -4,7 +4,10 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
+#include <map>
 #include <mutex>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -58,6 +61,36 @@ std::string g_dataDir = ".";
 // .torrent links a plugin vouched for (POST /api/torrent/allow). Only these may be downloaded by /start.
 std::mutex g_linkMx;
 std::set<std::string> g_knownLinks;
+
+// ---- Who may start a torrent --------------------------------------------------------------------------------------
+// PEK TV never starts a torrent on its own: only a plugin that is playing something does. The routes that start one
+// (/allow, /fetch, /start) therefore need a "grant" in the X-Pek-Grant header. A grant is not an HTTP thing: the app
+// asks for one over its private native channel (mintTorrentGrant, below) at the moment a plugin hands it a release,
+// so another app on the device, a web page or a machine on the network can talk to this server but cannot get one.
+// A grant lasts two minutes and a handful of calls (allow + start + a retry), then it is gone.
+struct Grant { std::chrono::steady_clock::time_point until; int uses; };
+std::mutex g_grantMx;
+std::map<std::string, Grant> g_grants;
+
+bool grantOk(const httplib::Request& req) {
+    const std::string tok = req.get_header_value("X-Pek-Grant");
+    if (tok.size() != 32) return false;
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lk(g_grantMx);
+    for (auto it = g_grants.begin(); it != g_grants.end();) {   // forget the used up and the old ones
+        if (it->second.until < now || it->second.uses <= 0) it = g_grants.erase(it); else ++it;
+    }
+    auto f = g_grants.find(tok);
+    if (f == g_grants.end()) return false;
+    f->second.uses--;
+    return true;
+}
+
+bool needGrant(const httplib::Request& req, httplib::Response& res) {
+    if (grantOk(req)) return true;
+    jsonErr(res, 403, "Streams can only be started by a plugin");
+    return false;
+}
 
 struct Parts { std::string scheme, host, path; int port = 0; };
 
@@ -220,6 +253,21 @@ void setTorrentDataDir(const std::string& dir) {
     torrent::setDataDir(g_dataDir);
 }
 
+std::string mintTorrentGrant() {
+    static const char* hex = "0123456789abcdef";
+    std::random_device rd;
+    std::string tok;
+    for (int i = 0; i < 16; ++i) {
+        const unsigned v = rd() & 0xff;
+        tok += hex[v >> 4];
+        tok += hex[v & 15];
+    }
+    std::lock_guard<std::mutex> lk(g_grantMx);
+    if (g_grants.size() > 64) g_grants.clear();
+    g_grants[tok] = Grant{std::chrono::steady_clock::now() + std::chrono::minutes(2), 6};
+    return tok;
+}
+
 void registerTorrentRoutes(httplib::Server& svr) {
 
 
@@ -227,6 +275,7 @@ void registerTorrentRoutes(httplib::Server& svr) {
     // a plugin that listed a release host in plugin.json may play a .torrent link from that host.
     // The sandbox checks the manifest; this only accepts https links with a real host name.
     svr.Post("/api/torrent/allow", [](const httplib::Request& req, httplib::Response& res) {
+        if (!needGrant(req, res)) return;
         std::string url = req.get_param_value("url");
         if (!publicHttpsUrl(url)) { jsonErr(res, 400, "Not an allowed release link"); return; }
         { std::lock_guard<std::mutex> lk(g_linkMx);
@@ -238,6 +287,7 @@ void registerTorrentRoutes(httplib::Server& svr) {
     // CORS-free GET of a public https page for a plugin that has the torrent permission (the sandbox tries the
     // browser first, then this, and only for hosts the plugin listed under "network" in plugin.json).
     svr.Get("/api/torrent/fetch", [](const httplib::Request& req, httplib::Response& res) {
+        if (!needGrant(req, res)) return;
         std::string url = req.get_param_value("url");
         if (!publicHttpsUrl(url)) { jsonErr(res, 400, "Not an allowed address"); return; }
         // A plugin is looking something up, so a stream is probably next: start the torrent session now (DHT needs a
@@ -255,6 +305,7 @@ void registerTorrentRoutes(httplib::Server& svr) {
     });
 
     svr.Post("/api/torrent/start", [](const httplib::Request& req, httplib::Response& res) {
+        if (!needGrant(req, res)) return;
         if (!torrent::available()) { jsonErr(res, 501, "Torrent playback is not built into this PEK TV"); return; }
         std::string source = req.get_param_value("source");
         int season = std::atoi(req.get_param_value("season").c_str());

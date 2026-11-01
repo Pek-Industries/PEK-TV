@@ -6,6 +6,7 @@
 
 // Registers the torrent API:
 //   GET  /api/torrent/info                 {available}
+//   (/allow, /fetch and /start need an X-Pek-Grant header: see mintTorrentGrant below)
 //   POST /api/torrent/allow                url=..                   (a plugin vouches for a https .torrent link)
 //   GET  /api/torrent/fetch                url=..                   (CORS-free page fetch for plugins)
 //   POST /api/torrent/start                source (magnet, or a link vouched for via /allow), season, episode
@@ -16,5 +17,9 @@
 // Call setTorrentDataDir() once at startup, before the server starts.
 void setTorrentDataDir(const std::string& dir);
 void registerTorrentRoutes(httplib::Server& svr);
+
+// A one-time pass for starting a torrent (/allow, /fetch and /start refuse a request without one in X-Pek-Grant).
+// Not an HTTP route: only code inside the app can call it (the Android app does, over JNI, when a plugin plays something).
+std::string mintTorrentGrant();
 
 #endif

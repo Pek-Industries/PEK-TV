@@ -23,12 +23,12 @@ class Api {
   }
 
   /// POST a form and return the JSON object. The backend answers `{ok:false, error}` on failure; that text is what the person sees.
-  static Future<Map<String, dynamic>> postForm(String path, Map<String, String> body) => Busy.run(path, () => _postFormRaw(path, body));
+  static Future<Map<String, dynamic>> postForm(String path, Map<String, String> body, {Map<String, String>? headers}) => Busy.run(path, () => _postFormRaw(path, body, headers));
 
-  static Future<Map<String, dynamic>> _postFormRaw(String path, Map<String, String> body) async {
+  static Future<Map<String, dynamic>> _postFormRaw(String path, Map<String, String> body, [Map<String, String>? headers]) async {
     http.Response r;
     try {
-      r = await _client.post(Uri.parse('$base$path'), headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body).timeout(const Duration(seconds: 30));
+      r = await _client.post(Uri.parse('$base$path'), headers: {'Content-Type': 'application/x-www-form-urlencoded', ...?headers}, body: body).timeout(const Duration(seconds: 30));
     } catch (_) {
       throw ApiError('Could not reach the app. Check your connection.');
     }

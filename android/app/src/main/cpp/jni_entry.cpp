@@ -55,6 +55,12 @@ Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot) 
     }).detach();
 }
 
+// A pass for starting one torrent (see torrent_routes.h). The app asks for it only when a plugin is playing something.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_pektv_app_NativeBridge_mintTorrentGrant(JNIEnv* env, jclass) {
+    return env->NewStringUTF(mintTorrentGrant().c_str());
+}
+
 // TEMPORARY DIAGNOSTIC: tries the TMDb proxy three ways and reports what
 // happened, so we can see why HTTPS fails. Remove once TMDb works.
 extern "C" JNIEXPORT jstring JNICALL

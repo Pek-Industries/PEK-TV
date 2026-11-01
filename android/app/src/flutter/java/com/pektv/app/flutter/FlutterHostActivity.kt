@@ -26,6 +26,7 @@ import com.pektv.app.MediaPermissions
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.pektv.app.MpvController
+import com.pektv.app.NativeBridge
 import com.pektv.app.Boot
 import com.pektv.app.R
 import com.pektv.app.SplashGate
@@ -508,6 +509,9 @@ class FlutterHostActivity : FlutterActivity() {
                         .let { if (it.size == 2 && it[1].startsWith(it[0], ignoreCase = true)) it[1] else it.joinToString(" ") }
                     result.success(mapOf("type" to type, "name" to (given?.takeIf { it.isNotBlank() } ?: model.ifBlank { "Android device" })))
                 }
+                // A pass the torrent server asks for before it starts a stream (backend/torrent_routes.cpp). Dart only asks for one
+                // after a plugin has handed it a release (torrent.dart), so nothing else on the device can start a torrent.
+                "torrentGrant" -> result.success(NativeBridge.mintTorrentGrant())
                 "setMulticast" -> {
                     setMulticast(call.argument<Boolean>("on") ?: false)
                     result.success(null)
