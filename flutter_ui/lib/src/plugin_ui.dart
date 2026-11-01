@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'activity.dart';
+import 'api.dart' show Api;
 import 'common.dart';
 import 'fields.dart';
 import 'live_tv.dart';
