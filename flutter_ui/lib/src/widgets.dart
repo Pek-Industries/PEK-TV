@@ -387,10 +387,13 @@ class DashTile extends StatelessWidget {
 /// `ui.posterCard`: shows a plain card until the poster is known (and if it fails to load), then the 2:3 poster with the
 /// title over a dark gradient at the bottom.
 class PosterCard extends StatefulWidget {
-  const PosterCard({super.key, required this.title, required this.subtitle, required this.poster, required this.onTap, this.onLongPress, this.holdSelect = false, this.autofocus = false, this.fallbackImage = '', this.progress});
+  const PosterCard({super.key, required this.title, required this.subtitle, required this.poster, required this.onTap, this.onLongPress, this.holdSelect = false, this.autofocus = false, this.fallbackImage = '', this.progress, this.aspectRatio = 2 / 3});
   final String title;
   final String subtitle;
   final Future<Details> poster;
+
+  /// 2/3 for a poster; 16/9 for an episode's own picture (Continue Watching).
+  final double aspectRatio;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final bool holdSelect; // a held centre button runs onLongPress (see PekFocusable)
@@ -512,7 +515,7 @@ class _PosterCardState extends State<PosterCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               AspectRatio(
-                aspectRatio: 2 / 3,
+                aspectRatio: widget.aspectRatio,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(p.compact ? 12 : 14),
                   child: ColoredBox(
@@ -521,7 +524,7 @@ class _PosterCardState extends State<PosterCard> {
                       ArtImage(
                         url,
                         fit: BoxFit.cover,
-                        cacheWidth: 400, // decode small: weak TV boxes run out of memory on full-size posters
+                        cacheWidth: widget.aspectRatio > 1 ? 640 : 400, // decode small: weak TV boxes run out of memory on full-size posters
                         placeholder: (_) => Center(child: Icon(Icons.image_outlined, color: t.textMuted, size: 2 * rem)),
                         errorBuilder: (_, __, ___) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {

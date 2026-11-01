@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'art_cache.dart';
+import 'library_match.dart';
 import 'player.dart';
+import 'recs.dart' show RecFeed;
 import 'ratings.dart';
 import 'store.dart';
 import 'tokens.dart';
@@ -51,6 +53,120 @@ Future<void> showResumePreview(BuildContext context, Progress item) async {
   await playMedia(context, item, startSec: from);
 }
 
+/// An in-progress episode (Continue Watching) shows its own picture, the still from that episode, not the show's poster.
+bool resumeShowsStill(Progress r) => r.kind == 'episode' && (r.season > 0 && r.episode > 0);
+
+/// The picture for a Continue Watching item: an episode's still when one is known, otherwise the show / movie poster
+/// (a stream a plugin started falls back to the picture it brought).
+Future<Details> resumeArt(Progress r) async {
+  try {
+    if (resumeShowsStill(r)) {
+      final show = r.showTitle.isNotEmpty ? r.showTitle : r.title.replaceAll(RegExp(r'\s*S\d{1,2}E\d{1,3}\b.*$', caseSensitive: false), '').trim();
+      var still = '';
+      if (!r.isTorrent && r.id.isNotEmpty) {
+        still = (await Api.episodeDetails(show, r.season, r.episode)).still;
+      }
+      if (still.isEmpty && show.isNotEmpty) {
+        still = (await RecFeed.lookupEpisode(show, r.season, r.episode))?.still ?? '';
+      }
+      if (still.isNotEmpty) return Details(overview: '', poster: still);
+    }
+  } catch (_) {}
+  if (r.isTorrent || r.id.isEmpty) return Details(overview: '', poster: r.image);
+  return r.kind == 'movie' ? Api.movieDetails(r.id) : Api.showDetails(r.showTitle);
+}
+
+final Map<String, Future<Details>> _resumeArtCache = {};
+
+/// [resumeArt] as the same future every time the screen is built (so a card does not flash and ask again), and the library's
+/// own lookup untouched for anything that is not an episode.
+Future<Details> resumeArtFor(Progress r) {
+  if (!resumeShowsStill(r)) {
+    if (r.isTorrent || r.id.isEmpty) return Future.value(Details(overview: '', poster: r.image));
+    return r.kind == 'movie' ? Api.movieDetails(r.id) : Api.showDetails(r.showTitle);
+  }
+  final k = '${r.id}|${r.showTitle}|${r.season}|${r.episode}|${r.image}';
+  return _resumeArtCache.putIfAbsent(k, () {
+    final f = resumeArt(r);
+    f.then((d) {
+      if (d.poster.isEmpty) _resumeArtCache.remove(k); // nothing found (offline?): ask again next time
+    }, onError: (_) => _resumeArtCache.remove(k));
+    return f;
+  });
+}
+
+/// The library item a Watch History entry stands for (something finished), or null when it is not in the library
+/// (a plugin or Trakt watch). Titles are lined up the same way Trakt imports are ([LibraryMatch]).
+Future<Progress?> libraryItemForHistory(HistoryEntry e) async {
+  try {
+    if (e.kind == 'movie') {
+      final m = await LibraryMatch.movieFor(e.title, e.year);
+      return m == null ? null : movieItem(m);
+    }
+    final name = await LibraryMatch.showFor(e.title);
+    if (name == null) return null;
+    final shows = await Api.shows();
+    for (final s in shows) {
+      if (s.title != name) continue;
+      for (final se in s.seasons) {
+        for (final ep in se.episodes) {
+          if (ep.season == e.season && ep.episode == e.episode) return episodeItem(s, ep);
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// Pressing something in Watch History's Finished list: the same page as Continue Watching (picture, description), with Play.
+/// Something that is not in the library shows the same page without the Play button.
+Future<void> showFinishedPreview(BuildContext context, HistoryEntry e) async {
+  final lib = await libraryItemForHistory(e);
+  if (!context.mounted) return;
+  final item = lib ??
+      Progress(
+        id: '',
+        title: e.kind == 'episode' ? e.label.replaceFirst(' \u00b7 ', ' ') : e.title,
+        kind: e.kind,
+        position: 0,
+        duration: 0,
+        updated: 0,
+        showTitle: e.kind == 'episode' ? e.title : '',
+        year: e.year,
+        season: e.season,
+        episode: e.episode,
+      );
+  final from = await Navigator.push<double>(
+    context,
+    MaterialPageRoute<double>(builder: (_) => ResumePreviewScreen(item: item, canPlay: lib != null)),
+  );
+  if (from == null || lib == null || !context.mounted) return;
+  await playMedia(context, lib, startSec: from);
+}
+
+/// The poster for a Finished row: the library's artwork when the title is in the library, else TMDb by name.
+Future<Details> finishedArt(HistoryEntry e) async {
+  const none = Details(overview: '', poster: '');
+  try {
+    if (e.kind == 'movie') {
+      final m = await LibraryMatch.movieFor(e.title, e.year);
+      if (m != null) {
+        final d = await Api.movieDetails(m.id);
+        if (d.poster.isNotEmpty) return d;
+      }
+      return await RecFeed.lookup(e.title, year: e.year) ?? none;
+    }
+    final name = await LibraryMatch.showFor(e.title);
+    if (name != null) {
+      final d = await Api.showDetails(name);
+      if (d.poster.isNotEmpty) return d;
+    }
+    return await RecFeed.lookup(e.title, tv: true) ?? none;
+  } catch (_) {
+    return none;
+  }
+}
+
 class _Preview {
   const _Preview({this.heading = '', this.overview = '', this.image = '', this.wide = false});
   final String heading; // an episode's own title
@@ -60,26 +176,53 @@ class _Preview {
 }
 
 class ResumePreviewScreen extends StatelessWidget {
-  const ResumePreviewScreen({super.key, required this.item});
+  const ResumePreviewScreen({super.key, required this.item, this.canPlay = true});
   final Progress item;
 
+  /// false = the title is not in the library (a plugin or Trakt watch): the page only shows what it is.
+  final bool canPlay;
+
   Future<_Preview> _load() async {
+    var found = _Preview(image: item.image);
     try {
-      if (item.isTorrent) return _Preview(image: item.image);
-      if (item.kind == 'episode' && item.showTitle.isNotEmpty && item.season > 0 && item.episode > 0) {
-        final e = await Api.episodeDetails(item.showTitle, item.season, item.episode);
-        return _Preview(heading: e.name, overview: e.overview, image: e.still.isNotEmpty ? e.still : item.image, wide: e.still.isNotEmpty);
-      }
-      if (item.kind == 'movie') {
-        final d = await Api.movieDetails(item.id);
-        return _Preview(overview: d.overview, image: d.poster.isNotEmpty ? d.poster : item.image);
-      }
-      if (item.showTitle.isNotEmpty) {
-        final d = await Api.showDetails(item.showTitle);
-        return _Preview(overview: d.overview, image: d.poster.isNotEmpty ? d.poster : item.image);
+      if (!item.isTorrent && item.id.isNotEmpty) {
+        if (item.kind == 'episode' && item.showTitle.isNotEmpty && item.season > 0 && item.episode > 0) {
+          final e = await Api.episodeDetails(item.showTitle, item.season, item.episode);
+          found = _Preview(heading: e.name, overview: e.overview, image: e.still.isNotEmpty ? e.still : item.image, wide: e.still.isNotEmpty);
+        } else if (item.kind == 'movie') {
+          final d = await Api.movieDetails(item.id);
+          found = _Preview(overview: d.overview, image: d.poster.isNotEmpty ? d.poster : item.image);
+        } else if (item.showTitle.isNotEmpty) {
+          final d = await Api.showDetails(item.showTitle);
+          found = _Preview(overview: d.overview, image: d.poster.isNotEmpty ? d.poster : item.image);
+        }
       }
     } catch (_) {}
-    return _Preview(image: item.image);
+    if (found.overview.isNotEmpty) return found;
+    // Nothing from the library: a stream a plugin or torrent started (or a Trakt watch) has no entry in it, and a library
+    // title can come back without a synopsis. Ask TMDb by name instead.
+    try {
+      final isEpisode = item.kind == 'episode';
+      final raw = isEpisode
+          ? (item.showTitle.isNotEmpty ? item.showTitle : item.title.replaceAll(RegExp(r'\s*S\d{1,2}E\d{1,3}\b.*$', caseSensitive: false), ''))
+          : ('${item.torrent?['title'] ?? ''}'.trim().isNotEmpty ? '${item.torrent!['title']}' : item.title);
+      final yearTag = RegExp(r'\s*\((\d{4})\)\s*$').firstMatch(raw);
+      final name = yearTag == null ? raw.trim() : raw.substring(0, yearTag.start).trim();
+      final year = item.year > 0 ? item.year : (yearTag == null ? 0 : int.parse(yearTag.group(1)!));
+      if (name.isEmpty) return found;
+      if (isEpisode && item.season > 0 && item.episode > 0) {
+        final e = await RecFeed.lookupEpisode(name, item.season, item.episode);
+        if (e != null && e.overview.isNotEmpty) {
+          final still = found.image.isEmpty && e.still.isNotEmpty;
+          return _Preview(heading: found.heading.isNotEmpty ? found.heading : e.name, overview: e.overview, image: still ? e.still : found.image, wide: found.wide || still);
+        }
+      }
+      final d = await RecFeed.lookup(name, year: year, tv: isEpisode);
+      if (d != null) {
+        return _Preview(heading: found.heading, overview: d.overview, image: found.image.isNotEmpty ? found.image : d.poster, wide: found.wide);
+      }
+    } catch (_) {}
+    return found;
   }
 
   @override
@@ -125,18 +268,24 @@ class ResumePreviewScreen extends StatelessWidget {
               Text(d!.heading, style: TextStyle(color: t.accent, fontWeight: FontWeight.w700)),
             ],
             SizedBox(height: 0.4 * rem),
-            Text(
-              item.duration > 0 ? '${_fmt(item.position)} of ${_fmt(item.duration)} watched' : 'Stopped at ${_fmt(item.position)}',
-              style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem),
-            ),
-            SizedBox(height: 0.75 * rem),
+            if (item.position > 0 || item.duration > 0) ...[
+              Text(
+                item.duration > 0 ? '${_fmt(item.position)} of ${_fmt(item.duration)} watched' : 'Stopped at ${_fmt(item.position)}',
+                style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem),
+              ),
+              SizedBox(height: 0.75 * rem),
+            ] else
+              SizedBox(height: 0.35 * rem),
             // The whole description: no line limit here.
             Text(overview.isNotEmpty ? overview : (done ? 'No description available.' : 'Loading...'), style: TextStyle(color: t.textMuted, height: 1.4)),
             SizedBox(height: 1.25 * rem),
-            Wrap(spacing: 0.75 * rem, runSpacing: 0.75 * rem, children: [
-              PekButton(label: canResume ? 'Continue from ${_fmt(item.position)}' : 'Play', primary: true, autofocus: true, onTap: () => Navigator.pop(context, canResume ? item.position : 0.0)),
-              if (canResume) PekButton(label: 'Start over', onTap: () => Navigator.pop(context, 0.0)),
-            ]),
+            if (canPlay)
+              Wrap(spacing: 0.75 * rem, runSpacing: 0.75 * rem, children: [
+                PekButton(label: canResume ? 'Continue from ${_fmt(item.position)}' : 'Play', primary: true, autofocus: true, onTap: () => Navigator.pop(context, canResume ? item.position : 0.0)),
+                if (canResume) PekButton(label: 'Start over', onTap: () => Navigator.pop(context, 0.0)),
+              ])
+            else
+              Text('This one is not in your library, so there is nothing to play here.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
           ],
         );
       },

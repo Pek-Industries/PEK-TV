@@ -97,6 +97,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
                 ]);
               },
             ),
+          // Titles saved from plugin screens (and Trakt favorites) live here too; before, a page with only those showed nothing.
+          const PluginFavoritesSection(),
         ]);
       },
     );
@@ -500,10 +502,13 @@ class ResumeThumb extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
-    final w = (p.compact ? 5.5 : 7.5) * p.rem;
+    final still = resumeShowsStill(item); // an episode shows its own picture (16:9), not the show's poster
+    final w = (p.compact ? 5.5 : 7.5) * p.rem * (still ? 1.5 : 1.0);
     final frac = item.duration > 0 ? (item.position / item.duration).clamp(0.0, 1.0) : 0.0;
     final Widget art;
-    if (item.image.startsWith('https://')) {
+    if (still) {
+      art = PosterImage(poster: resumeArtFor(item), title: item.title, width: 640);
+    } else if (item.image.startsWith('https://')) {
       art = ArtImage(item.image, fit: BoxFit.cover, cacheWidth: 400, errorBuilder: (_, __, ___) => ColoredBox(color: t.surface));
     } else if (item.isTorrent) {
       art = ColoredBox(color: t.surface);
@@ -514,7 +519,7 @@ class ResumeThumb extends StatelessWidget {
       borderRadius: BorderRadius.circular(10),
       child: SizedBox(
         width: w,
-        height: w * 1.5,
+        height: still ? w * 9 / 16 : w * 1.5,
         child: Stack(fit: StackFit.expand, children: [
           ColoredBox(color: t.surface, child: art),
           if (frac > 0)

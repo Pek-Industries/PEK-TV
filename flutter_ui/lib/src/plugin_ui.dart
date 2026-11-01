@@ -7,7 +7,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'activity.dart';
-import 'api.dart' show Api;
+import 'api.dart' show Api, Details;
+import 'recs.dart' show RecFeed;
 import 'common.dart';
 import 'fields.dart';
 import 'live_tv.dart';
@@ -546,6 +547,7 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
           year: (raw['year'] as num?)?.toInt() ?? 0,
           season: season,
           episode: episode,
+          tmdb: (raw['tmdb'] as num?)?.toInt() ?? 0,
         );
         unawaited(playTorrent(context, track: tt.track(src, origin: widget.pluginId, image: _artwork('${raw['image'] ?? ''}'))));
       } else if (op == 'live.play') {
@@ -1291,31 +1293,180 @@ class _PluginPoster extends StatelessWidget {
   }
 }
 
-/// "Saved from plugins" on the Favorites page: titles a plugin screen saved (pek_ui.favorite_add). Pressing one
-/// opens the plugin on that title; Remove takes it out. They sync to PEK Cloud with the library favorites.
+/// "Saved from plugins" on the Favorites page: titles a plugin screen saved (pek_ui.favorite_add) or Trakt favorites, as posters.
+/// Pressing one opens the plugin on that title; holding one takes it out. They sync to PEK Cloud with the library favorites.
 class PluginFavoritesSection extends StatelessWidget {
   const PluginFavoritesSection({super.key});
+
+  static const _imgBase = 'https://image.tmdb.org/t/p/w342';
+  static final _posterPath = RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$');
+  static final Map<String, Future<Details>> _art = {};
+
+  /// The poster of one saved title: the path kept with it, else asked from TMDb (by id, then by name) and kept for next time.
+  static Future<Details> _poster(Map<String, dynamic> f) {
+    final key = '${f['key']}';
+    return _art.putIfAbsent(key, () {
+      final r = _load(f);
+      r.then((d) {
+        if (d.poster.isEmpty) _art.remove(key); // nothing found (offline?): ask again next time
+      }, onError: (_) => _art.remove(key));
+      return r;
+    });
+  }
+
+  static Future<Details> _load(Map<String, dynamic> f) async {
+    const none = Details(overview: '', poster: '');
+    final kept = '${f['posterPath'] ?? ''}';
+    if (_posterPath.hasMatch(kept)) return Details(overview: '', poster: '$_imgBase$kept');
+    final tv = '${f['type']}' == 'tv';
+    var path = await RecFeed.posterPathById((f['id'] as num?)?.toInt() ?? 0, tv);
+    if (path.isEmpty) {
+      final year = (f['year'] as num?)?.toInt() ?? 0;
+      final d = await RecFeed.lookup('${f['title'] ?? ''}', year: year, tv: tv);
+      if (d != null && d.poster.startsWith(_imgBase)) path = d.poster.substring(_imgBase.length);
+    }
+    if (path.isEmpty) return none;
+    await Store.setPluginFavoritePoster('${f['key']}', path);
+    return Details(overview: '', poster: '$_imgBase$path');
+  }
+
+  /// Pressing a saved title asks which plugin to open it with: the installed video plugins (one that \"provides\":
+  /// {\"stream\": true}, like Stream Media) and TMDb Discover, which ships with the app. With no video plugin installed
+  /// there is nothing to choose, so it opens in TMDb Discover straight away.
+  static Future<void> _playWith(BuildContext context, Map<String, dynamic> f) async {
+    await PluginHost.refreshStreamers();
+    if (!context.mounted) return;
+    const discover = {'id': 'tmdb-discover', 'name': 'TMDb Discover'};
+    final players = <Map<String, String>>[
+      for (final s in PluginHost.streamers ?? const <Map<String, String>>[])
+        if (s['stream'] == 'true' && s['id'] != discover['id']) s,
+      discover,
+    ];
+    final pick = players.length == 1 ? players.first : await _askPlayer(context, '${f['title']}', players);
+    if (pick == null || !context.mounted) return;
+    await openPluginScreen(
+      context,
+      pluginId: pick['id']!,
+      title: pick['name'] ?? pick['id']!,
+      launch: {'type': f['type'], 'id': f['id'], 'title': f['title'], 'year': f['year']},
+    );
+  }
+
+  static Future<Map<String, String>?> _askPlayer(BuildContext context, String title, List<Map<String, String>> players) {
+    final p = context.pek;
+    final t = p.tokens;
+    final rem = p.rem;
+    return showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: t.glassStrong,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(t.radius))),
+      builder: (c) => SafeArea(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(1.25 * rem),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Play with\u2026', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.text)),
+            SizedBox(height: 0.25 * rem),
+            Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textMuted)),
+            SizedBox(height: 0.75 * rem),
+            for (var i = 0; i < players.length; i++)
+              ListRow(autofocus: i == 0, title: players[i]['name'] ?? players[i]['id'] ?? '', onTap: () => Navigator.pop(c, players[i])),
+          ]),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final favs = Store.pluginFavorites();
     if (favs.isEmpty) return const SizedBox.shrink();
     final p = context.pek;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      SizedBox(height: 1.5 * p.rem),
-      Text('Saved from plugins', style: TextStyle(fontSize: 1.25 * p.rem, fontWeight: FontWeight.w700, color: p.tokens.text)),
-      SizedBox(height: 0.6 * p.rem),
+    final rem = p.rem;
+    final cells = <Widget>[
       for (final f in favs)
-        ListRow(
-          title: (f['year'] as num?) != null && (f['year'] as num) > 0 ? '${f['title']} (${f['year']})' : '${f['title']}',
-          subtitle: '${f['type'] == 'tv' ? 'TV show' : 'Movie'} \u00b7 opens in ${f['plugin']}',
-          onTap: () => openPluginScreen(context, pluginId: '${f['plugin']}', title: '${f['plugin']}', launch: {'type': f['type'], 'id': f['id'], 'title': f['title'], 'year': f['year']}),
-          trailing: PekButton(compact: true, label: 'Remove', onTap: () => Store.removePluginFavorite('${f['key']}')),
+        PosterCard(
+          title: '${f['title']}',
+          subtitle: (f['year'] as num?) != null && (f['year'] as num) > 0 ? '${f['year']}' : ('${f['type']}' == 'tv' ? 'TV show' : 'Movie'),
+          poster: _poster(f),
+          onTap: () => _playWith(context, f), // asks which video plugin to play it with
+          onLongPress: () => Store.removePluginFavorite('${f['key']}'),
         ),
+    ];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(height: 1.5 * rem),
+      Text('Saved from plugins', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: p.tokens.text)),
+      SizedBox(height: 0.6 * rem),
+      CustomScrollView(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        slivers: [PekGridSliver(count: cells.length, minWidth: p.compact ? 110 : 200, gap: p.compact ? 0.6 * rem : rem, builder: (_, i) => cells[i])],
+      ),
+      SizedBox(height: 0.5 * rem),
+      Text('Long-press a poster to remove it.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
     ]);
   }
 }
 
+
+/// "Up next" for a stream a plugin started (Stream Media): opens that plugin on the show's next episode and tells it to play it.
+/// The plugin finds the release itself and hands it to PEK's loading box and player, the same as pressing the episode there.
+class PluginNextEpisodeScreen extends StatefulWidget {
+  const PluginNextEpisodeScreen({super.key, required this.next});
+  final Progress next;
+
+  @override
+  State<PluginNextEpisodeScreen> createState() => _PluginNextEpisodeScreenState();
+}
+
+class _PluginNextEpisodeScreenState extends State<PluginNextEpisodeScreen> {
+  late final Future<int> _id = _find();
+
+  Future<int> _find() async {
+    final kept = (widget.next.torrent?['tmdb'] as num?)?.toInt() ?? 0;
+    if (kept > 0) return kept;
+    try {
+      return await RecFeed.tvIdByName(widget.next.showTitle);
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = widget.next;
+    final known = (PluginHost.streamers ?? const <Map<String, String>>[]).where((e) => e['id'] == n.origin).firstOrNull;
+    final name = known?['name'] ?? n.origin;
+    return FutureBuilder<int>(
+      future: _id,
+      builder: (context, snap) {
+        final p = context.pek;
+        if (snap.connectionState != ConnectionState.done) {
+          return SubScreen(
+            title: name,
+            body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const CircularProgressIndicator(),
+              SizedBox(height: p.rem),
+              Text('Finding ${n.title}\u2026', style: TextStyle(color: p.tokens.textMuted)),
+            ])),
+          );
+        }
+        final id = snap.data ?? 0;
+        if (id <= 0) {
+          return SubScreen(title: name, body: Center(child: Padding(padding: EdgeInsets.all(p.rem), child: Text('Could not find ${n.title}. Open ${n.showTitle} in $name to play the next episode.', textAlign: TextAlign.center, style: TextStyle(color: p.tokens.textMuted)))));
+        }
+        return SubScreen(
+          title: name,
+          body: Builder(builder: (c) => PluginView(
+                pluginId: n.origin,
+                padding: c.pek.pagePad,
+                launch: {'type': 'tv', 'id': id, 'title': n.showTitle, 'year': 0, 'season': n.season, 'episode': n.episode, 'autoplay': true},
+              )),
+        );
+      },
+    );
+  }
+}
 
 /// `ui.tabs`: a single rounded strip, the chosen tab filled with the accent. It scrolls sideways when there are many
 /// (a season list), instead of stacking one full-width button per tab.

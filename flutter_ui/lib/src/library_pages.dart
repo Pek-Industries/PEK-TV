@@ -7,7 +7,6 @@ import 'common.dart';
 import 'detail.dart';
 import 'fields.dart';
 import 'pages.dart' show ResumeThumb;
-import 'plugin_ui.dart' show PluginFavoritesSection;
 import 'ratings.dart';
 import 'ratings_export.dart';
 import 'store.dart';
@@ -577,25 +576,66 @@ class HistoryPage extends StatelessWidget {
             ),
             for (final e in items)
               ListRow(
+                leading: FinishedThumb(key: ValueKey('fin-${e.key}'), entry: e),
                 title: e.label,
                 subtitle: '${_when(e.at)}${e.count > 1 ? ' \u00b7 watched ${e.count} times' : ''}${Ratings.ofTarget(targetOfHistory(e)) > 0 ? ' \u00b7 \u2605 ${Ratings.ofTarget(targetOfHistory(e))}/${Ratings.max}' : ''}',
+                onTap: () => showFinishedPreview(context, e), // the same page as Continue watching: picture, description, Play
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   IconButton(
                     tooltip: 'Rate',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    padding: EdgeInsets.zero,
                     icon: Icon(Ratings.ofTarget(targetOfHistory(e)) > 0 ? Icons.star_rounded : Icons.star_outline_rounded),
                     onPressed: () => showRateDialog(context, title: e.title, year: e.year, kind: e.kind, season: e.season, episode: e.episode),
                   ),
-                  IconButton(tooltip: 'Remove', icon: const Icon(Icons.close), onPressed: () async {
-                    if (!await confirmRemoveFromHistory(context, e.label)) return;
-                    await Store.removeHistory(e.key);
-                    Watched.syncSoon();
-                  }),
+                  IconButton(
+                    tooltip: 'Remove',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.close),
+                    onPressed: () async {
+                      if (!await confirmRemoveFromHistory(context, e.label)) return;
+                      await Store.removeHistory(e.key);
+                      Watched.syncSoon();
+                    },
+                  ),
                 ]),
               ),
           ],
-          const PluginFavoritesSection(),
         ]);
       },
+    );
+  }
+}
+
+
+/// The poster at the left of a Finished row in Watch History, the same size as the Continue watching ones (no progress bar).
+/// A library title uses its library artwork; anything else (a plugin or Trakt watch) is looked up on TMDb by name.
+class FinishedThumb extends StatefulWidget {
+  const FinishedThumb({super.key, required this.entry});
+  final HistoryEntry entry;
+
+  @override
+  State<FinishedThumb> createState() => _FinishedThumbState();
+}
+
+class _FinishedThumbState extends State<FinishedThumb> {
+  late final Future<Details> _art = finishedArt(widget.entry);
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final t = p.tokens;
+    final w = (p.compact ? 5.5 : 7.5) * p.rem;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: w,
+        height: w * 1.5,
+        child: ColoredBox(color: t.surface, child: PosterImage(poster: _art, title: widget.entry.title, width: 400)),
+      ),
     );
   }
 }

@@ -444,6 +444,21 @@ class Store {
     if (notify) PluginHooks.favorited([(kind: type == 'tv' ? 'show' : 'movie', title: title, year: type == 'tv' ? 0 : year, tmdb: id)], true);
   }
 
+  /// A favorite that was saved without a picture (a Trakt one) gets its TMDb poster path kept once it is found, so it shows
+  /// at once next time and offline. Quiet: no repaint, and the sync timestamp is left alone.
+  static Future<void> setPluginFavoritePoster(String key, String posterPath) async {
+    if (posterPath.isEmpty) return;
+    final l = _list(_pluginFavKey);
+    var changed = false;
+    for (final e in l) {
+      if (e['key'] == key && '${e['posterPath'] ?? ''}' != posterPath) {
+        e['posterPath'] = posterPath;
+        changed = true;
+      }
+    }
+    if (changed) await _p.setString(_pluginFavKey, jsonEncode(l));
+  }
+
   static Future<void> removePluginFavorite(String key, {bool notify = true}) async {
     final l = _list(_pluginFavKey);
     final n = l.length;

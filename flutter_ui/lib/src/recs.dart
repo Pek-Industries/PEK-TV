@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-import 'api.dart' show Details;
+import 'api.dart' show Details, EpisodeInfo;
 import 'plugin_ui.dart' show openPluginScreen;
 import 'ratings.dart';
 import 'store.dart';
@@ -233,6 +233,68 @@ class RecFeed {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Poster address and synopsis of a title asked from TMDb by name. For things the library knows nothing about (a stream a
+  /// plugin or torrent started, a watch imported from Trakt). null = nothing found or no connection.
+  static Future<Details?> lookup(String title, {int year = 0, bool tv = false}) async {
+    final name = title.trim();
+    if (name.isEmpty) return null;
+    final q = Uri.encodeQueryComponent(name);
+    final kind = tv ? 'tv' : 'movie';
+    var found = await _get('/search/$kind?query=$q${!tv && year > 0 ? '&year=$year' : ''}');
+    var res = found?['results'];
+    if ((res is! List || res.isEmpty) && !tv && year > 0) {
+      found = await _get('/search/$kind?query=$q'); // the year may be one off between sources
+      res = found?['results'];
+    }
+    if (res is! List || res.isEmpty) return null;
+    Map? pick;
+    for (final e in res) {
+      if (e is Map && Store.normalize('${e[tv ? 'name' : 'title'] ?? ''}') == Store.normalize(name)) {
+        pick = e;
+        break;
+      }
+    }
+    pick ??= res.first is Map ? res.first as Map : null;
+    if (pick == null) return null;
+    final poster = '${pick['poster_path'] ?? ''}';
+    return Details(overview: '${pick['overview'] ?? ''}', poster: poster.isEmpty ? '' : 'https://image.tmdb.org/t/p/w342$poster');
+  }
+
+  /// The TMDb id of the show called [name] (an exact name match first, else the top result), or 0 when none is found.
+  static Future<int> tvIdByName(String name) async {
+    final q = name.trim();
+    if (q.isEmpty) return 0;
+    final found = await _get('/search/tv?query=${Uri.encodeQueryComponent(q)}');
+    final res = found?['results'];
+    if (res is! List || res.isEmpty) return 0;
+    Map? pick;
+    for (final e in res) {
+      if (e is Map && Store.normalize('${e['name'] ?? ''}') == Store.normalize(q)) {
+        pick = e;
+        break;
+      }
+    }
+    pick ??= res.first is Map ? res.first as Map : null;
+    final id = pick?['id'];
+    return id is num ? id.toInt() : 0;
+  }
+
+  /// The poster path ("/abc.jpg") of a TMDb movie or show id, or '' when it has none or the lookup failed.
+  static Future<String> posterPathById(int id, bool tv) async {
+    if (id <= 0) return '';
+    final j = await _get('/${tv ? 'tv' : 'movie'}/$id');
+    final p = '${j?['poster_path'] ?? ''}';
+    return RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(p) ? p : '';
+  }
+
+  /// One episode's title, synopsis and still, asked from TMDb by show name. null = nothing found.
+  static Future<EpisodeInfo?> lookupEpisode(String show, int season, int episode) async {
+    final j = await _get('/episode?query=${Uri.encodeQueryComponent(show.trim())}&season=$season&episode=$episode');
+    if (j == null) return null;
+    final still = '${j['still_path'] ?? ''}';
+    return EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: still.isEmpty ? '' : 'https://image.tmdb.org/t/p/w300$still');
   }
 
   /// The titles in a TMDb list answer. Anything without an id, a title or a poster is dropped. Pure, so it can be tested.

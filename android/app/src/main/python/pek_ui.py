@@ -409,10 +409,20 @@ def open_plugin(plugin_id, kind, tmdb_id, title="", year=0):
                                                        "year": int(year or 0)})
 
 
-def play_torrent(source, label, season=0, episode=0, kind="movie", name="", year=0, image=""):
+def _tmdb_id(v):
+    """A TMDb id from a plugin: a positive whole number, else 0."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return n if 0 < n < 100000000 else 0
+
+
+def play_torrent(source, label, season=0, episode=0, kind="movie", name="", year=0, image="", tmdb=0):
     """Start a stream in PEK's own player (loading box, buffering, Resume Watching). Needs "torrent": true.
     source is a magnet link, or an https .torrent link on a host listed under permissions.network. PEK shows the
-    loading screen itself, so the plugin never touches the download. kind is 'movie' or 'episode'."""
+    loading screen itself, so the plugin never touches the download. kind is 'movie' or 'episode'. tmdb is the title's
+    TMDb id (optional): PEK keeps it so "Up next" can reopen the right show without a name search."""
     s = _sess()
     s.need("torrent")
     src = _s(source, 8000).strip()
@@ -428,7 +438,7 @@ def play_torrent(source, label, season=0, episode=0, kind="movie", name="", year
     if kind not in ("movie", "episode"):
         raise ValueError("kind must be movie or episode")
     s.effect("torrent.play", source=src, title=_s(label, 200), season=int(season or 0), episode=int(episode or 0),
-             kind=kind, name=_s(name, 200), year=int(year or 0), image=_s(image, 200))
+             kind=kind, name=_s(name, 200), year=int(year or 0), image=_s(image, 200), tmdb=_tmdb_id(tmdb))
 
 
 # ---------------------------------------------------------------------------------------------------------

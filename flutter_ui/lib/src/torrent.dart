@@ -10,6 +10,7 @@ import 'api.dart';
 import 'common.dart';
 import 'fields.dart';
 import 'player.dart';
+import 'plugin_host.dart' show PluginHost;
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -99,13 +100,14 @@ class TorrentApi {
 
 /// What to remember for Resume Watching and how to start a pasted release again.
 class TorrentTitle {
-  const TorrentTitle({required this.kind, required this.title, this.showTitle = '', this.year = 0, this.season = 0, this.episode = 0});
+  const TorrentTitle({required this.kind, required this.title, this.showTitle = '', this.year = 0, this.season = 0, this.episode = 0, this.tmdb = 0});
   final String kind; // 'movie' | 'episode' | 'other'
   final String title; // what the player shows
   final String showTitle;
   final int year;
   final int season;
   final int episode;
+  final int tmdb; // the title's TMDb id when a plugin knew it (0 = unknown); "Up next" uses it to reopen the right show
 
   static String _clean(String s) => s.replaceAll(RegExp(r'[._]+'), ' ').replaceAll(RegExp(r'\s+'), ' ').replaceAll(RegExp(r'[\s\-(\[]+$'), '').trim();
 
@@ -152,7 +154,7 @@ class TorrentTitle {
       year: year,
       season: season,
       episode: episode,
-      torrent: {'source': source, 'title': title, 'season': season, 'episode': episode},
+      torrent: {'source': source, 'title': title, 'season': season, 'episode': episode, if (tmdb > 0) 'tmdb': tmdb},
       origin: origin,
       image: image,
     );
@@ -233,6 +235,7 @@ class _TorrentLoadingScreenState extends State<TorrentLoadingScreen> {
       }
       _opened = true;
       final hash = _hash;
+      unawaited(PluginHost.refreshStreamers()); // the Up next card is only offered while the plugin that started this is installed
       await Navigator.pushReplacement(
         context,
         MaterialPageRoute<void>(
@@ -241,6 +244,7 @@ class _TorrentLoadingScreenState extends State<TorrentLoadingScreen> {
             title: widget.track.title,
             startSec: widget.startSec,
             resume: widget.track,
+            nextFor: _nextFromPlugin,
             torrentHash: hash,
             onClose: () => unawaited(TorrentApi.stop(hash)),
           ),
@@ -250,6 +254,31 @@ class _TorrentLoadingScreenState extends State<TorrentLoadingScreen> {
       if (_hash.isNotEmpty) unawaited(TorrentApi.stop(_hash));
       if (mounted && !_cancelled) setState(() => _error = e is ApiError ? e.message : 'Could not start this torrent.');
     }
+  }
+
+  /// "Up next" for an episode a plugin (Stream Media) started: the same show's next episode. Accepting it opens that plugin on the
+  /// episode and it finds the best stream itself, so this only says which episode and which plugin. A pasted release (no plugin) gets none.
+  static Progress? _nextFromPlugin(Progress cur) {
+    final t = cur.torrent;
+    if (t == null || cur.kind != 'episode' || cur.season <= 0 || cur.episode <= 0 || cur.showTitle.isEmpty) return null;
+    final streamers = PluginHost.streamers ?? const <Map<String, String>>[];
+    if (!streamers.any((e) => e['id'] == cur.origin && e['stream'] == 'true')) return null;
+    final ep = cur.episode + 1;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return Progress(
+      id: 'tor:next:${cur.showTitle}|${cur.season}|$ep',
+      title: '${cur.showTitle} S${two(cur.season)}E${two(ep)}',
+      kind: 'episode',
+      position: 0,
+      duration: 0,
+      updated: 0,
+      showTitle: cur.showTitle,
+      season: cur.season,
+      episode: ep,
+      torrent: {'source': '', 'title': '${cur.showTitle} S${two(cur.season)}E${two(ep)}', 'season': cur.season, 'episode': ep, 'next': true, if (((cur.torrent?['tmdb'] as num?)?.toInt() ?? 0) > 0) 'tmdb': (cur.torrent!['tmdb'] as num).toInt()},
+      origin: cur.origin,
+      image: cur.image,
+    );
   }
 
   void _cancel() {

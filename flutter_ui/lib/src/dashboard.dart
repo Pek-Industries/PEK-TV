@@ -557,13 +557,14 @@ class _DashboardPageState extends State<DashboardPage> {
       case 'continue':
         final items = Store.resumeItems().take(12).toList();
         if (items.isEmpty) return null;
-        return _row(context, 'Continue Watching', widget.onOpenResume, scale: 1.3, [
+        return _row(context, 'Continue Watching', widget.onOpenResume, scale: 1.3, widthFactors: [for (final r in items) resumeShowsStill(r) ? 1.7 : 1.0], [
           for (final r in items)
             PosterCard(onLongPress: () => showResumePreview(context, r), holdSelect: true, // hold: picture, description, Continue / Start over
               title: r.title,
               subtitle: r.duration > 0 ? '${(100 * r.position / r.duration).round()}% watched' : formatTime(r.position),
-              // A library title uses its library artwork; a stream started from a plugin carries its own picture.
-              poster: r.isTorrent ? Future.value(const Details(overview: '', poster: '')) : (r.kind == 'movie' ? Api.movieDetails(r.id) : Api.showDetails(r.showTitle)),
+              // An episode shows its own still; a library title its library artwork; a plugin stream the picture it brought.
+              poster: resumeArtFor(r),
+              aspectRatio: resumeShowsStill(r) ? 16 / 9 : 2 / 3,
               fallbackImage: r.image,
               progress: r.duration > 0 ? r.position / r.duration : null,
               onTap: () => playResumeOrStart(context, r),
@@ -626,7 +627,7 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   /// One widget: a heading (tap = see all) and a horizontal row of posters.
-  _Node _row(BuildContext context, String title, VoidCallback? more, List<Widget> cells, {double scale = 1.0}) {
+  _Node _row(BuildContext context, String title, VoidCallback? more, List<Widget> cells, {double scale = 1.0, List<double>? widthFactors}) {
     final p = context.pek;
     final rem = p.rem;
     final w = (p.compact ? 110.0 : (p.isTv ? 8 * rem : 150.0)) * scale;
@@ -648,7 +649,7 @@ class _DashboardPageState extends State<DashboardPage> {
             clipBehavior: Clip.none,
             itemCount: cells.length,
             separatorBuilder: (_, __) => SizedBox(width: 0.75 * rem),
-            itemBuilder: (_, i) => SizedBox(width: w, child: Align(alignment: Alignment.topCenter, child: cells[i])),
+            itemBuilder: (_, i) => SizedBox(width: w * (widthFactors != null && i < widthFactors.length ? widthFactors[i] : 1.0), child: Align(alignment: Alignment.topCenter, child: cells[i])),
           ),
         ),
       ]),

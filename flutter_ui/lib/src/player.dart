@@ -11,6 +11,7 @@ import 'live_tv.dart';
 import 'mpv.dart';
 import 'music_controller.dart';
 import 'plugin_hooks.dart';
+import 'plugin_ui.dart' show PluginNextEpisodeScreen;
 import 'skip.dart';
 import 'store.dart';
 import 'subtitles.dart';
@@ -70,6 +71,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _allowExit = false; // set when leaving needs no question (the film ended); otherwise Back asks first
   bool _askingExit = false;
   bool _leaving = false; // replaced by the next episode: the shared player must not be torn down
+  bool _handedOff = false; // the next episode is a plugin's: its screen takes over and the shared player is torn down as usual
   bool _hookStarted = false; // plugins with the "playback" permission were told playback began
   bool _hookPaused = false;
 
@@ -142,7 +144,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _toastTimer?.cancel();
     _tv?.removeListener(_onTv);
     _tv?.dispose();
-    if (!_leaving) {
+    if (!_leaving || _handedOff) {
       unawaited(_player.destroy());
       _player.reset();
     }
@@ -205,6 +207,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       Store.saveProgress(r.at(dur, dur), notify: true); // finished
       if (_hookStarted) PluginHooks.playback('stop', r, dur, dur);
       _hookStarted = false;
+    }
+    if (n.isTorrent) {
+      // A stream a plugin started: the plugin finds the next episode's release, so its screen opens on that episode.
+      _handedOff = true;
+      Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => PluginNextEpisodeScreen(next: n)));
+      return;
     }
     Navigator.of(context).pushReplacement(MaterialPageRoute<void>(
       builder: (_) => PlayerScreen(url: Api.streamUrl(n.id), title: n.title, resume: n, nextFor: widget.nextFor),
