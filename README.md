@@ -3,7 +3,7 @@
 A media center with a sandboxed plugin system, network library support and a TV-first interface. It is in beta, so expect rough edges.
 
 Website:
-https://pek-tv.web.app
+https://pekindustries.com
 
 ## Screenshots
 
