@@ -86,8 +86,12 @@ const SESSION_TTL = 90 * 24 * 3600 * 1000;
 // Lapsed plans (see cloud/BILLING-DEPLOY.md, "When a plan lapses"): a missed renewal keeps PEK Cloud on for GRACE_MS (the same number as in
 // billing-worker.js); once that is over the account has DELETE_DAYS (Text variable on this worker, default 30) to subscribe again, then
 // the account and everything stored in it is deleted for good by the daily job at the bottom of this file.
-const GRACE_MS = 3 * 24 * 3600 * 1000;
+const GRACE_MS = 14 * 24 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
+// Lapsed accounts get one email every 3 days, from the missed renewal all the way to the deletion (the last email is the "deleted" one).
+// The daily job runs at a fixed time, so a little slack keeps "every 3 days" from slipping to 4.
+const NOTICE_EVERY_MS = 3 * DAY_MS;
+const NOTICE_SLACK_MS = 2 * 3600 * 1000;
 function deleteMs(env) { const d = Number(env && env.DELETE_DAYS); return (d >= 1 && d <= 365 ? Math.floor(d) : 30) * DAY_MS; }
 const SESSION_REFRESH_BELOW = 60 * 24 * 3600 * 1000;
 const RESET_TTL = 15 * 60 * 1000;
@@ -138,6 +142,10 @@ async function init(db) {
     try { await db.prepare('ALTER TABLE users ADD COLUMN plan_since INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
     try { await db.prepare('ALTER TABLE users ADD COLUMN delete_at INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
     try { await db.prepare('ALTER TABLE users ADD COLUMN notice_stage INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
+    // When the last "your payment is overdue" email (grace period) was sent (ms): the daily job sends one per day while the grace lasts.
+    try { await db.prepare('ALTER TABLE users ADD COLUMN grace_mail_at INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
+    // When the last deletion-countdown email was sent (ms): the daily job sends one every NOTICE_EVERY_MS until the account is deleted.
+    try { await db.prepare('ALTER TABLE users ADD COLUMN notice_at INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
     // Sessions of accounts the daily job deleted: so the app and the website can say "your account was deleted" instead of just "sign in again".
     await db.prepare('CREATE TABLE IF NOT EXISTS gone_sessions (token_hash TEXT PRIMARY KEY, deleted INTEGER NOT NULL)').run();
     await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users (username COLLATE NOCASE) WHERE username <> ''").run();
@@ -1758,28 +1766,34 @@ async function sessionWasDeleted(request, db) {
 
 function longDate(ms) { return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(ms)); }
 
-// kind: 'started' (the deletion period began), 'final' (3 days left), 'deleted' (it is done)
+// kind: 'grace' (renewal overdue; deleteAt is then the end of the grace), 'started' (the deletion period began), 'reminder' (every 3 days after that), 'deleted' (it is done)
 async function sendLifecycleMail(env, to, kind, deleteAt) {
     if (!to || !emailReady(env)) return false;
     const date = longDate(deleteAt), link = webUrl(env) + '/account';
+    const daysLeft = Math.max(1, Math.ceil((Number(deleteAt) - Date.now()) / DAY_MS));
     const M = {
         started: { subject: 'Your PEK Cloud data will be deleted on ' + date, title: 'Your PEK Cloud plan has ended', lines: [
             'Cloud backup is switched off. If you do not subscribe again before ' + date + ', your account and everything stored in it (profiles, watch history, resume points and plugin backups) will be permanently deleted and cannot be recovered.',
             'Subscribing again before then turns everything back on exactly as it was.'] },
-        final: { subject: 'Last days: your PEK Cloud data is deleted on ' + date, title: 'Your PEK Cloud data is about to be deleted', lines: [
-            'Your account and everything stored in it will be permanently deleted on ' + date + ' unless you subscribe again before then. Deleted data cannot be recovered.'] },
+        grace: { subject: 'Your PEK Cloud payment is overdue', title: 'Payment overdue', lines: [
+            'We could not collect your PEK Cloud renewal. Cloud backup stays on until ' + date + '. Please update your payment method or pay before then to keep everything on.',
+            'If the plan is not paid by then, cloud backup is switched off and a countdown to deleting your account starts. You will get an email every 3 days from now until it is paid or the account is deleted.'] },
+        reminder: { subject: daysLeft + (daysLeft === 1 ? ' day' : ' days') + ' left: your PEK Cloud data is deleted on ' + date, title: 'Your PEK Cloud data will be deleted on ' + date, lines: [
+            'Your PEK Cloud plan has not been renewed. There ' + (daysLeft === 1 ? 'is 1 day' : 'are ' + daysLeft + ' days') + ' left: your account and everything stored in it (profiles, watch history, resume points and plugin backups) will be permanently deleted on ' + date + ' unless you subscribe again before then. Deleted data cannot be recovered.',
+            'Subscribing again before then turns everything back on exactly as it was. You will get another email every 3 days until then.'] },
         deleted: { subject: 'Your PEK Cloud account was deleted', title: 'Your PEK Cloud account was deleted', lines: [
             'Your plan was not renewed before ' + date + ', so your account and all the data stored in it were permanently deleted. This cannot be undone and the data cannot be recovered.',
             'You are welcome to create a new account at any time.'] }
     }[kind];
-    const text = M.title + '\n\n' + M.lines.join('\n\n') + (kind === 'deleted' ? '' : '\n\nSubscribe again: ' + link);
+    const text = M.title + '\n\n' + M.lines.join('\n\n') + (kind === 'deleted' ? '' : '\n\n' + (kind === 'grace' ? 'Update payment' : 'Subscribe again') + ': ' + link);
     const html = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:440px;margin:0 auto;padding:24px;color:#111"><h2 style="margin:0 0 12px">' + escHtml(M.title) + '</h2>' +
         M.lines.map(l => '<p style="margin:0 0 14px;line-height:1.5">' + escHtml(l) + '</p>').join('') +
-        (kind === 'deleted' ? '' : '<p style="margin:18px 0 0"><a href="' + escHtml(link) + '" style="background:#2b2420;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">Subscribe again</a></p>') + '</div>';
+        (kind === 'deleted' ? '' : '<p style="margin:18px 0 0"><a href="' + escHtml(link) + '" style="background:#2b2420;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">' + (kind === 'grace' ? 'Update payment' : 'Subscribe again') + '</a></p>') + '</div>';
     return postMail(env, to, M.subject, text, html);
 }
 
-// Runs once a day. 1) paid plans whose grace ran out start their deletion period; 2) emails; 3) accounts whose period is over are deleted.
+// Runs once a day. 1) paid plans whose grace ran out start their deletion period; 2) emails, one every 3 days (grace, then the countdown); 3) accounts whose period is over
+// are deleted and get the final "deleted" email.
 // Only accounts that had a paid renewing plan are ever touched (delete_at is only set for them); free accounts that never paid, lifetime and
 // grandfathered accounts are never deleted here, and a plan bought in time clears delete_at (billing-worker.js).
 async function runLifecycle(env) {
@@ -1789,13 +1803,19 @@ async function runLifecycle(env) {
     const now = Date.now(), del = deleteMs(env);
     // delete_at = the end of the grace plus the deletion period, but never less than 7 days from now: an account that lapsed long before this job existed still gets a warning first.
     await db.prepare("UPDATE users SET delete_at = MAX(plan_until + ?, ?), notice_stage = 0 WHERE plan IN ('monthly','yearly') AND plan_until > 0 AND plan_until <= ? AND delete_at = 0").bind(del, now + 7 * DAY_MS, now).run();
-    const waiting = await db.prepare("SELECT id, email, delete_at, notice_stage FROM users WHERE delete_at > ? AND plan NOT IN ('lifetime','grandfathered') LIMIT 500").bind(now).all();
+    // Grace: a renewal was missed but PEK Cloud is still on (see lapseOf). One reminder email every 3 days until it is paid or the grace ends.
+    const overdue = await db.prepare("SELECT id, email, plan_until FROM users WHERE plan IN ('monthly','yearly') AND plan_cancel = 0 AND plan_until > ? AND plan_until - ? <= ? AND grace_mail_at <= ? LIMIT 500").bind(now, GRACE_MS, now, now - NOTICE_EVERY_MS + NOTICE_SLACK_MS).all();
+    for (const u of (overdue.results || [])) {
+        if (await sendLifecycleMail(env, u.email, 'grace', u.plan_until)) await db.prepare('UPDATE users SET grace_mail_at = ? WHERE id = ?').bind(now, u.id).run();
+    }
+    const waiting = await db.prepare("SELECT id, email, delete_at, notice_stage, notice_at FROM users WHERE delete_at > ? AND plan NOT IN ('lifetime','grandfathered') LIMIT 500").bind(now).all();
     for (const u of (waiting.results || [])) {
         const left = Number(u.delete_at) - now;
         if (Number(u.notice_stage) < 1) {
-            if (await sendLifecycleMail(env, u.email, 'started', u.delete_at) || !emailReady(env)) await db.prepare('UPDATE users SET notice_stage = 1 WHERE id = ?').bind(u.id).run();
-        } else if (Number(u.notice_stage) < 2 && left <= 3 * DAY_MS) {
-            if (await sendLifecycleMail(env, u.email, 'final', u.delete_at) || !emailReady(env)) await db.prepare('UPDATE users SET notice_stage = 2 WHERE id = ?').bind(u.id).run();
+            if (await sendLifecycleMail(env, u.email, 'started', u.delete_at) || !emailReady(env)) await db.prepare('UPDATE users SET notice_stage = 1, notice_at = ? WHERE id = ?').bind(now, u.id).run();
+        } else if (left >= DAY_MS && now - Number(u.notice_at) >= NOTICE_EVERY_MS - NOTICE_SLACK_MS) {
+            // every 3 days until the end; none in the last day (the "deleted" email follows right after)
+            if (await sendLifecycleMail(env, u.email, 'reminder', u.delete_at) || !emailReady(env)) await db.prepare('UPDATE users SET notice_stage = notice_stage + 1, notice_at = ? WHERE id = ?').bind(now, u.id).run();
         }
     }
     const due = await db.prepare("SELECT id FROM users WHERE delete_at > 0 AND delete_at <= ? AND plan NOT IN ('lifetime','grandfathered') AND NOT (plan IN ('monthly','yearly') AND plan_until > ?) LIMIT 25").bind(now, now).all();

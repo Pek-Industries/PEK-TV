@@ -28,7 +28,7 @@
 //   POST  /v1/billing/portal    {}                                -> { ok, url }   (Stripe's page to cancel, change card, see invoices)
 //   POST  /v1/billing/webhook                                     Stripe -> worker (checked with the webhook secret)
 
-const GRACE_MS = 3 * 24 * 3600 * 1000;     // a renewal that is a little late does not lock someone out right away
+const GRACE_MS = 14 * 24 * 3600 * 1000;     // a renewal that is a little late does not lock someone out right away
 // When a subscription ends for good the account has DELETE_DAYS (Text variable, default 30; set the same value on the cloud worker) to subscribe
 // again before cloud/worker.js's daily job deletes it. Buying any plan clears the countdown.
 function deleteMs(env) { const d = Number(env && env.DELETE_DAYS); return (d >= 1 && d <= 365 ? Math.floor(d) : 30) * 24 * 3600 * 1000; }

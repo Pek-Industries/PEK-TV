@@ -20,7 +20,7 @@ the cloud which plan the account has (`GET /v1/me`) and opens the website for up
   Stripe's webhook. It is the only thing that changes a plan. It shares the same D1 database.
 - `public/pektv/account.html` + `public/pektv/js/account.js` (website, at `pekindustries.com/pektv/account`): create account, sign in, pick a plan, pay, manage.
 - Accounts that existed before this update are **grandfathered**: everything unlocked, forever. New sign-ups start free.
-- Renewing plans stay on for 3 days after a missed renewal date, then lock until Stripe collects the payment. Buying
+- Renewing plans stay on for 2 weeks after a missed renewal date, then lock until Stripe collects the payment. Buying
   lifetime while subscribed cancels the subscription so nobody is charged twice. A renewing subscription has to be
   cancelled (portal) before the account can be deleted, otherwise Stripe would keep charging.
 - **When a plan lapses, the account is eventually deleted** (see "When a plan lapses" below). Only accounts that had a monthly or yearly plan are ever
@@ -82,13 +82,13 @@ Do this **before** deploying the billing worker or the new app.
 
 | Step | When | What the person sees |
 |---|---|---|
-| Grace | A renewal is missed: from the renewal date for 3 days (`GRACE_MS`). PEK Cloud stays on. | The app shows a banner across the top of its screen for as long as the plan is lapsed (never over a movie or episode) and every website page shows the same bar above its menu while the person is signed in. |
-| Deletion period | After the grace, backup is off. The account has `DELETE_DAYS` (default 30) to subscribe again. | A banner across the top of the app and of every website page (while signed in) says the exact date the account and its data will be deleted. Emails: when it starts and 3 days before the end. |
+| Grace | A renewal is missed: from the renewal date for 14 days (`GRACE_MS`). PEK Cloud stays on. One "payment overdue" email every 3 days (the daily job). | The app shows a banner across the top of its screen for as long as the plan is lapsed (never over a movie or episode) and every website page shows the same bar above its menu while the person is signed in. |
+| Deletion period | After the grace, backup is off. The account has `DELETE_DAYS` (default 30) to subscribe again. | A banner across the top of the app and of every website page (while signed in) says the exact date the account and its data will be deleted. Emails: when it starts, then one every 3 days until the end, and a last one when the account is deleted. |
 | Deleted | The date passes with no plan bought. | The account and everything in it (profiles, watch history, resume points, plugin backups) is deleted for good and cannot be recovered. A device that still has a session is told once and signed out; the person is emailed. |
 
 Buying any plan at any point clears the countdown. A subscription that Stripe ends for good (cancelled, or unpaid after its retries) also starts the countdown
 (at least the grace is honoured first). The countdown only exists for accounts that had a renewing plan; it is stored in `users.delete_at` (the moment of deletion,
-0 = none) and `users.notice_stage` (which email was sent last). Accounts that were already lapsed before this update get at least 7 days' warning from the
+0 = none) and `users.notice_stage` (how many countdown emails were sent) and `users.notice_at` (when the last one went out). Accounts that were already lapsed before this update get at least 7 days' warning from the
 first daily run.
 
 **Set up the daily job (once):**
@@ -96,10 +96,10 @@ first daily run.
 1. Cloudflare -> the cloud worker (`hesper-sync`) -> **Settings** -> **Variables and Secrets** -> add Type **Text** `DELETE_DAYS` = `30` (optional; 1 to 365, default 30). Keep
    `plans.html` and the Plans text on the website in step if you change it. Add the same variable on `pek-billing` so cancelled subscriptions get the same countdown.
 2. Same worker -> **Settings** -> **Triggers** -> **Cron Triggers** -> Add -> `0 3 * * *` (every day at 03:00 UTC). This runs the job in `cloud/worker.js`
-   (`scheduled`): it starts countdowns, sends the two warning emails and deletes the accounts whose date has passed. Without the trigger nothing is ever deleted and no
+   (`scheduled`): it starts countdowns, sends the warning emails (one every 3 days) and deletes the accounts whose date has passed. Without the trigger nothing is ever deleted and no
    warning emails are sent (the in-app and website notices still show).
 3. Emails need `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` on the cloud worker (already needed for sign-in codes).
-4. Deploy `cloud/worker.js` **before** `cloud/billing-worker.js` (both add the new columns `plan_since`, `delete_at`, `notice_stage`; the worker also creates the `gone_sessions` table).
+4. Deploy `cloud/worker.js` **before** `cloud/billing-worker.js` (both add the new columns `plan_since`, `delete_at`, `notice_stage`; the cloud worker also adds `notice_at`; the worker also creates the `gone_sessions` table).
 
 **Test it without waiting** (D1 -> Console), then run the worker's cron from the dashboard (Triggers -> the cron -> *Run*, or `wrangler dev --test-scheduled`):
 
