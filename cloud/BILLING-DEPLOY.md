@@ -23,6 +23,8 @@ the cloud which plan the account has (`GET /v1/me`) and opens the website for up
 - Renewing plans stay on for 3 days after a missed renewal date, then lock until Stripe collects the payment. Buying
   lifetime while subscribed cancels the subscription so nobody is charged twice. A renewing subscription has to be
   cancelled (portal) before the account can be deleted, otherwise Stripe would keep charging.
+- **When a plan lapses, the account is eventually deleted** (see "When a plan lapses" below). Only accounts that had a monthly or yearly plan are ever
+  touched. Free accounts that never paid, lifetime and grandfathered accounts are never deleted for non-payment.
 
 ## 1. Stripe (start in TEST mode)
 
@@ -76,13 +78,47 @@ Do this **before** deploying the billing worker or the new app.
    and add the webhook endpoint again in live mode (it has its own `whsec_...`).
 2. Replace `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in the worker with the live values. No code changes.
 
+## When a plan lapses (reminders, then deletion)
+
+| Step | When | What the person sees |
+|---|---|---|
+| Grace | A renewal is missed: from the renewal date for 3 days (`GRACE_MS`). PEK Cloud stays on. | The app shows a box every 24 hours (never over a movie or episode) and the website's account page shows a notice. |
+| Deletion period | After the grace, backup is off. The account has `DELETE_DAYS` (default 30) to subscribe again. | The app (every 24 hours) and the account page say the exact date the account and its data will be deleted. Emails: when it starts and 3 days before the end. |
+| Deleted | The date passes with no plan bought. | The account and everything in it (profiles, watch history, resume points, plugin backups) is deleted for good and cannot be recovered. A device that still has a session is told once and signed out; the person is emailed. |
+
+Buying any plan at any point clears the countdown. A subscription that Stripe ends for good (cancelled, or unpaid after its retries) also starts the countdown
+(at least the grace is honoured first). The countdown only exists for accounts that had a renewing plan; it is stored in `users.delete_at` (the moment of deletion,
+0 = none) and `users.notice_stage` (which email was sent last). Accounts that were already lapsed before this update get at least 7 days' warning from the
+first daily run.
+
+**Set up the daily job (once):**
+
+1. Cloudflare -> the cloud worker (`hesper-sync`) -> **Settings** -> **Variables and Secrets** -> add Type **Text** `DELETE_DAYS` = `30` (optional; 1 to 365, default 30). Keep
+   `plans.html` and the Plans text on the website in step if you change it. Add the same variable on `pek-billing` so cancelled subscriptions get the same countdown.
+2. Same worker -> **Settings** -> **Triggers** -> **Cron Triggers** -> Add -> `0 3 * * *` (every day at 03:00 UTC). This runs the job in `cloud/worker.js`
+   (`scheduled`): it starts countdowns, sends the two warning emails and deletes the accounts whose date has passed. Without the trigger nothing is ever deleted and no
+   warning emails are sent (the in-app and website notices still show).
+3. Emails need `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` on the cloud worker (already needed for sign-in codes).
+4. Deploy `cloud/worker.js` **before** `cloud/billing-worker.js` (both add the new columns `plan_since`, `delete_at`, `notice_stage`; the worker also creates the `gone_sessions` table).
+
+**Test it without waiting** (D1 -> Console), then run the worker's cron from the dashboard (Triggers -> the cron -> *Run*, or `wrangler dev --test-scheduled`):
+
+```sql
+-- pretend this account's plan ended 40 days ago (it should get a warning window, not be deleted at once)
+UPDATE users SET plan = 'monthly', plan_until = strftime('%s','now')*1000 - 40*86400000, delete_at = 0, notice_stage = 0 WHERE email = 'test@example.com';
+-- put the deletion date in the past to watch it delete
+UPDATE users SET delete_at = strftime('%s','now')*1000 - 1000 WHERE email = 'test@example.com';
+```
+
+Use a throwaway account: the job really deletes.
+
 ## Granting or removing a plan by hand
 
 In Cloudflare -> D1 -> `hesper-sync` -> Console:
 
 ```sql
-UPDATE users SET plan = 'lifetime', plan_until = 0 WHERE email = 'friend@example.com';   -- give someone PEK Cloud
-UPDATE users SET plan = 'free', plan_until = 0, plan_cancel = 0, stripe_sub = '' WHERE email = 'someone@example.com';
+UPDATE users SET plan = 'lifetime', plan_until = 0, plan_since = strftime('%s','now')*1000, delete_at = 0, notice_stage = 0 WHERE email = 'friend@example.com';   -- give someone PEK Cloud
+UPDATE users SET plan = 'free', plan_until = 0, plan_cancel = 0, stripe_sub = '', delete_at = 0, notice_stage = 0 WHERE email = 'someone@example.com';   -- delete_at = 0: this account is never deleted for non-payment
 ```
 
 Plan values: `free`, `grandfathered`, `monthly`, `yearly`, `lifetime`.

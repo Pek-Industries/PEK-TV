@@ -47,6 +47,11 @@ class Cloud {
   static const _kPlan = 'pek_plan';
   static const _kPlanOk = 'pek_plan_ok';
   static const _kPlanUntil = 'pek_plan_until';
+  static const _kSince = 'pek_plan_since'; // when the current paid plan started (ms), 0 = not known
+  static const _kLapse = 'pek_lapse'; // 'none' | 'grace' | 'deletion' (a plan that was not renewed)
+  static const _kLapseGrace = 'pek_lapse_grace'; // the moment the grace period ends (ms)
+  static const _kLapseDelete = 'pek_lapse_delete'; // the moment the account and its data are deleted (ms)
+  static const _kGone = 'pek_account_gone'; // '1' once the cloud said the account was deleted (until the person has been told)
 
   /// The website where PEK Cloud is bought (never inside the app).
   static const siteUrl = 'https://pekindustries.com/pektv';
@@ -86,6 +91,21 @@ class Cloud {
   /// When a monthly / yearly plan runs out unless it renews (ms since 1970), 0 for the other plans.
   static int get planUntil => int.tryParse(Store.strGet(_kPlanUntil, scoped: false) ?? '') ?? 0;
   static bool get renews => plan == 'monthly' || plan == 'yearly';
+  /// When the current paid plan started (ms since 1970), 0 when it is not known (free accounts, included accounts, or an older subscription the cloud has no date for yet).
+  static int get planSince => int.tryParse(Store.strGet(_kSince, scoped: false) ?? '') ?? 0;
+  /// A plan that was not renewed: 'grace' (still on, pay now), 'deletion' (backup is off, the account and its data will be deleted at [deleteAt]) or 'none'.
+  static String get lapseState => linked ? (Store.strGet(_kLapse, scoped: false) ?? 'none') : 'none';
+  static int get graceEnds => int.tryParse(Store.strGet(_kLapseGrace, scoped: false) ?? '') ?? 0;
+  static int get deleteAt => int.tryParse(Store.strGet(_kLapseDelete, scoped: false) ?? '') ?? 0;
+
+  /// True from the moment the cloud told this device that its account was deleted (a lapsed plan was not renewed in time) until the person has been told.
+  static bool get goneNoticePending => Store.strGet(_kGone, scoped: false) == '1';
+  static Future<void> clearGoneNotice() => Store.strDel(_kGone, scoped: false);
+
+  static Future<void> _gone() async {
+    await Store.strSet(_kGone, '1', scoped: false);
+    await _unlink();
+  }
 
   static String get planLabel {
     switch (plan) {
@@ -107,10 +127,20 @@ class Cloud {
     if (p is! String || p.isEmpty) return; // an older cloud service that has no plans yet
     final ok = b['entitled'] == true ? '1' : '0';
     final until = '${(b['until'] as num?)?.toInt() ?? 0}';
-    final changed = plan != p || Store.strGet(_kPlanOk, scoped: false) != ok || Store.strGet(_kPlanUntil, scoped: false) != until;
+    final since = '${(b['since'] as num?)?.toInt() ?? 0}';
+    final lapse = b['lapse'] is Map ? Map<String, dynamic>.from(b['lapse'] as Map) : const <String, dynamic>{};
+    final state = lapse['state'] is String && const ['grace', 'deletion'].contains(lapse['state']) ? lapse['state'] as String : 'none';
+    final grace = '${(lapse['graceEnds'] as num?)?.toInt() ?? 0}';
+    final del = '${(lapse['deleteAt'] as num?)?.toInt() ?? 0}';
+    final changed = plan != p || Store.strGet(_kPlanOk, scoped: false) != ok || Store.strGet(_kPlanUntil, scoped: false) != until ||
+        Store.strGet(_kSince, scoped: false) != since || Store.strGet(_kLapse, scoped: false) != state || Store.strGet(_kLapseDelete, scoped: false) != del;
     await Store.strSet(_kPlan, p, scoped: false);
     await Store.strSet(_kPlanOk, ok, scoped: false);
     await Store.strSet(_kPlanUntil, until, scoped: false);
+    await Store.strSet(_kSince, since, scoped: false);
+    await Store.strSet(_kLapse, state, scoped: false);
+    await Store.strSet(_kLapseGrace, grace, scoped: false);
+    await Store.strSet(_kLapseDelete, del, scoped: false);
     if (changed) changes.value++;
   }
 
@@ -134,6 +164,8 @@ class Cloud {
           changes.value++;
         }
         await _savePlan(r.body);
+      } else if (r.status == 410 && r.body['error'] == 'account_deleted') {
+        await _gone(); // the account was deleted (a lapsed plan was not renewed in time)
       } else if (r.status == 404) {
         await _savePlan({'plan': 'grandfathered', 'entitled': true, 'until': 0}); // a cloud service from before plans: nothing is locked
       }
@@ -185,6 +217,8 @@ class Cloud {
         return 'Too many tries. Wait a little and try again.';
       case 'session_expired':
         return 'You were signed out. Please sign in again.';
+      case 'account_deleted':
+        return 'This account was deleted because its plan was not renewed in time. The data cannot be recovered. You can create a new account on $siteUrl.';
       case 'too_large':
         return 'That was too much data for the cloud.';
       case 'cloud_outdated':
@@ -216,6 +250,7 @@ class Cloud {
 
   static String _failure(int status, Map<String, dynamic> body) {
     final e = body['error'];
+    if (status == 410 || e == 'account_deleted') return 'account_deleted';
     if (status == 401 && (e == null || e == 'bad_session')) return 'session_expired';
     if (status == 413) return 'too_large';
     if (status == 429) return 'rate_limited';
@@ -251,6 +286,7 @@ class Cloud {
       final e = r.body['error'];
       final code = (e is String && e.isNotEmpty && r.status != 401) ? e : _failure(r.status, r.body);
       if (code == 'session_expired') await _unlink(); // signed out elsewhere or expired: ask to sign in again
+      if (code == 'account_deleted') await _gone();
       return CloudResult(ok: false, status: r.status, error: code, body: r.body);
     } catch (_) {
       return const CloudResult(ok: false, error: 'offline');
@@ -279,6 +315,10 @@ class Cloud {
     await Store.strDel(_kPlan, scoped: false);
     await Store.strDel(_kPlanOk, scoped: false);
     await Store.strDel(_kPlanUntil, scoped: false);
+    await Store.strDel(_kSince, scoped: false);
+    await Store.strDel(_kLapse, scoped: false);
+    await Store.strDel(_kLapseGrace, scoped: false);
+    await Store.strDel(_kLapseDelete, scoped: false);
     changes.value++;
   }
 
@@ -448,6 +488,7 @@ class Cloud {
       _inflight = null;
       Activity.end('sync', res.ok ? 'Sync complete' : (res.error == 'subscription_required' ? 'Cloud backup is off' : 'Sync failed'));
       if (res.error == 'session_expired') await _unlink(); // signed out elsewhere or expired: ask to sign in again
+      if (res.error == 'account_deleted') await _gone();
       return res;
     });
     _inflight = f;
@@ -471,7 +512,7 @@ class Cloud {
       if (!light) {
         final pr = await _syncProfiles();
         if (!pr.ok) {
-          if (pr.error == 'session_expired' || pr.error == 'rate_limited') return pr;
+          if (pr.error == 'session_expired' || pr.error == 'account_deleted' || pr.error == 'rate_limited') { if (pr.error == 'account_deleted') await _gone(); return pr; }
           // No profile support in the cloud yet: the original profile still works, the others must wait.
           if (pid != 'p1') return CloudResult(ok: false, error: pr.status == 404 ? 'cloud_outdated' : pr.error);
         }

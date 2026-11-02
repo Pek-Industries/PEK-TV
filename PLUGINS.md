@@ -48,7 +48,7 @@ Must pass an automatic scan and then runs with a limited host API:
 - `h.library_titles()` (needs `"library": true`) returns `[{"title", "year", "kind": "movie" | "tv"}]` from the library scanner's last saved list, one entry per movie and per show. The list is only as fresh as the last scan, and backends run once at startup.
 - `run()` is called once, with a 10 second limit.
 
-Plugins that ship with PEK TV are **official** and are listed above a separator on the Plugins page (third-party ones are listed below it). `weather` keeps full access and is the only plugin that may use the `weather` permission (the app's city and unit); `skin-maker` is official and the only plugin that may use the `skins` permission; `tmdb-discover` is official but still runs sandboxed, and is the only kind of plugin allowed to use PEK TV's built-in TMDb access (a proxy that holds PEK TV's key, so users never enter one). Installing a .zip whose `plugin.json` lists that proxy host is refused. `m3u8` is not bundled: it is installed from the PEK Store's Official shelf, and runs sandboxed like any other plugin. It adds `.m3u` / `.m3u8` playlists by address and shows their channels with a TV guide (it uses the `live` and `epg` permissions, see `FLUTTER_PLUGINS.md`). To trust a plugin you wrote yourself while developing:
+Plugins that ship with PEK TV are **official** and are listed above a separator on the Plugins page (third-party ones are listed below it). `weather` keeps full access and is the only plugin that may use the `weather` permission (the app's city and unit); `skin-maker` is official and the only plugin that may use the `skins` permission; `tmdb-discover` is official but still runs sandboxed, and is the only kind of plugin allowed to use PEK TV's built-in TMDb access (a proxy that holds PEK TV's key, so users never enter one). Installing a .PEK whose `plugin.json` lists that proxy host is refused. `m3u8` is not bundled: it is installed from the PEK Store's Official shelf, and runs sandboxed like any other plugin. It adds `.m3u` / `.m3u8` playlists by address and shows their channels with a TV guide (it uses the `live` and `epg` permissions, see `FLUTTER_PLUGINS.md`). To trust a plugin you wrote yourself while developing:
 `PEK_TRUSTED_PLUGINS=my_plugin` (backend).
 
 ## Remote access
@@ -86,7 +86,7 @@ When you are signed in (Settings > Account), plugins you installed from a .PEK a
 automatically; switch it off with **Back up my plugins**. Built-in plugins are not backed up, and neither is a
 plugin's `data/` folder. On another device (or after reinstalling PEK TV) the same screen lists your backed-up
 plugins. **Restore** opens the usual install screen with the plugin's permissions, runs the same server checks and
-safety scan as a .zip, and installs only after you confirm. A plugin is never installed or replaced by itself, and
+safety scan as any .PEK, and installs only after you confirm. A plugin is never installed or replaced by itself, and
 removing a plugin on one device only stops it being offered on the others.
 
 ## The `torrent` permission
@@ -97,13 +97,25 @@ removing a plugin on one device only stops it being offered on the others.
 
 A plugin with `"torrent": true` may call, from its Python screen (`screen.py`):
 
-- `ui.play_torrent(source, label, season=0, episode=0, kind="movie", name="", year=0, image="")` starts the stream in PEK TV's player.
-  Optional `kind` (`'movie'` or `'episode'`) plus `name` (the movie title, or the show name for an episode; episodes also need `season` and `episode`) and `year` (movies) make PEK TV keep the position under Resume Watching. Resuming starts the same release again at that spot. `image` is an optional https poster URL from a host in the plugin's `network` list. PEK TV itself records which plugin started the stream (the plugin cannot set or change this) and shows it on the Resume Watching card. A plugin that gives no `kind`/`name` is still remembered, under the `title` it passed.
+- `ui.play_torrent(source, label, season=0, episode=0, kind="movie", name="", year=0, image="", tmdb=0)` starts the stream in PEK TV's player.
+  Optional `kind` (`'movie'` or `'episode'`) plus `name` (the movie title, or the show name for an episode; episodes also need `season` and `episode`) and `year` (movies) make PEK TV keep the position under Resume Watching. Resuming starts the same release again at that spot. `image` is an optional https poster URL from a host in the plugin's `network` list. `tmdb` is the title's TMDb id (optional, 0 = not known): PEK TV keeps it so Up next and "Open in TMDb Discover" (below) find the right title without searching by name. PEK TV itself records which plugin started the stream (the plugin cannot set or change this) and shows it on the Resume Watching card. A plugin that gives no `kind`/`name` is still remembered, under the `title` it passed.
   PEK TV shows its own buffering box (with Cancel) and opens the player when enough is downloaded.
 
-What the plugin does NOT get: the search provider's address or API key (set by the user in Settings >
-Torrents and kept in PEK TV), the downloaded files, or any other PEK TV API. `source` must be a
+What the plugin does NOT get: the downloaded files, or any other PEK TV API. `source` must be a
 `magnet:?` link or a `source` value returned by `search()`. The install screen lists this permission.
+
+**Only plugins start streams.** PEK TV has no torrent search, no link or magnet player and no Torrents page of its own: a stream starts only when a plugin with
+this permission calls `ui.play_torrent` from its open screen. The server enforces it as well: `/api/torrent/allow`, `/fetch` and `/start` refuse any request without a
+one-time pass (the `X-Pek-Grant` header, valid for two minutes) that the app gets from its own native side when a plugin hands over a release, so another app, a web page or
+a machine on the network cannot start a stream.
+
+**Saved streams.** Resume Watching, Watch History and your other devices keep each stream's plugin and release. Tapping one starts it again only while the plugin that
+started it is installed and declares `"provides": {"stream": true}`. Otherwise PEK TV says no plugin can play it, keeps the progress, and offers **Open in TMDb Discover**
+(a built-in plugin that cannot be removed), where you can play the title with any plugin you have.
+
+**Up next.** For a stream started by a plugin, the Up next card (last 5 minutes of an episode) reopens that plugin on the next episode: its `on_launch(intent)` gets
+`{"type": "tv", "id": <TMDb id>, "title": <show>, "year": 0, "season": N, "episode": N+1, "autoplay": true}` and should find and start that episode. PEK TV only adds 1 to
+the episode number, so a plugin asked for an episode past the end of a season should move on to episode 1 of the next season (Stream Media does).
 
 Playing a pasted magnet link is not built into the app: a normal plugin using this permission does that. No such plugin is included in this repository.
 
@@ -116,6 +128,10 @@ playing a torrent fails with "not built in".
 A plugin does these from its Python screen with the `favorites`, `providers` and `plugins` permissions (`ui.favorite_add`,
 `ui.provider_button`, `ui.open_plugin`, `def on_launch(intent)`). See `FLUTTER_PLUGINS.md`. The streaming services and their
 Android packages are listed in `tools/providers.json`; run `node tools/sync_providers.js` after editing it.
+
+## Sharing your plugin on the PEK Plugin Store
+
+Go to the [Plugin Store](https://pekindustries.com/pektv/store.html), choose **Upload a plugin**, sign in with GitHub and pick your `.PEK`. The page checks it on the spot and shows what people will be told it can do, and you can add up to six screenshots and a short description. The owner reviews every community upload before it appears. Anyone can browse; downloading the .PEK file from the website needs a free PEK account, while PEK TV installs from the store without one (**Settings -> Plugins -> PEK Store**).
 
 ## Publishing your plugin on GitHub (for developers)
 

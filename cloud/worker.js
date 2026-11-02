@@ -12,6 +12,8 @@
 //   BREVO_API_KEY       (Secret)  your Brevo API key
 //   BREVO_SENDER_EMAIL  (Text)    a sender address you verified in Brevo
 //   BREVO_SENDER_NAME   (Text, optional)  shown as the sender name, default "PEK TV"
+//   DELETE_DAYS         (Text, optional)  days a lapsed account has to subscribe again after the grace, before it is deleted (default 30; also set it on pek-billing)
+//   Cron trigger        (Settings -> Triggers) `0 3 * * *` runs the daily job for lapsed plans (see cloud/BILLING-DEPLOY.md, "When a plan lapses")
 //   INVITE_ONLY        (Text, optional)  1 = new accounts need a single-use invite code (existing accounts are not affected)
 //   ADMIN_KEY          (Secret, optional) a long random text (16+ characters); lets YOU make invite codes (see cloud/DEPLOY.md)
 //
@@ -39,7 +41,7 @@
 //   POST   /v1/subs/get      { id }                                            -> { ok, text, cached }  (see "subtitles" below)
 //   POST   /v1/auth/logout                                      -> { ok }
 //   POST   /v1/account/username { username }                    -> { ok, username }   (only for an older account that has none yet; it cannot be changed afterwards)
-//   GET    /v1/me                                               -> { ok, email, username, plan, entitled, until, cancelling }   (works on every plan)
+//   GET    /v1/me                                               -> { ok, email, username, plan, entitled, until, cancelling, since, lapse: { state, graceEnds, deleteAt }, now }   (works on every plan; 410 account_deleted once a lapsed account was deleted)
 //   POST   /v1/auth/confirm  { password }                      -> { ok }   (re-checks the signed-in account's password, e.g. to reset a forgotten profile passcode; rate limited)
 //   POST   /v1/profiles/sync { profiles: [{id,name,color,updated,deleted,avatar,pin}] } -> { ok, profiles, rejected }   (the household's profiles, last writer wins;
 //                                                                  avatar = built-in picture id or a small photo, pin = salted passcode hash, both optional)
@@ -81,6 +83,12 @@ const BUILTIN_PLUGINS = ['weather', 'sample_scraper', 'sample_counter', 'tmdb-di
 
 const PBKDF2_ITERATIONS = 100000; // the most Cloudflare Workers allows. Stored per user, so it is safe to change later.
 const SESSION_TTL = 90 * 24 * 3600 * 1000;
+// Lapsed plans (see cloud/BILLING-DEPLOY.md, "When a plan lapses"): a missed renewal keeps PEK Cloud on for GRACE_MS (the same number as in
+// billing-worker.js); once that is over the account has DELETE_DAYS (Text variable on this worker, default 30) to subscribe again, then
+// the account and everything stored in it is deleted for good by the daily job at the bottom of this file.
+const GRACE_MS = 3 * 24 * 3600 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+function deleteMs(env) { const d = Number(env && env.DELETE_DAYS); return (d >= 1 && d <= 365 ? Math.floor(d) : 30) * DAY_MS; }
 const SESSION_REFRESH_BELOW = 60 * 24 * 3600 * 1000;
 const RESET_TTL = 15 * 60 * 1000;
 const RESET_MAX_TRIES = 5;
@@ -126,6 +134,12 @@ async function init(db) {
     try { await db.prepare('ALTER TABLE users ADD COLUMN plan_cancel INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
     try { await db.prepare("ALTER TABLE users ADD COLUMN stripe_customer TEXT NOT NULL DEFAULT ''").run(); } catch (e) { /* already there */ }
     try { await db.prepare("ALTER TABLE users ADD COLUMN stripe_sub TEXT NOT NULL DEFAULT ''").run(); } catch (e) { /* already there */ }
+    // When the current paid plan started (ms), the moment an unpaid account is deleted (ms, 0 = not scheduled), and which deletion email was sent last.
+    try { await db.prepare('ALTER TABLE users ADD COLUMN plan_since INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
+    try { await db.prepare('ALTER TABLE users ADD COLUMN delete_at INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
+    try { await db.prepare('ALTER TABLE users ADD COLUMN notice_stage INTEGER NOT NULL DEFAULT 0').run(); } catch (e) { /* already there */ }
+    // Sessions of accounts the daily job deleted: so the app and the website can say "your account was deleted" instead of just "sign in again".
+    await db.prepare('CREATE TABLE IF NOT EXISTS gone_sessions (token_hash TEXT PRIMARY KEY, deleted INTEGER NOT NULL)').run();
     await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users (username COLLATE NOCASE) WHERE username <> ''").run();
     await db.prepare('CREATE TABLE IF NOT EXISTS invites (hash TEXT PRIMARY KEY, created INTEGER NOT NULL, expires INTEGER NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT \'\', reserved_by TEXT, reserved_until INTEGER NOT NULL DEFAULT 0, used_by TEXT, used_at INTEGER)').run();
     await db.prepare('CREATE TABLE IF NOT EXISTS verifs (user_id TEXT PRIMARY KEY, code_hash TEXT NOT NULL, expires INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0)').run();
@@ -811,10 +825,22 @@ function isEntitled(u, now) {
     if (u.plan === 'grandfathered' || u.plan === 'lifetime') return true;
     return (u.plan === 'monthly' || u.plan === 'yearly') && Number(u.plan_until) > now;
 }
-async function planOf(db, userId, now) {
-    const u = await db.prepare('SELECT plan, plan_until, plan_cancel FROM users WHERE id = ?').bind(userId).first();
-    if (!u) return { plan: 'free', entitled: false, until: 0, cancelling: false };
-    return { plan: u.plan, entitled: isEntitled(u, now), until: (u.plan === 'monthly' || u.plan === 'yearly') ? Number(u.plan_until) : 0, cancelling: !!u.plan_cancel };
+// Where a lapsed plan is: 'grace' (renewal missed, PEK Cloud still on until graceEnds), 'deletion' (backup is off; the account and its data are
+// deleted at deleteAt unless a plan is bought before then) or 'none'. Accounts that never paid, lifetime and grandfathered never lapse.
+function lapseOf(u, now, env) {
+    const paid = u.plan === 'monthly' || u.plan === 'yearly';
+    const until = Number(u.plan_until) || 0;
+    if (paid && !u.plan_cancel && until > now && until - GRACE_MS <= now) return { state: 'grace', graceEnds: until, deleteAt: 0 };
+    if (paid && until > 0 && until <= now) return { state: 'deletion', graceEnds: until, deleteAt: Number(u.delete_at) || Math.max(until + deleteMs(env), now + 7 * DAY_MS) };
+    if (u.plan === 'free' && Number(u.delete_at) > 0) return { state: 'deletion', graceEnds: 0, deleteAt: Number(u.delete_at) };
+    return { state: 'none', graceEnds: 0, deleteAt: 0 };
+}
+async function planOf(db, userId, now, env) {
+    const u = await db.prepare('SELECT plan, plan_until, plan_cancel, plan_since, delete_at FROM users WHERE id = ?').bind(userId).first();
+    if (!u) return { plan: 'free', entitled: false, until: 0, cancelling: false, since: 0, lapse: { state: 'none', graceEnds: 0, deleteAt: 0 } };
+    const paidPlan = u.plan === 'monthly' || u.plan === 'yearly' || u.plan === 'lifetime';
+    return { plan: u.plan, entitled: isEntitled(u, now), until: (u.plan === 'monthly' || u.plan === 'yearly') ? Number(u.plan_until) : 0, cancelling: !!u.plan_cancel,
+        since: paidPlan ? Number(u.plan_since) || 0 : 0, lapse: lapseOf(u, now, env) };
 }
 
 // POST /v1/account/username { username } -> { ok, username }
@@ -837,11 +863,11 @@ async function handleSetUsername(request, env, userId) {
     return json({ ok: true, username });
 }
 
-// GET /v1/me -> { ok, email, username, plan, entitled, until, cancelling }
+// GET /v1/me -> { ok, email, username, plan, entitled, until, cancelling, since, lapse: { state, graceEnds, deleteAt }, now }
 async function handleMe(env, userId) {
     const u = await env.DB.prepare('SELECT email, username FROM users WHERE id = ?').bind(userId).first();
     if (!u) return json({ error: 'bad_session' }, 401);
-    return json(Object.assign({ ok: true, email: u.email, username: u.username || '' }, await planOf(env.DB, userId, Date.now())));
+    return json(Object.assign({ ok: true, email: u.email, username: u.username || '', now: Date.now() }, await planOf(env.DB, userId, Date.now(), env)));
 }
 
 // ---------------------------------------------------------------- sync handlers
@@ -1131,17 +1157,26 @@ async function handleDelete(env, acct) {
     // A renewing subscription keeps charging after the account is gone, so it has to be cancelled first (on the website).
     const pl = await env.DB.prepare('SELECT plan, plan_until, plan_cancel, stripe_sub FROM users WHERE id = ?').bind(acct).first();
     if (pl && (pl.plan === 'monthly' || pl.plan === 'yearly') && pl.stripe_sub && !pl.plan_cancel && Number(pl.plan_until) > Date.now()) return json({ error: 'cancel_subscription_first' }, 409);
-    await env.DB.batch([
-        env.DB.prepare('DELETE FROM items WHERE acct = ? OR acct LIKE ?').bind(acct, likeProfiles(acct)),
-        env.DB.prepare('DELETE FROM profiles WHERE acct = ?').bind(acct),
-        env.DB.prepare('DELETE FROM plugins WHERE acct = ?').bind(acct),
-        env.DB.prepare('DELETE FROM plugin_chunks WHERE acct = ?').bind(acct),
-        env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(acct),
-        env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(acct),
-        env.DB.prepare('DELETE FROM verifs WHERE user_id = ?').bind(acct),
-        env.DB.prepare('DELETE FROM users WHERE id = ?').bind(acct)
-    ]);
+    await purgeAccount(env.DB, acct, false);
     return json({ ok: true });
+}
+
+// Deletes an account and everything stored for it. tombstone = true (the daily job) first remembers the account's sessions, so a device that
+// still has one is told "your account was deleted" (410) the next time it asks.
+async function purgeAccount(db, acct, tombstone) {
+    if (tombstone) await db.prepare('INSERT OR IGNORE INTO gone_sessions (token_hash, deleted) SELECT token_hash, ? FROM sessions WHERE user_id = ?').bind(Date.now(), acct).run();
+    await db.batch([
+        db.prepare('DELETE FROM items WHERE acct = ? OR acct LIKE ?').bind(acct, likeProfiles(acct)),
+        db.prepare('DELETE FROM profiles WHERE acct = ?').bind(acct),
+        db.prepare('DELETE FROM plugins WHERE acct = ?').bind(acct),
+        db.prepare('DELETE FROM plugin_chunks WHERE acct = ?').bind(acct),
+        db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(acct),
+        db.prepare('DELETE FROM resets WHERE user_id = ?').bind(acct),
+        db.prepare('DELETE FROM verifs WHERE user_id = ?').bind(acct),
+        db.prepare('DELETE FROM reject_tokens WHERE user_id = ?').bind(acct),
+        db.prepare('DELETE FROM device_links WHERE user_id = ?').bind(acct),
+        db.prepare('DELETE FROM users WHERE id = ?').bind(acct)
+    ]);
 }
 
 
@@ -1618,6 +1653,10 @@ async function handleNews(request, env, path) {
 }
 
 export default {
+    // Cloudflare cron trigger (Worker -> Settings -> Triggers -> Cron: 0 3 * * *): the daily job for lapsed plans.
+    async scheduled(event, env, ctx) {
+        ctx.waitUntil(runLifecycle(env).catch(e => console.error('lifecycle job failed', String(e && e.stack || e))));
+    },
     async fetch(request, env) {
         if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
         const url = new URL(request.url);
@@ -1675,7 +1714,10 @@ export default {
             }
 
             const sess = await sessionFor(request, env.DB, Date.now());
-            if (!sess) return json({ error: 'bad_session' }, 401);
+            if (!sess) {
+                if (await sessionWasDeleted(request, env.DB)) return json({ error: 'account_deleted' }, 410);
+                return json({ error: 'bad_session' }, 401);
+            }
 
             if (method === 'POST' && path === '/v1/auth/logout') return await handleLogout(env, sess);
             if (method === 'GET' && path === '/v1/me') return await handleMe(env, sess.userId);
@@ -1704,3 +1746,66 @@ export default {
         }
     }
 };
+
+
+// ---------------------------------------------------------------- lapsed plans: the daily job
+async function sessionWasDeleted(request, db) {
+    const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') || '');
+    if (!m || m[1].length < 20 || m[1].length > 100) return false;
+    const row = await db.prepare('SELECT deleted FROM gone_sessions WHERE token_hash = ?').bind(await sha256Hex('hesper:session:' + m[1])).first();
+    return !!row;
+}
+
+function longDate(ms) { return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(ms)); }
+
+// kind: 'started' (the deletion period began), 'final' (3 days left), 'deleted' (it is done)
+async function sendLifecycleMail(env, to, kind, deleteAt) {
+    if (!to || !emailReady(env)) return false;
+    const date = longDate(deleteAt), link = webUrl(env) + '/account';
+    const M = {
+        started: { subject: 'Your PEK Cloud data will be deleted on ' + date, title: 'Your PEK Cloud plan has ended', lines: [
+            'Cloud backup is switched off. If you do not subscribe again before ' + date + ', your account and everything stored in it (profiles, watch history, resume points and plugin backups) will be permanently deleted and cannot be recovered.',
+            'Subscribing again before then turns everything back on exactly as it was.'] },
+        final: { subject: 'Last days: your PEK Cloud data is deleted on ' + date, title: 'Your PEK Cloud data is about to be deleted', lines: [
+            'Your account and everything stored in it will be permanently deleted on ' + date + ' unless you subscribe again before then. Deleted data cannot be recovered.'] },
+        deleted: { subject: 'Your PEK Cloud account was deleted', title: 'Your PEK Cloud account was deleted', lines: [
+            'Your plan was not renewed before ' + date + ', so your account and all the data stored in it were permanently deleted. This cannot be undone and the data cannot be recovered.',
+            'You are welcome to create a new account at any time.'] }
+    }[kind];
+    const text = M.title + '\n\n' + M.lines.join('\n\n') + (kind === 'deleted' ? '' : '\n\nSubscribe again: ' + link);
+    const html = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:440px;margin:0 auto;padding:24px;color:#111"><h2 style="margin:0 0 12px">' + escHtml(M.title) + '</h2>' +
+        M.lines.map(l => '<p style="margin:0 0 14px;line-height:1.5">' + escHtml(l) + '</p>').join('') +
+        (kind === 'deleted' ? '' : '<p style="margin:18px 0 0"><a href="' + escHtml(link) + '" style="background:#2b2420;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">Subscribe again</a></p>') + '</div>';
+    return postMail(env, to, M.subject, text, html);
+}
+
+// Runs once a day. 1) paid plans whose grace ran out start their deletion period; 2) emails; 3) accounts whose period is over are deleted.
+// Only accounts that had a paid renewing plan are ever touched (delete_at is only set for them); free accounts that never paid, lifetime and
+// grandfathered accounts are never deleted here, and a plan bought in time clears delete_at (billing-worker.js).
+async function runLifecycle(env) {
+    if (!env.DB) return;
+    const db = env.DB;
+    await init(db);
+    const now = Date.now(), del = deleteMs(env);
+    // delete_at = the end of the grace plus the deletion period, but never less than 7 days from now: an account that lapsed long before this job existed still gets a warning first.
+    await db.prepare("UPDATE users SET delete_at = MAX(plan_until + ?, ?), notice_stage = 0 WHERE plan IN ('monthly','yearly') AND plan_until > 0 AND plan_until <= ? AND delete_at = 0").bind(del, now + 7 * DAY_MS, now).run();
+    const waiting = await db.prepare("SELECT id, email, delete_at, notice_stage FROM users WHERE delete_at > ? AND plan NOT IN ('lifetime','grandfathered') LIMIT 500").bind(now).all();
+    for (const u of (waiting.results || [])) {
+        const left = Number(u.delete_at) - now;
+        if (Number(u.notice_stage) < 1) {
+            if (await sendLifecycleMail(env, u.email, 'started', u.delete_at) || !emailReady(env)) await db.prepare('UPDATE users SET notice_stage = 1 WHERE id = ?').bind(u.id).run();
+        } else if (Number(u.notice_stage) < 2 && left <= 3 * DAY_MS) {
+            if (await sendLifecycleMail(env, u.email, 'final', u.delete_at) || !emailReady(env)) await db.prepare('UPDATE users SET notice_stage = 2 WHERE id = ?').bind(u.id).run();
+        }
+    }
+    const due = await db.prepare("SELECT id FROM users WHERE delete_at > 0 AND delete_at <= ? AND plan NOT IN ('lifetime','grandfathered') AND NOT (plan IN ('monthly','yearly') AND plan_until > ?) LIMIT 25").bind(now, now).all();
+    for (const r of (due.results || [])) {
+        const u = await db.prepare('SELECT id, email, plan, plan_until, delete_at FROM users WHERE id = ?').bind(r.id).first();      // look again right before deleting
+        if (!u || Number(u.delete_at) <= 0 || Number(u.delete_at) > Date.now()) continue;
+        if (u.plan === 'lifetime' || u.plan === 'grandfathered' || ((u.plan === 'monthly' || u.plan === 'yearly') && Number(u.plan_until) > Date.now())) continue;
+        await sendLifecycleMail(env, u.email, 'deleted', u.delete_at);
+        await purgeAccount(db, u.id, true);
+        console.log('deleted a lapsed account', u.id);
+    }
+    await db.prepare('DELETE FROM gone_sessions WHERE deleted < ?').bind(now - 60 * DAY_MS).run();
+}

@@ -38,7 +38,12 @@ class PlanBadge extends StatelessWidget {
     final t = p.tokens;
     final rem = p.rem;
     final paid = Cloud.entitled;
-    final detail = !paid
+    final lapse = Cloud.lapseState;
+    final detail = lapse == 'grace'
+        ? 'Payment overdue \u00b7 PEK Cloud stays on until ${_date(Cloud.graceEnds)}'
+        : lapse == 'deletion'
+            ? 'Plan ended \u00b7 your data is deleted on ${_date(Cloud.deleteAt)} unless you subscribe'
+            : !paid
         ? 'Saved on this device only \u00b7 1 profile'
         : switch (Cloud.plan) {
             'monthly' || 'yearly' => Cloud.planUntil > 0 ? '${Cloud.planLabel} \u00b7 active until ${_date(Cloud.planUntil)}' : Cloud.planLabel,

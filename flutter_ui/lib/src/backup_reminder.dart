@@ -24,6 +24,7 @@ class BackupReminder {
   static Future<void> maybeShow(BuildContext context) async {
     if (_busy) return;
     if (Cloud.entitled) return; // paid accounts are done here
+    if (Cloud.lapseState != 'none') return; // a lapsed plan has its own notice (lapse_notice.dart)
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - _last < every.inMilliseconds) return;
     if (!(ModalRoute.of(context)?.isCurrent ?? false)) return;

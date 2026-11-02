@@ -56,6 +56,33 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
     });
   }
 
+  static String _longDate(int ms) {
+    const m = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${m[d.month - 1]} ${d.day}, ${d.year}';
+  }
+
+  /// A plan that was not renewed: what happens next and when (the same message the 24-hour notice gives).
+  Widget _lapseCard(PekScope p, String state) {
+    final rem = p.rem;
+    final grace = state == 'grace';
+    final text = grace
+        ? 'Your renewal did not go through. PEK Cloud stays on until ${_longDate(Cloud.graceEnds)}. Pay before then to keep cloud backup; after that your account and its data are scheduled for deletion unless you subscribe again.'
+        : 'Your plan has ended and cloud backup is off. Your account and everything stored in it will be permanently deleted on ${_longDate(Cloud.deleteAt)} unless you subscribe again before then. Deleted data cannot be recovered.';
+    return Container(
+      margin: EdgeInsets.only(top: 0.6 * rem, bottom: 0.2 * rem),
+      padding: EdgeInsets.all(0.9 * rem),
+      decoration: BoxDecoration(color: p.tokens.surface, borderRadius: BorderRadius.circular(p.tokens.radius), border: Border.all(color: p.tokens.accent)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(grace ? 'Payment overdue' : 'Your data will be deleted', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.0 * rem)),
+        SizedBox(height: 0.35 * rem),
+        Text(text, style: TextStyle(color: p.tokens.textMuted)),
+        SizedBox(height: 0.6 * rem),
+        PekButton(label: grace ? 'Pay now' : 'Subscribe again', primary: true, onTap: _upgrade),
+      ]),
+    );
+  }
+
   /// What this plan costs, as listed on the website.
   static String _planPrice(String plan) => switch (plan) {
         'monthly' => '\$${PlanPrices.monthly} a month',
@@ -182,6 +209,8 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
             _detail('Signed in as', Cloud.email),
             _detail('Username', Cloud.username.isEmpty ? 'Not chosen yet' : Cloud.username),
             _detail('Plan price', _planPrice(Cloud.entitled ? Cloud.plan : 'free')),
+            if (Cloud.planSince > 0 && (Cloud.plan == 'monthly' || Cloud.plan == 'yearly' || Cloud.plan == 'lifetime')) _detail('Subscribed since', _longDate(Cloud.planSince)),
+            if (Cloud.lapseState != 'none') _lapseCard(p, Cloud.lapseState),
             SizedBox(height: 0.4 * rem),
             if (Cloud.entitled) Text('Last synced: ${_ago(Cloud.lastSync)}', style: TextStyle(color: p.tokens.textMuted)),
             if (Cloud.username.isEmpty) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text('This account has no username yet. Every account needs one: choose it on the website.', style: TextStyle(color: p.tokens.textMuted))),

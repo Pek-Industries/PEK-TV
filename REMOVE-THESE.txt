@@ -1,0 +1,1 @@
+DELETE REMOVE.txt in the repository root (a note file from an earlier patch that was copied into the repo by mistake)

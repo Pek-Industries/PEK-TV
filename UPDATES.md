@@ -19,7 +19,7 @@ Rules the app follows:
 - Debug builds, `-dev.N` builds and local builds never show the screen.
 - The apk is checked against GitHub's sha256 for the asset when GitHub provides one. Android additionally refuses any apk
   signed with a different key than the installed app, so release builds must always use the same keystore.
-- Needs a public repository (`R3CT01/PEK-TV`, set in `flutter_ui/lib/src/app_update.dart`).
+- Needs a public repository (`Pek-Industries/PEK-TV`, set in `flutter_ui/lib/src/app_update.dart`).
 
 ## What Android allows
 

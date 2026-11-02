@@ -25,7 +25,7 @@ PEK TV running at 1920x1080.
 - **Music from your own folders:** albums, artists, songs, playlists and search over the same local and network folders. Tags and cover art are read from the files; shuffle, repeat, a queue and a player bar. Songs play in libmpv on Android. Files that will not open (for example a 0-byte or damaged file) are marked "Can't be played" and skipped, and a home-screen widget shows the song that is playing (phones and tablets). See `MUSIC.md`.
 - **Built for the couch:** D-pad, remote and gamepad support, with a 10-foot look.
 - **A dashboard you design:** widgets you choose and order, saved per profile.
-- **Profiles and PEK Cloud:** profiles with their own history and favorites, plus optional cloud sync.
+- **Profiles and PEK Cloud:** profiles with their own history and favorites, plus optional paid cloud backup and sync (monthly, yearly or lifetime; see the Plans page on the website).
 - **Skins:** install a skin from a `.zip`. Skins cannot run code or reach the network.
 - **Sandboxed plugins:** plugins declare what they may do and run in a locked-down sandbox.
 
@@ -34,7 +34,7 @@ See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md` and `MUSIC.md`
 ## Project layout
 
 - `flutter_ui/`: the app's screens (Flutter). The only UI.
-- `backend/`: the C++ server (library scanner, network sources, music, torrent streaming, subtitles).
+- `backend/`: the C++ server (library scanner, network sources, music, subtitles, and a torrent engine that only plugins can start).
 - `android/`: the Android app (start-up, libmpv player, Python plugin host) and the GitHub Actions build.
 - `plugins/`, `plugin_packages/`, `skins/`: built-in plugins and skins (Weather, TMDb Discover, Skin maker); `plugin_packages/` holds the built-in plugins as `.PEK` files (build them with `python tools/pektool.py --official pack plugins/<id> --clean -o plugin_packages/<id>.PEK`); the old `.zip` files are kept in `plugin_packages/(legacy)/` and are no longer used. Plugins are only ever installed from `.PEK` files.
 - `cloud/`: the Cloudflare workers (accounts and sync, plugin store).

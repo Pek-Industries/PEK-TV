@@ -33,7 +33,7 @@ class AppRelease {
 ///  * Debug and dev builds (versionName ends in -debug or has -dev.) never check, and neither do local builds.
 class AppUpdate {
   /// owner/repo that publishes the app's releases.
-  static const repo = 'R3CT01/PEK-TV';
+  static const repo = 'Pek-Industries/PEK-TV';
 
   static const _channel = MethodChannel('pek/update');
 

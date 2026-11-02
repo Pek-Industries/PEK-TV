@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import 'activity.dart';
 import 'backup_reminder.dart';
+import 'lapse_notice.dart';
 import 'api.dart' show Api, PluginInfo;
 import 'cloud.dart';
 import 'common.dart';
@@ -83,7 +84,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Timer? _reminderTimer;
 
   void _remind() {
-    if (mounted) unawaited(BackupReminder.maybeShow(context));
+    if (!mounted) return;
+    // The lapsed-plan notice goes first (and a lapsed account is skipped by the backup reminder), so two boxes never appear together.
+    unawaited(LapseNotice.maybeShow(context).then((_) {
+      if (mounted) unawaited(BackupReminder.maybeShow(context));
+    }));
   }
 
   @override

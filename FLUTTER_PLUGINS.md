@@ -108,7 +108,9 @@ address is refused). If `autoplay` is false the person presses **Play trailer**.
 
 **Play with a plugin.** A plugin that can play a title declares `"provides": {"stream": true}` plus a Flutter screen, and
 implements `on_launch(intent)` (`{"type", "id", "title", "year"}`). Every other screen with the `plugins` permission can then
-list it (`ui.streamers()`) and hand it a title (`ui.open_plugin`).
+list it (`ui.streamers()`) and hand it a title (`ui.open_plugin`). Up next uses the same door: for a stream a plugin started, the next-episode card
+opens that plugin with `{"type": "tv", "id", "title", "year", "season", "episode", "autoplay": true}`; the plugin finds and starts the episode (and, past
+the last episode of a season, moves on to episode 1 of the next one).
 
 **Watched.** It is PEK TV's own Watch History (the same record the library, the Mark as watched buttons and PEK Cloud use).
 Movies are keyed `m|title|year`, episodes `e|show title|season|episode` (for an episode `title` is the show's title). A mark or
@@ -366,5 +368,7 @@ What it needed from the host, all in `pek_ui`:
   plugin be replaced); plugins installed from GitHub are looked up again on GitHub and an **Update** button (with the permissions screen) appears
   on the Plugins page when the latest release tag differs. The app copies built-in plugins from its own files at every start; it now leaves a
   copy alone when the store's version is newer (`MainActivity.copyAssetDir`).
-- **Torrents**: the Torrents page and the in-app release search are gone. The engine (`TorrentApi`, loading screen, `pek_ui.play_torrent`) stays for
-  plugins with the `torrent` permission.
+- **Torrents**: the Torrents page and the in-app release search are gone (`torrent_search.dart` was deleted). The engine (`TorrentApi`, loading screen,
+  `pek_ui.play_torrent(..., tmdb=0)`) stays, and only plugins with the `torrent` permission can start it: the server refuses `/api/torrent/allow`, `/fetch`
+  and `/start` without a one-time `X-Pek-Grant` pass minted by the app's native side (`mintTorrentGrant`), and a saved stream replays only while the plugin
+  that started it is installed and can stream (else **Open in TMDb Discover**). See "The `torrent` permission" in PLUGINS.md.

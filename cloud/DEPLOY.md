@@ -28,7 +28,9 @@ stops working nobody can sign in on a new device (devices that are already signe
    - Type **Text**, name `BREVO_SENDER_EMAIL`, value = the sender address verified in step A1
    - Type **Text**, name `BREVO_SENDER_NAME`, value = `PEK TV` (optional)
    - Type **Text**, name `WEB_URL`, value = `https://pekindustries.com/pektv` (optional; this is where the "Wasn't you? Reject this login" link in sign-in emails points, to `reject.html`. No slash at the end)
+   - Type **Text**, name `DELETE_DAYS`, value = `30` (optional; how many days an account whose paid plan lapsed has to subscribe again before it is deleted, 1 to 365)
    Then **Deploy** so they take effect.
+   Then **Settings** -> **Triggers** -> **Cron Triggers** -> Add -> `0 3 * * *`. This daily job warns and, in the end, deletes accounts whose paid plan lapsed and was not renewed (see `cloud/BILLING-DEPLOY.md`, "When a plan lapses"). Without it nothing is deleted.
 4. Visit the worker URL in a browser. It should say: `hesper-sync ok`
    (tables are created automatically on the first request).
 5. The app calls `https://pek-sync.aquariusibeats.workers.dev`. If your worker's URL is

@@ -295,7 +295,7 @@ class PluginBackup {
         seenMap[id] = {'sig': listing.sig, 'fp': localFp, 'u': seen?['u'] ?? 0};
       } on _Fail catch (e) {
         // One plugin failing must not stop the others. A signed-out session or no network stops everything.
-        if (e.code == 'session_expired' || e.code == 'offline' || e.code == 'rate_limited') failed = e.code;
+        if (e.code == 'session_expired' || e.code == 'account_deleted' || e.code == 'offline' || e.code == 'rate_limited') failed = e.code;
       } catch (_) {/* this plugin only */}
     }
 

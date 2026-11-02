@@ -16,6 +16,7 @@
 //   BREVO_API_KEY          (Secret, optional) Brevo API key, needed to email customers (see below).
 //   BREVO_SENDER_EMAIL     (Text, optional)   a sender address verified in Brevo.
 //   BREVO_SENDER_NAME      (Text, optional)   shown as the sender name, default "PEK TV".
+//   DELETE_DAYS            (Text, optional)   days an ended subscription has to be renewed before the account is deleted (default 30; same value as on the cloud worker).
 //
 // Customer emails (sent from the webhook, only when BREVO_API_KEY and BREVO_SENDER_EMAIL are set; a failed email never fails the webhook):
 //   "Your services have been canceled"                       when a renewing subscription ends (not when someone upgrades to lifetime)
@@ -28,6 +29,9 @@
 //   POST  /v1/billing/webhook                                     Stripe -> worker (checked with the webhook secret)
 
 const GRACE_MS = 3 * 24 * 3600 * 1000;     // a renewal that is a little late does not lock someone out right away
+// When a subscription ends for good the account has DELETE_DAYS (Text variable, default 30; set the same value on the cloud worker) to subscribe
+// again before cloud/worker.js's daily job deletes it. Buying any plan clears the countdown.
+function deleteMs(env) { const d = Number(env && env.DELETE_DAYS); return (d >= 1 && d <= 365 ? Math.floor(d) : 30) * 24 * 3600 * 1000; }
 const PLANS = {
     monthly:  { mode: 'subscription', amount: 599,   interval: 'month', name: 'PEK Cloud (monthly)',  env: 'STRIPE_PRICE_MONTHLY' },
     yearly:   { mode: 'subscription', amount: 4800,  interval: 'year',  name: 'PEK Cloud (yearly)',   env: 'STRIPE_PRICE_YEARLY' },
@@ -66,7 +70,8 @@ async function init(db) {
     // Same columns (and same defaults) as cloud/worker.js: whichever worker runs first adds them.
     const cols = [
         "plan TEXT NOT NULL DEFAULT 'grandfathered'", 'plan_until INTEGER NOT NULL DEFAULT 0', 'plan_cancel INTEGER NOT NULL DEFAULT 0',
-        "stripe_customer TEXT NOT NULL DEFAULT ''", "stripe_sub TEXT NOT NULL DEFAULT ''"
+        "stripe_customer TEXT NOT NULL DEFAULT ''", "stripe_sub TEXT NOT NULL DEFAULT ''",
+        'plan_since INTEGER NOT NULL DEFAULT 0', 'delete_at INTEGER NOT NULL DEFAULT 0', 'notice_stage INTEGER NOT NULL DEFAULT 0'
     ];
     for (const c of cols) { try { await db.prepare('ALTER TABLE users ADD COLUMN ' + c).run(); } catch (e) { /* already there */ } }
     // Stripe resends events: each one is only applied once.
@@ -245,13 +250,13 @@ async function verifySignature(raw, header, secret) {
 }
 
 async function userFor(db, userId, customer) {
-    let u = userId ? await db.prepare('SELECT id, plan, stripe_sub FROM users WHERE id = ?').bind(userId).first() : null;
-    if (!u && customer) u = await db.prepare('SELECT id, plan, stripe_sub FROM users WHERE stripe_customer = ?').bind(customer).first();
+    let u = userId ? await db.prepare('SELECT id, plan, plan_until, stripe_sub FROM users WHERE id = ?').bind(userId).first() : null;
+    if (!u && customer) u = await db.prepare('SELECT id, plan, plan_until, stripe_sub FROM users WHERE stripe_customer = ?').bind(customer).first();
     return u;
 }
 
 // Turns a Stripe subscription into the account's plan.
-async function applySubscription(db, sub) {
+async function applySubscription(db, sub, env) {
     const u = await userFor(db, sub.metadata && sub.metadata.user_id, typeof sub.customer === 'string' ? sub.customer : (sub.customer && sub.customer.id));
     if (!u || u.plan === 'lifetime' || u.plan === 'grandfathered') return;    // these never go down
     if (u.plan !== 'free' && u.stripe_sub && u.stripe_sub !== sub.id) return;   // an older, replaced subscription
@@ -259,10 +264,14 @@ async function applySubscription(db, sub) {
     if (['active', 'trialing', 'past_due'].indexOf(sub.status) >= 0) {
         const end = Number(sub.current_period_end || (item && item.current_period_end) || 0) * 1000;
         const interval = item && item.price && item.price.recurring ? item.price.recurring.interval : (item && item.plan && item.plan.interval) || 'month';
-        await db.prepare('UPDATE users SET plan = ?, plan_until = ?, plan_cancel = ?, stripe_sub = ? WHERE id = ?')
-            .bind(interval === 'year' ? 'yearly' : 'monthly', end ? end + GRACE_MS : 0, (sub.cancel_at_period_end || sub.cancel_at) ? 1 : 0, sub.id, u.id).run();
+        // plan_since: when this run of paid time began (kept while the plan only renews or switches between monthly and yearly). A paid plan clears any deletion countdown.
+        const since = Number(sub.start_date || sub.created || 0) * 1000 || Date.now();
+        await db.prepare("UPDATE users SET plan_since = CASE WHEN plan = 'free' OR plan_since = 0 THEN ? ELSE plan_since END, plan = ?, plan_until = ?, plan_cancel = ?, stripe_sub = ?, delete_at = 0, notice_stage = 0 WHERE id = ?")
+            .bind(since, interval === 'year' ? 'yearly' : 'monthly', end ? end + GRACE_MS : 0, (sub.cancel_at_period_end || sub.cancel_at) ? 1 : 0, sub.id, u.id).run();
     } else if (['canceled', 'unpaid', 'incomplete_expired'].indexOf(sub.status) >= 0) {
-        await db.prepare("UPDATE users SET plan = 'free', plan_until = 0, plan_cancel = 0, stripe_sub = '' WHERE id = ? AND stripe_sub = ?").bind(u.id, sub.id).run();
+        // A renewing plan that ended for good: backup is off now and the deletion countdown starts (at least the grace is honoured first).
+        const startAt = Math.max(Date.now(), Number(u.plan_until) || 0) + deleteMs(env);
+        await db.prepare("UPDATE users SET delete_at = CASE WHEN plan IN ('monthly','yearly') THEN ? ELSE delete_at END, notice_stage = CASE WHEN plan IN ('monthly','yearly') THEN 0 ELSE notice_stage END, plan = 'free', plan_until = 0, plan_cancel = 0, stripe_sub = '' WHERE id = ? AND stripe_sub = ?").bind(startAt, u.id, sub.id).run();
     }
 }
 
@@ -280,17 +289,17 @@ async function handleEvent(env, ev) {
         if (obj.mode === 'payment' && obj.payment_status === 'paid' && obj.metadata && obj.metadata.plan === 'lifetime') {
             // Lifetime replaces any renewing subscription: stop that one so they are not charged twice.
             const oldSub = u.stripe_sub;
-            await db.prepare("UPDATE users SET plan = 'lifetime', plan_until = 0, plan_cancel = 0, stripe_sub = '' WHERE id = ? AND plan <> 'grandfathered'").bind(u.id).run();
+            await db.prepare("UPDATE users SET plan_since = CASE WHEN plan IN ('monthly','yearly') AND plan_since > 0 THEN plan_since ELSE ? END, plan = 'lifetime', plan_until = 0, plan_cancel = 0, stripe_sub = '', delete_at = 0, notice_stage = 0 WHERE id = ? AND plan <> 'grandfathered'").bind(Date.now(), u.id).run();
             if (oldSub) { try { await stripe(env, 'DELETE', '/v1/subscriptions/' + encodeURIComponent(oldSub)); } catch (e) { console.error('could not cancel old subscription', String(e)); } }
         } else if (obj.mode === 'subscription' && obj.subscription) {
-            await applySubscription(db, await freshSubscription(env, { id: typeof obj.subscription === 'string' ? obj.subscription : obj.subscription.id, metadata: { user_id: u.id }, customer: obj.customer }));
+            await applySubscription(db, await freshSubscription(env, { id: typeof obj.subscription === 'string' ? obj.subscription : obj.subscription.id, metadata: { user_id: u.id }, customer: obj.customer }), env);
         }
     } else if (ev.type === 'customer.subscription.created' || ev.type === 'customer.subscription.updated') {
-        await applySubscription(db, await freshSubscription(env, obj));
+        await applySubscription(db, await freshSubscription(env, obj), env);
     } else if (ev.type === 'customer.subscription.deleted') {
         const customer = typeof obj.customer === 'string' ? obj.customer : (obj.customer && obj.customer.id);
         const before = await billingUser(db, obj.metadata && obj.metadata.user_id, customer);    // read first: applySubscription clears the plan
-        await applySubscription(db, Object.assign({}, obj, { status: 'canceled' }));
+        await applySubscription(db, Object.assign({}, obj, { status: 'canceled' }), env);
         // Email only when this was the account's current renewing plan (not an old replaced one, and not a lifetime upgrade).
         if (before && (before.plan === 'monthly' || before.plan === 'yearly') && before.stripe_sub === obj.id) {
             await sendCustomerEmail(env, before.email, 'canceled', {});
