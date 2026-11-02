@@ -85,7 +85,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   void _remind() {
     if (!mounted) return;
-    // The lapsed-plan notice goes first (and a lapsed account is skipped by the backup reminder), so two boxes never appear together.
+    // The lapsed-plan notice goes first (and a lapsed account is skipped by the backup reminder), so the banner and the backup box never compete.
     unawaited(LapseNotice.maybeShow(context).then((_) {
       if (mounted) unawaited(BackupReminder.maybeShow(context));
     }));
@@ -300,7 +300,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _askExit();
         }
       },
-      child: Material(color: p.tokens.bg, child: p.sidebar ? _tv(context) : _phone(context)),
+      child: Material(color: p.tokens.bg, child: LapseBanner.wrap(child: p.sidebar ? _tv(context) : _phone(context))),
     );
   }
 

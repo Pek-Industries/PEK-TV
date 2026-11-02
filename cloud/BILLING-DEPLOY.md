@@ -82,8 +82,8 @@ Do this **before** deploying the billing worker or the new app.
 
 | Step | When | What the person sees |
 |---|---|---|
-| Grace | A renewal is missed: from the renewal date for 3 days (`GRACE_MS`). PEK Cloud stays on. | The app shows a box every 24 hours (never over a movie or episode) and the website's account page shows a notice. |
-| Deletion period | After the grace, backup is off. The account has `DELETE_DAYS` (default 30) to subscribe again. | The app (every 24 hours) and the account page say the exact date the account and its data will be deleted. Emails: when it starts and 3 days before the end. |
+| Grace | A renewal is missed: from the renewal date for 3 days (`GRACE_MS`). PEK Cloud stays on. | The app shows a banner across the top of its screen for as long as the plan is lapsed (never over a movie or episode) and every website page shows the same bar above its menu while the person is signed in. |
+| Deletion period | After the grace, backup is off. The account has `DELETE_DAYS` (default 30) to subscribe again. | A banner across the top of the app and of every website page (while signed in) says the exact date the account and its data will be deleted. Emails: when it starts and 3 days before the end. |
 | Deleted | The date passes with no plan bought. | The account and everything in it (profiles, watch history, resume points, plugin backups) is deleted for good and cannot be recovered. A device that still has a session is told once and signed out; the person is emailed. |
 
 Buying any plan at any point clears the countdown. A subscription that Stripe ends for good (cancelled, or unpaid after its retries) also starts the countdown

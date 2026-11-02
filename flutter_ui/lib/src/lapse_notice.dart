@@ -1,91 +1,35 @@
 import 'package:flutter/material.dart';
 
 import 'cloud.dart';
+import 'common.dart';
 import 'plan_ui.dart' show showUpgradeDialog;
-import 'store.dart';
+import 'tokens.dart';
 
-/// Tells people whose PEK Cloud plan lapsed what is happening to their account, once every 24 hours while it lasts:
+/// Keeps the lapsed-plan state fresh and shows the one-time "your account was deleted" box.
 ///
-///  1. `grace`: the renewal did not go through; PEK Cloud stays on until the grace period ends. Pay on the website to keep it.
-///  2. `deletion`: the grace is over, cloud backup is off, and the account and its data will be deleted on a date unless a plan is bought before then.
-///  3. After that date the cloud has deleted the account. The next time this device asks, it is told once and signed out.
-///
-/// Like [BackupReminder] it only speaks when the shell itself is the screen in front, so it never lands over a movie, an episode, the music
-/// player or a plugin screen; if one is open it simply waits for the next check (on start, when the app comes back, every 30 minutes).
-/// The 24 hours only start once a notice was actually shown. Paying on the website clears everything: the cloud then reports `none`.
+/// The warning itself is the [LapseBanner] at the top of the shell: it stays there for as long as the plan is lapsed (grace or deletion
+/// period) and goes away by itself once a plan is bought. It lives inside the shell, so it is never over a movie, an episode, the music
+/// player or a plugin screen. After the deletion date the cloud has deleted the account; the next time this device asks, it is told once
+/// (a box, not the banner) and signed out.
 class LapseNotice {
   LapseNotice._();
 
-  static const _kLast = 'pek_lapse_notice_at'; // this device, not per profile
-  static const every = Duration(hours: 24);
   static bool _busy = false;
-
-  static int get _last => int.tryParse(Store.strGet(_kLast, scoped: false) ?? '') ?? 0;
 
   static bool _front(BuildContext context) => context.mounted && (ModalRoute.of(context)?.isCurrent ?? false);
 
-  static String _date(int ms) {
-    const m = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    final d = DateTime.fromMillisecondsSinceEpoch(ms);
-    return '${m[d.month - 1]} ${d.day}, ${d.year}';
-  }
-
-  /// "3 days", "1 day", "less than a day".
-  static String _left(int ms) {
-    final days = (ms - DateTime.now().millisecondsSinceEpoch) / Duration.millisecondsPerDay;
-    if (days < 1) return 'less than a day';
-    final n = days.ceil();
-    return n == 1 ? '1 day' : '$n days';
-  }
-
+  /// Called on start, when the app comes back and every 30 minutes: asks the cloud (at most once a minute) so the banner is current.
   static Future<void> maybeShow(BuildContext context) async {
     if (_busy) return;
-    if (!_front(context)) return; // never over a video: wait for the next check
     _busy = true;
     try {
-      // The account is already gone: say so once (this is not repeated).
       if (Cloud.goneNoticePending) {
-        await _showGone(context);
+        if (_front(context)) await _showGone(context);
         return;
       }
       if (!Cloud.linked) return;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _last < every.inMilliseconds) return;
-      // Ask the cloud right now: the plan may have been paid a minute ago, or the account deleted since the last look.
-      await Cloud.refreshPlan(force: true);
-      if (!_front(context)) return;
-      if (Cloud.goneNoticePending) {
-        await _showGone(context);
-        return;
-      }
-      if (!Cloud.planVerified) return; // offline: say nothing now, the next check tries again
-      final state = Cloud.lapseState;
-      if (state == 'none') return;
-      await Store.strSet(_kLast, '${DateTime.now().millisecondsSinceEpoch}', scoped: false);
-      final String title, body;
-      if (state == 'grace') {
-        title = 'Your PEK Cloud payment is overdue';
-        body = 'Your PEK Cloud renewal did not go through. Cloud backup stays on until ${_date(Cloud.graceEnds)} (${_left(Cloud.graceEnds)} left). '
-            'Pay on the website before then to keep it. After that, cloud backup turns off and your account and everything stored in it is scheduled for deletion unless you subscribe again.';
-      } else {
-        title = 'Your PEK Cloud data will be deleted';
-        body = 'Your PEK Cloud plan has ended and cloud backup is off. Your account and everything stored in it (profiles, watch history, resume points and plugin backups) '
-            'will be permanently deleted on ${_date(Cloud.deleteAt)} (${_left(Cloud.deleteAt)} left) unless you subscribe again before then. Deleted data cannot be recovered.';
-      }
-      final again = await showDialog<bool>(
-        context: context,
-        builder: (c) => AlertDialog(
-          title: Text(title),
-          content: Text(body),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Remind me later')),
-            TextButton(autofocus: true, onPressed: () => Navigator.pop(c, true), child: Text(state == 'grace' ? 'Pay now' : 'Subscribe again')),
-          ],
-        ),
-      );
-      if (again == true && context.mounted) {
-        await showUpgradeDialog(context, why: state == 'grace' ? 'Pay to keep your cloud backup on.' : 'Subscribe again to keep your account and data.');
-      }
+      await Cloud.refreshPlan(); // the plan may have been paid a minute ago, or the account deleted since the last look
+      if (Cloud.goneNoticePending && _front(context)) await _showGone(context);
     } finally {
       _busy = false;
     }
@@ -104,6 +48,104 @@ class LapseNotice {
         ),
         actions: [TextButton(autofocus: true, onPressed: () => Navigator.pop(c), child: const Text('OK'))],
       ),
+    );
+  }
+}
+
+/// The banner across the top of the app while a PEK Cloud plan is lapsed: amber while the renewal is overdue (grace), red once the
+/// account is scheduled for deletion. One button opens the upgrade dialog; the X hides it until the app is started again (or the
+/// state gets worse, grace -> deletion).
+class LapseBanner {
+  LapseBanner._();
+
+  static final ValueNotifier<String> _hidden = ValueNotifier('');
+
+  static String _date(int ms) {
+    const m = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${m[d.month - 1]} ${d.day}, ${d.year}';
+  }
+
+  static String _left(int ms) {
+    final days = (ms - DateTime.now().millisecondsSinceEpoch) / Duration.millisecondsPerDay;
+    if (days < 1) return 'less than a day';
+    final n = days.ceil();
+    return n == 1 ? '1 day' : '$n days';
+  }
+
+  /// Puts the banner above [child]. The tree has the same shape with and without the banner, so the pages below keep their state.
+  static Widget wrap({required Widget child}) => ListenableBuilder(
+        listenable: Listenable.merge([Cloud.changes, _hidden]),
+        builder: (context, _) {
+          final state = Cloud.lapseState;
+          final show = Cloud.linked && state != 'none' && _hidden.value != state;
+          return Column(
+            children: [
+              if (show) _bar(context, state) else const SizedBox.shrink(),
+              Expanded(child: MediaQuery.removePadding(context: context, removeTop: show, child: child)),
+            ],
+          );
+        },
+      );
+
+  static Widget _bar(BuildContext context, String state) {
+    final p = context.pek;
+    final rem = p.rem;
+    final grace = state == 'grace';
+    final top = p.sidebar ? p.safeY : MediaQuery.paddingOf(context).top;
+    final title = grace ? 'Payment overdue' : 'Your PEK Cloud plan has ended';
+    final body = grace
+        ? 'PEK Cloud stays on until ${_date(Cloud.graceEnds)} (${_left(Cloud.graceEnds)} left). Pay now to keep your cloud backup.'
+        : 'Your account and data will be deleted on ${_date(Cloud.deleteAt)} (${_left(Cloud.deleteAt)} left) unless you subscribe again.';
+    final why = grace ? 'Pay to keep your cloud backup on.' : 'Subscribe again to keep your account and data.';
+    const white = Colors.white;
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title, style: TextStyle(fontSize: 1.0 * rem, fontWeight: FontWeight.w800, color: white)),
+        SizedBox(height: 0.15 * rem),
+        Text(body, style: TextStyle(fontSize: 0.85 * rem, color: white)),
+      ],
+    );
+    final action = TextButton(
+      style: TextButton.styleFrom(
+        foregroundColor: grace ? const Color(0xFF92400E) : const Color(0xFF991B1B),
+        backgroundColor: white,
+        padding: EdgeInsets.symmetric(horizontal: 1.0 * rem, vertical: 0.4 * rem),
+      ),
+      onPressed: () => showUpgradeDialog(context, why: why),
+      child: Text(grace ? 'Pay now' : 'Subscribe again', style: TextStyle(fontSize: 0.85 * rem, fontWeight: FontWeight.w800)),
+    );
+    final close = IconButton(
+      tooltip: 'Hide until the app restarts',
+      visualDensity: VisualDensity.compact,
+      icon: const Icon(Icons.close, color: white),
+      onPressed: () => _hidden.value = state,
+    );
+    return Container(
+      width: double.infinity,
+      color: grace ? const Color(0xFFB45309) : const Color(0xFFB91C1C),
+      padding: EdgeInsets.fromLTRB(rem + (p.sidebar ? p.safeX : 0), top + 0.6 * rem, 0.4 * rem, 0.6 * rem),
+      child: p.sidebar
+          ? Row(children: [
+              const Icon(Icons.warning_amber_rounded, color: white),
+              SizedBox(width: 0.8 * rem),
+              Expanded(child: text),
+              SizedBox(width: rem),
+              action,
+              close,
+            ])
+          : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Padding(padding: EdgeInsets.only(top: 2), child: Icon(Icons.warning_amber_rounded, color: white)),
+                SizedBox(width: 0.7 * rem),
+                Expanded(child: text),
+                close,
+              ]),
+              SizedBox(height: 0.4 * rem),
+              Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.only(left: 2 * rem), child: action)),
+            ]),
     );
   }
 }
