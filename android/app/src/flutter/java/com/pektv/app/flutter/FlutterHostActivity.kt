@@ -512,6 +512,23 @@ class FlutterHostActivity : FlutterActivity() {
                 // A pass the torrent server asks for before it starts a stream (backend/torrent_routes.cpp). Dart only asks for one
                 // after a plugin has handed it a release (torrent.dart), so nothing else on the device can start a torrent.
                 "torrentGrant" -> result.success(NativeBridge.mintTorrentGrant())
+                // "All files access" (Android 11+): needed to open folders on a USB drive / SD card. Older Android has no such switch (true).
+                "allFilesAccess" -> result.success(Build.VERSION.SDK_INT < Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager())
+                // Opens Android's switch for PEK TV; if a box has no such screen, the next best settings page.
+                "openAllFilesAccess" -> {
+                    val pkg = Uri.parse("package:$packageName")
+                    val tries = ArrayList<Intent>()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        tries.add(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkg))
+                        tries.add(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    }
+                    tries.add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg))
+                    var opened = false
+                    for (i in tries) {
+                        try { startActivity(i); opened = true; break } catch (e: Exception) { /* try the next one */ }
+                    }
+                    result.success(opened)
+                }
                 "setMulticast" -> {
                     setMulticast(call.argument<Boolean>("on") ?: false)
                     result.success(null)

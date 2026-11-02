@@ -53,6 +53,7 @@ object Boot {
                 copyAssetDir(ctx, "hesper", root)
                 markAssetsCopied(ctx, root)
             }
+            StorageVolumes.init(ctx, root)   // before the server starts: it reads the volume list for the folder picker
             NativeBridge.startServer(root.absolutePath)
             startPythonPlugins(ctx, File(root, "plugins"))
             for (i in 0 until 125) {

@@ -7,9 +7,9 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <!-- "All files access" (Android 11+): only for the fallback in-app file browser (Install from .PEK > Browse this device),
+    <!-- "All files access" (Android 11+): for the in-app folder picker on a USB drive / SD card, and the fallback in-app file browser (Install from .PEK > Browse this device),
          which Android otherwise shows no .PEK / .zip files in. Installing a plugin from a .PEK or a skin from a .zip does not need it: "Choose a file"
-         uses Android's own file picker (FlutterHostActivity.pickFile). Optional: the person is never asked for it up front. -->
+         uses Android's own file picker (FlutterHostActivity.pickFile). Optional: never asked for up front; Media sources and the folder picker show an "Allow access to all files" button while it is off. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <!-- Network folder discovery: mDNS needs a multicast lock on Wi-Fi -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />

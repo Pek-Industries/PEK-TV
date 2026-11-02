@@ -137,6 +137,86 @@ std::string jsonEscape(const std::string& s) {
     return out;
 }
 
+// ---- Storage roots -------------------------------------------------------------------------------
+// Android never lets an app list /storage itself (SELinux), so a picker that only walks "up" from
+// /storage/emulated/0 can never reach a USB drive or SD card (/storage/<UUID>). The roots are collected
+// from: (1) the file the Kotlin side keeps up to date from StorageManager (PEK_VOLUMES_FILE, lines
+// "label<TAB>path"), (2) /proc/mounts, (3) a direct probe of /storage/*. Only folders that can really
+// be listed are returned, so a stale entry for an unplugged drive disappears by itself.
+struct StorageRoot { std::string label, path; };
+
+static bool listableDir(const std::string& p) {
+    std::error_code ec;
+    if (!fs::is_directory(p, ec)) return false;
+    fs::directory_iterator it(p, fs::directory_options::skip_permission_denied, ec);
+    return !ec;
+}
+
+static std::vector<StorageRoot> storageRoots() {
+    std::vector<StorageRoot> out;
+    auto add = [&out](const std::string& label, std::string path) {
+        while (path.size() > 1 && path.back() == '/') path.pop_back();
+        if (path.empty() || path[0] != '/') return;
+        for (const auto& r : out) if (r.path == path) return;
+        if (!listableDir(path)) return;
+        out.push_back({label, path});
+    };
+    add("Internal storage", "/storage/emulated/0");
+
+    if (const char* f = std::getenv("PEK_VOLUMES_FILE")) {
+        std::ifstream in(f);
+        std::string line;
+        while (std::getline(in, line)) {
+            auto tab = line.find('\t');
+            if (tab == std::string::npos) continue;
+            add(line.substr(0, tab), line.substr(tab + 1));
+        }
+    }
+    {   // /proc/mounts: "device mountpoint fstype ..."
+        std::ifstream in("/proc/mounts");
+        std::string dev, mp, rest;
+        while (in >> dev >> mp) {
+            std::getline(in, rest);
+            for (const char* pre : {"/storage/", "/mnt/media_rw/"}) {
+                if (mp.rfind(pre, 0) != 0) continue;
+                std::string name = fs::path(mp).filename().string();
+                if (name == "emulated" || name == "self" || name.empty()) continue;
+                add("USB / SD (" + name + ")", mp);
+            }
+        }
+    }
+    {   // direct probe of /storage/* (the listing itself may be refused; then this adds nothing)
+        std::error_code ec;
+        fs::directory_iterator it("/storage", fs::directory_options::skip_permission_denied, ec);
+        for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            std::string name = it->path().filename().string();
+            if (name == "emulated" || name == "self" || name.empty() || name[0] == '.') continue;
+            add("USB / SD (" + name + ")", it->path().string());
+        }
+    }
+    return out;
+}
+
+// The folder above `p` the picker may show, or "@roots" (the list of storage roots) when `p` is a root or
+// its parent is somewhere an app cannot list (/storage, /storage/emulated, /).
+static std::string pickerParent(const std::string& p, const std::vector<StorageRoot>& roots) {
+    for (const auto& r : roots) if (r.path == p) return "@roots";
+    fs::path par = fs::path(p).parent_path();
+    if (par.empty() || par == fs::path(p)) return "@roots";
+    std::string ps = par.string();
+    if (ps == "/" || ps == "/storage" || ps == "/storage/emulated" || ps == "/mnt" || ps == "/mnt/media_rw") return "@roots";
+    return ps;
+}
+
+static std::string rootsJson(const std::vector<StorageRoot>& roots) {
+    std::string j = "[";
+    for (size_t i = 0; i < roots.size(); ++i) {
+        j += "{\"name\": \"" + jsonEscape(roots[i].label) + "\", \"path\": \"" + jsonEscape(roots[i].path) + "\"}";
+        if (i + 1 < roots.size()) j += ",";
+    }
+    return j + "]";
+}
+
 void appendUtf8(std::string& out, unsigned int cp) {
     if (cp < 0x80) out += static_cast<char>(cp);
     else if (cp < 0x800) { out += static_cast<char>(0xC0 | (cp >> 6)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
@@ -681,6 +761,12 @@ void PekServer::start(int port, const std::string& plugins_dir,
                 }
             }
         } else {
+            const auto roots = storageRoots();
+            if (path == "@roots") {
+                for (const auto& r : roots) items.push_back({r.label, r.path, true, 0});
+                path = "";
+                shown = ""; parent = "";
+            } else {
             if (path.empty() || path == "@local") path = localRoot();
             if (path[0] != '/' || path.find("..") != std::string::npos) { fail("That folder isn't available.", false); return; }
             std::error_code ec;
@@ -702,7 +788,8 @@ void PekServer::start(int port, const std::string& plugins_dir,
                 if (items.size() >= 1000) break;
             }
             shown = dir.string();
-            parent = (dir.has_parent_path() && dir.parent_path() != dir) ? dir.parent_path().string() : "";
+            parent = pickerParent(shown, roots);
+            }
         }
 
         auto lower = [](std::string t) { for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return t; };
@@ -1250,20 +1337,38 @@ void PekServer::start(int port, const std::string& plugins_dir,
     //    root if no path is given / the path is invalid. Powers the
     //    "Add Source" folder-browsing UI — never touches files.
     svr.Get("/api/browse", [](const httplib::Request& req, httplib::Response& res) {
-        std::string path = req.has_param("path")
-            ? req.get_param_value("path")
-            : "/storage/emulated/0";
+        const auto roots = storageRoots();
+        const std::string rj = rootsJson(roots);
+        std::string path = req.has_param("path") ? req.get_param_value("path") : "";
+        const bool typed = req.has_param("strict");   // the person typed this path: say so if it is wrong, do not fall back
+
+        // The list of storage roots (internal storage, USB drives, SD cards).
+        if (path == "@roots") {
+            std::string json = "{\"path\": \"\", \"parent\": \"\", \"roots\": " + rj + ", \"directories\": [";
+            for (size_t i = 0; i < roots.size(); ++i) {
+                json += "{\"name\": \"" + jsonEscape(roots[i].label) + "\", \"path\": \"" + jsonEscape(roots[i].path) + "\"}";
+                if (i + 1 < roots.size()) json += ",";
+            }
+            res.set_content(json + "]}", "application/json");
+            return;
+        }
+        if (path.empty()) path = "/storage/emulated/0";
 
         std::vector<std::string> dirs;
         if (!MediaScanner::listSubdirectories(path, dirs)) {
+            if (typed) {
+                res.set_content("{\"ok\": false, \"error\": \"" + jsonEscape(
+                    "Cannot open " + path + ". Check the path, that the drive is plugged in, and that PEK TV has All files access.") +
+                    "\", \"roots\": " + rj + "}", "application/json");
+                return;
+            }
             path = "/storage/emulated/0"; // invalid path — fall back rather than error, so the picker never gets stuck
             MediaScanner::listSubdirectories(path, dirs);
         }
 
-        fs::path current(path);
-        std::string parent = current.has_parent_path() ? current.parent_path().string() : path;
+        const std::string parent = pickerParent(path, roots);
 
-        std::string json = "{\"path\": \"" + jsonEscape(path) + "\", \"parent\": \"" + jsonEscape(parent) + "\", \"directories\": [";
+        std::string json = "{\"path\": \"" + jsonEscape(path) + "\", \"parent\": \"" + jsonEscape(parent) + "\", \"roots\": " + rj + ", \"directories\": [";
         for (size_t i = 0; i < dirs.size(); ++i) {
             fs::path d(dirs[i]);
             json += "{\"name\": \"" + jsonEscape(d.filename().string()) + "\", \"path\": \"" + jsonEscape(dirs[i]) + "\"}";

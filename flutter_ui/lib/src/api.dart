@@ -431,9 +431,12 @@ class Api {
     forgetLibrary();
   }
 
-  /// The browse endpoint behind the folder picker: {path, parent, dirs: [...]}.
-  static Future<Map<String, dynamic>> browse([String path = '']) async =>
-      Map<String, dynamic>.from(await _get('/api/browse${path.isEmpty ? '' : '?path=${Uri.encodeQueryComponent(path)}'}') as Map);
+  /// The browse endpoint behind the folder picker: {path, parent, roots: [...], directories: [...]}.
+  /// '@roots' lists the storage devices (internal, USB, SD). [strict]: a path that cannot be opened answers {ok:false, error}.
+  static Future<Map<String, dynamic>> browse([String path = '', bool strict = false]) async {
+    final q = <String>[if (path.isNotEmpty) 'path=${Uri.encodeQueryComponent(path)}', if (strict) 'strict=1'];
+    return Map<String, dynamic>.from(await _get('/api/browse${q.isEmpty ? '' : '?${q.join('&')}'}') as Map);
+  }
 
   /// POST /api/sources?path=... confirms a folder as a source (the server starts a scan).
   static Future<bool> addSource(String path) async {

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'account_pages.dart';
+import 'all_files_access.dart';
 import 'layouts.dart';
 import 'api.dart';
 import 'common.dart';
 import 'detail.dart';
+import 'fields.dart' show PekField;
 import 'mpv.dart';
 import 'net_folders.dart';
 import 'news.dart';
@@ -422,6 +424,7 @@ class _LibrarySettingsState extends State<_LibrarySettings> {
             ]),
           ),
           SizedBox(height: 0.5 * rem),
+          const AllFilesAccessBanner(),
           Wrap(spacing: 8, runSpacing: 8, children: [
             PekButton(label: 'Add source folder', primary: true, onTap: _addFolder),
             PekButton(label: 'Add network folder', onTap: _addNetFolder),
@@ -443,8 +446,10 @@ class _FolderPickerState extends State<FolderPicker> {
   String _path = '';
   String _parent = '';
   List<Map<String, dynamic>> _dirs = const [];
+  List<Map<String, dynamic>> _roots = const []; // internal storage, USB drives, SD cards
   bool _loading = true;
   String? _error;
+  final _typed = TextEditingController();
 
   @override
   void initState() {
@@ -452,16 +457,32 @@ class _FolderPickerState extends State<FolderPicker> {
     _go('');
   }
 
-  Future<void> _go(String path) async {
+  @override
+  void dispose() {
+    _typed.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> _maps(Object? l) => ((l as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+
+  /// [typed]: the person typed this path, so a wrong one shows a message instead of quietly opening internal storage.
+  Future<void> _go(String path, {bool typed = false}) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final d = await Api.browse(path);
-      _path = '${d['path'] ?? path}';
-      _parent = '${d['parent'] ?? ''}';
-      _dirs = ((d['directories'] as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      final d = await Api.browse(path, typed);
+      if (d['ok'] == false) {
+        _error = '${d['error'] ?? 'That folder cannot be opened.'}';
+        _roots = _maps(d['roots']);
+      } else {
+        _path = '${d['path'] ?? path}';
+        _parent = '${d['parent'] ?? ''}';
+        _dirs = _maps(d['directories']);
+        _roots = _maps(d['roots']);
+        _typed.text = _path;
+      }
     } catch (_) {
       _error = 'Could not reach the server.';
     }
@@ -472,19 +493,32 @@ class _FolderPickerState extends State<FolderPicker> {
   Widget build(BuildContext context) {
     final p = context.pek;
     final rem = p.rem;
+    final atRoots = _path.isEmpty;
     return SubScreen(
       title: 'Choose a folder',
       body: ListView(padding: p.pagePad, children: [
-        Text(_path, style: TextStyle(color: p.tokens.textMuted)),
-        SizedBox(height: 0.75 * rem),
+        AllFilesAccessBanner(onGranted: () => _go(_path.isEmpty ? '@roots' : _path)),
+        // Storage devices: a USB drive is not below internal storage, so it needs its own button.
+        if (_roots.isNotEmpty) ...[
+          Text('Storage', style: TextStyle(color: p.tokens.textMuted)),
+          SizedBox(height: 0.5 * rem),
+          Wrap(spacing: 0.5 * rem, runSpacing: 0.5 * rem, children: [
+            for (final r in _roots) PekButton(compact: true, label: '${r['name']}', onTap: () => _go('${r['path']}')),
+            PekButton(compact: true, label: 'Refresh', onTap: () => _go(_path.isEmpty ? '@roots' : _path)),
+          ]),
+          SizedBox(height: 0.75 * rem),
+        ],
+        // Type a path by hand, e.g. /storage/1234-ABCD/Movies
+        PekField(label: 'Folder path', hint: '/storage/XXXX-XXXX/Movies', controller: _typed, onSubmitted: () => _go(_typed.text.trim(), typed: true)),
         Wrap(spacing: 0.5 * rem, runSpacing: 0.5 * rem, children: [
-          PekButton(compact: true, label: 'Up', onTap: _path.isEmpty || _parent == _path ? null : () => _go(_parent)),
-          PekButton(compact: true, primary: true, label: 'Use this folder', onTap: _path.isEmpty ? null : () => Navigator.pop(context, _path)),
+          PekButton(compact: true, label: 'Open path', onTap: () => _go(_typed.text.trim(), typed: true)),
+          PekButton(compact: true, label: 'Up', onTap: atRoots ? null : () => _go(_parent.isEmpty ? '@roots' : _parent)),
+          PekButton(compact: true, primary: true, label: 'Use this folder', onTap: atRoots ? null : () => Navigator.pop(context, _path)),
         ]),
         SizedBox(height: rem),
         if (_error != null) Text(_error!),
         if (_loading) Text('Loading\u2026', style: TextStyle(color: p.tokens.textMuted)),
-        if (!_loading && _dirs.isEmpty && _error == null) Text('No folders here.', style: TextStyle(color: p.tokens.textMuted)),
+        if (!_loading && _dirs.isEmpty && _error == null) Text(atRoots ? 'No storage found.' : 'No folders here.', style: TextStyle(color: p.tokens.textMuted)),
         for (final d in _dirs) ListRow(title: '${d['name']}', onTap: () => _go('${d['path']}')),
       ]),
     );
