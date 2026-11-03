@@ -113,6 +113,10 @@ a machine on the network cannot start a stream.
 started it is installed and declares `"provides": {"stream": true}`. Otherwise PEK TV says no plugin can play it, keeps the progress, and offers **Open in TMDb Discover**
 (a built-in plugin that cannot be removed), where you can play the title with any plugin you have.
 
+**Continue watching a movie or episode.** Picking a plugin for a saved title opens it with `on_launch(intent)` =
+`{"type": "movie", "id": <TMDb id>, "title": <title>, "year": <year>, "autoplay": true}` (an episode: `"type": "tv"` plus `season` and `episode`). With `autoplay` true the plugin
+should find a release and call `ui.play_torrent` straight away, without waiting for a button press, for a movie as well as for an episode. PEK TV then starts it at the saved resume point.
+
 **Up next.** For a stream started by a plugin, the Up next card (last 5 minutes of an episode) reopens that plugin on the next episode: its `on_launch(intent)` gets
 `{"type": "tv", "id": <TMDb id>, "title": <show>, "year": 0, "season": N, "episode": N+1, "autoplay": true}` and should find and start that episode. PEK TV only adds 1 to
 the episode number, so a plugin asked for an episode past the end of a season should move on to episode 1 of the next season (Stream Media does).

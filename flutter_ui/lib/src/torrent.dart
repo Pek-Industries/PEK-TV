@@ -178,7 +178,7 @@ class TorrentTitle {
 Future<void> playTorrent(BuildContext context, {required Progress track, double startSec = 0, String? pluginId}) async {
   final t = track.torrent;
   if (t == null) return;
-  if (pluginId != null && pluginId.isNotEmpty && startSec <= 0) startSec = _resumePoint(track);
+  if (pluginId != null && pluginId.isNotEmpty && startSec <= 0) startSec = _resumePoint(track, pluginId);
   if (pluginId == null || pluginId.isEmpty) {
     // A saved entry (Resume Watching, Watch History, another device): list the installed video plugins and open the title
     // in the one the person taps, which finds the release and plays it. With none installed, say so.
@@ -191,6 +191,17 @@ Future<void> playTorrent(BuildContext context, {required Progress track, double 
     final pick = await _askPlayer(context, track.title, players);
     if (pick == null || !context.mounted) return;
     _chosenStart[track.id] = startSec; // the plugin hands the release back: it starts here (0 = Start over)
+    // The plugin may hand the release back under a slightly different title or year than the saved entry, so the id above would
+    // not match. Remember the choice by plugin and title as well (see _resumePoint).
+    _pending = _PendingStart(
+      pluginId: pick['id'] ?? '',
+      kind: track.kind,
+      name: _pendingName(track.kind == 'episode' ? track.showTitle : track.title),
+      season: track.season,
+      episode: track.episode,
+      sec: startSec,
+      at: DateTime.now(),
+    );
     await _openInPlugin(context, track, pick);
     return;
   }
@@ -311,11 +322,39 @@ Future<void> _openInPlugin(BuildContext context, Progress track, Map<String, Str
 /// Where the person chose to start a saved title they picked a plugin for (0 = "Start over"), until the plugin hands the release back.
 final Map<String, double> _chosenStart = {};
 
+/// A saved title the person opened in a plugin from Continue Watching: where to start (0 = Start over), kept for a few minutes.
+class _PendingStart {
+  const _PendingStart({required this.pluginId, required this.kind, required this.name, required this.season, required this.episode, required this.sec, required this.at});
+  final String pluginId, kind, name;
+  final int season, episode;
+  final double sec;
+  final DateTime at;
+}
+
+_PendingStart? _pending;
+
+String _pendingName(String t) => Store.normalize(t.replaceAll(RegExp(r'\s*\(\d{4}\)\s*$'), ''));
+
 /// Where a stream a plugin hands over should start: the point the person chose when they picked it from Continue Watching,
 /// otherwise the saved resume point of the same movie or episode, otherwise the start.
-double _resumePoint(Progress track) {
+double _resumePoint(Progress track, String pluginId) {
   final chosen = _chosenStart.remove(track.id);
-  if (chosen != null) return chosen;
+  if (chosen != null) {
+    _pending = null;
+    return chosen;
+  }
+  // The same choice, matched by plugin and title (the plugin's title or year can differ from the saved entry's).
+  final p = _pending;
+  if (p != null) {
+    final fresh = DateTime.now().difference(p.at) < const Duration(minutes: 15);
+    final name = _pendingName(track.kind == 'episode' ? track.showTitle : track.title);
+    final sameTitle = p.name.isNotEmpty && name.isNotEmpty && (p.name == name || p.name.contains(name) || name.contains(p.name));
+    final sameEpisode = track.kind != 'episode' || (p.season == track.season && p.episode == track.episode);
+    if (fresh && p.pluginId == pluginId && p.kind == track.kind && sameTitle && sameEpisode) {
+      _pending = null;
+      return p.sec;
+    }
+  }
   var saved = Store.progressFor(track.id);
   if (saved == null) {
     final key = Store.keyFor(kind: track.kind, title: track.title, showTitle: track.showTitle, year: track.year, season: track.season, episode: track.episode);
