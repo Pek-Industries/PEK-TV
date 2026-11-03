@@ -648,7 +648,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   },
                 ),
               ),
-              Positioned(right: 16, top: 0, bottom: 0, child: Center(child: _nextCard())),
               if (_live && !_guideOpen && (_tv?.available ?? false))
                 Positioned(
                   right: 0,
@@ -688,6 +687,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: RepaintBoundary(child: Theme(data: ThemeData.dark(useMaterial3: true), child: DefaultTextStyle.merge(style: const TextStyle(color: Colors.white), child: _overlay()))),
                 ),
               )),
+              // "Next episode" card: the top right corner, away from the Skip button (bottom right) and the buffering box (middle). Last in
+              // the stack so a tap always reaches it, and below the top bar while the controls show so it never covers the title.
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 200),
+                right: 16,
+                top: _controls ? 76 : 16,
+                child: _nextCard(),
+              ),
             ],
           ),
         ),
@@ -695,7 +702,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  /// The "Up next" card on the right: Play now / Dismiss, or a countdown once this episode has ended.
+  /// The "Next episode" card in the top right corner: Play now / Dismiss, or a countdown once this episode has ended.
   Widget _nextCard() {
     return ValueListenableBuilder<bool>(
       valueListenable: _nextVisible,
@@ -705,16 +712,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return ValueListenableBuilder<int?>(
           valueListenable: _countdown,
           builder: (_, left, __) => Container(
-            width: 260,
+            width: 280,
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(color: const Color(0xE61C1815), borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0x38F6F2EC))),
             child: Theme(
               data: ThemeData.dark(useMaterial3: true),
               child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('UP NEXT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.6, color: Colors.white70)),
-                const SizedBox(height: 4),
+                // Says what it is (the next episode of this series) and what the buttons do.
+                const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.skip_next_rounded, size: 16, color: Colors.white70),
+                  SizedBox(width: 6),
+                  Text('NEXT EPISODE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.6, color: Colors.white70)),
+                ]),
+                const SizedBox(height: 6),
                 Text(n.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white)),
-                if (left != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Playing in $left\u2026', style: const TextStyle(color: Colors.white70))),
+                if (left != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Starts in $left\u2026', style: const TextStyle(color: Colors.white70))),
                 const SizedBox(height: 12),
                 Row(children: [
                   Expanded(child: FilledButton(onPressed: _playNext, child: const Text('Play now'))),

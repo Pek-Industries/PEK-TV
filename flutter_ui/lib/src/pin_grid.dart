@@ -170,7 +170,7 @@ class _PinTileState extends State<PinTile> {
                         ),
                         child: Padding(
                           padding: EdgeInsets.fromLTRB(0.75 * rem, 1.5 * rem, 0.75 * rem, 0.6 * rem),
-                          child: Text(widget.title!, maxLines: 1, overflow: TextOverflow.ellipsis,
+                          child: Text(widget.title!,
                               style: TextStyle(fontSize: 1.0 * rem, fontWeight: FontWeight.w600, color: Colors.white, letterSpacing: -0.2)),
                         ),
                       ),
@@ -182,10 +182,10 @@ class _PinTileState extends State<PinTile> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (widget.leading != null) Padding(padding: EdgeInsets.only(bottom: 0.5 * rem), child: widget.leading!),
-                    Text(widget.title!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2)),
+                    Text(widget.title!, style: TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2)),
                     if (widget.subtitle != null && widget.subtitle!.isNotEmpty) ...[
                       SizedBox(height: 0.5 * rem),
-                      Text(widget.subtitle!, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 0.92 * rem, color: t.textMuted, height: 1.35)),
+                      Text(widget.subtitle!, style: TextStyle(fontSize: 0.92 * rem, color: t.textMuted, height: 1.35)),
                     ],
                   ],
                 ),

@@ -3,6 +3,7 @@ import 'pin_grid.dart';
 import 'plugin_pins.dart';
 import 'plugin_updates.dart';
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -535,17 +536,39 @@ class _MorePage extends StatelessWidget {
     final rem = p.rem;
     final cols = p.size.width >= 600 ? 3 : 2;
     final gap = 0.75 * rem;
-    // Every tile is the same height: a title of up to 2 lines + a description of up to 3 lines (longer text is cut with "...").
-    final tileH = (p.compact ? 0.75 : 1.5) * 2 * rem + 1.1 * rem * 1.3 * 2 + 0.5 * rem + 0.92 * rem * 1.35 * 3 + 2;
+    // Tiles in a row share one height: at least room for a 2-line title + a 3-line description, taller when a title or description
+    // needs more lines (the text wraps, it is never cut off).
+    final pad = (p.compact ? 0.75 : 1.5) * rem;
+    final minTileH = pad * 2 + 1.1 * rem * 1.3 * 2 + 0.5 * rem + 0.92 * rem * 1.35 * 3 + 2;
 
     Widget grid(List<String> list) {
       final rows = (list.length / cols).ceil();
+      return LayoutBuilder(builder: (context, box) {
+      final colW = (box.maxWidth - (cols - 1) * (gap + 1)) / cols;
+      final base = DefaultTextStyle.of(context).style;
+      final scaler = MediaQuery.textScalerOf(context);
+      double textH(String text, TextStyle st) {
+        final tp = TextPainter(text: TextSpan(text: text, style: base.merge(st)), textDirection: TextDirection.ltr, textScaler: scaler)..layout(maxWidth: math.max(1.0, colW - 2 * pad));
+        return tp.height;
+      }
+      // The height one tile needs for its text (the same layout as PekCard / PinTile).
+      double need(String id) {
+        if (id.startsWith('pin+:')) return 0;
+        final pl = pinned.where((e) => 'plugin:${e.folder}' == id).firstOrNull;
+        if (pl != null && pl.icon.isNotEmpty) return 0; // a full picture tile: its name sits on the picture
+        final sub = pl != null ? pl.description : (_hint[id] ?? hints[id]);
+        final hasLeading = pl != null || id.startsWith('plugin:');
+        var h = 2 * pad + (hasLeading ? 3.4 * rem + 0.5 * rem : 0.0);
+        h += textH(titleOf(id), TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2));
+        if (sub != null && sub.isNotEmpty) h += 0.5 * rem + textH(sub, TextStyle(fontSize: 0.92 * rem, height: 1.35));
+        return h + 4;
+      }
       return Column(children: [
         for (var r = 0; r < rows; r++) ...[
           // A thin line between rows and between the two columns, so each button reads as its own.
           if (r > 0) ThinDivider(vertical: gap / 2),
           SizedBox(
-              height: tileH,
+              height: [minTileH, for (var c = 0; c < cols; c++) if (r * cols + c < list.length) need(list[r * cols + c])].reduce(math.max),
               child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 for (var c = 0; c < cols; c++) ...[
                   if (c > 0) Padding(padding: EdgeInsets.symmetric(horizontal: gap / 2), child: SizedBox(width: 1, child: ColoredBox(color: p.tokens.textMuted.withAlpha(60)))),
@@ -563,8 +586,6 @@ class _MorePage extends StatelessWidget {
                                     : PluginPicture(url: icons[list[r * cols + c]]!, size: 3.4 * rem))
                                 : null,
                             subtitle: _hint[list[r * cols + c]] ?? hints[list[r * cols + c]],
-                            titleMaxLines: 2,
-                            subtitleMaxLines: 3,
                             onTap: () => onOpen(list[r * cols + c]),
                           )
                         : const SizedBox.shrink(),
@@ -574,6 +595,7 @@ class _MorePage extends StatelessWidget {
             ),
         ],
       ]);
+      });
     }
 
     return ListView(
