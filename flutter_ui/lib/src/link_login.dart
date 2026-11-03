@@ -147,11 +147,11 @@ class _LinkScreenState extends State<LinkScreen> {
           ],
           SizedBox(height: 1.2 * rem),
           if (_error.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text(_error, style: const TextStyle(color: Colors.redAccent))),
-          if (_code.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text('This code works for ${_left()} more. A new one appears by itself. This screen signs in as soon as you approve.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem))),
+          if (_code.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text('Code works for ${_left()} more; a new one appears by itself. Signs in once you approve.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem))),
           Wrap(spacing: 8, runSpacing: 8, children: [
             PekButton(label: _code.isEmpty && _error.isNotEmpty ? 'Try again' : 'New code', autofocus: true, onTap: _starting ? null : _start),
             PekButton(
-              label: 'Use email and password',
+              label: 'Email & password',
               onTap: () => Navigator.pushReplacement<void, void>(context, MaterialPageRoute<void>(builder: (_) => const AccountScreen(mode: AccountMode.signIn))),
             ),
           ]),

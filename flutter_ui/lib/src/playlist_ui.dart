@@ -224,7 +224,7 @@ class PlaylistRows extends StatelessWidget {
               },
             ),
           ),
-          if (lists.isEmpty) const PekCard(title: 'No playlists yet', subtitle: 'Make a playlist, then add songs with \u201cAdd to playlist\u201d or by pressing and holding a song.'),
+          if (lists.isEmpty) const PekCard(title: 'No playlists yet', subtitle: 'Create one, then press and hold a song and choose \u201cAdd to playlist\u201d.'),
           for (final p in lists)
             ListRow(
               title: p.name,
@@ -300,7 +300,7 @@ class PlaylistScreen extends StatelessWidget {
     if (tracks.isEmpty) {
       return ListView(padding: p.pagePad, children: [
         header,
-        const PekCard(title: 'This playlist is empty', subtitle: 'Add songs from an album or the Songs list: press and hold a song, then \u201cAdd to playlist\u201d.'),
+        const PekCard(title: 'This playlist is empty', subtitle: 'Press and hold a song, then \u201cAdd to playlist\u201d.'),
       ]);
     }
 

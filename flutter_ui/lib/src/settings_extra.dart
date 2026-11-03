@@ -78,8 +78,8 @@ class _VideoOutputSectionState extends State<VideoOutputSection> {
     if (_missing || v == null) return const SizedBox.shrink();
     return Section(
       title: 'Video output',
-      hint: 'Smoother motion and true HDR. Applies to the next video you start. Matching switches the screen to the video\u2019s frame rate '
-          '(it may blink for a moment). HDR sends HDR10 / HLG video straight to an HDR screen.',
+      hint: 'Smoother motion and true HDR. Applies to the next video. Matching switches the screen to the video\u2019s frame rate '
+          '(it may blink). HDR sends HDR10 / HLG straight to an HDR screen.',
       children: [
         ToggleRow(title: 'Match refresh rate', subtitle: v.matchRate ? 'On' : 'Off', on: v.matchRate, onTap: () => _flip(PekOutput.setMatchRate, v.matchRate)),
         ToggleRow(
@@ -144,9 +144,8 @@ class _AudioOutputSectionState extends State<AudioOutputSection> {
     final missing = a.formats.where((f) => !a.on.contains(f)).toList();
     return Section(
       title: 'Audio output',
-      hint: 'Passthrough sends the sound untouched to your TV, soundbar or receiver so it can play Dolby or DTS itself. Applies to the next video you start. '
-          'Leave a format off if your receiver cannot play it. While passthrough is in use, set the volume on the receiver or TV. '
-          'If a format is not accepted, PEK TV plays it as normal sound instead.',
+      hint: 'Sends sound untouched to your TV or receiver so it can play Dolby or DTS. Applies to the next video. '
+          'Leave off formats it can\u2019t play (they play as normal sound). Set the volume on the receiver.',
       children: [
         for (final (codec, label, hint) in _codecs)
           ToggleRow(
@@ -190,7 +189,7 @@ class _SubtitleSectionState extends State<SubtitleSection> {
     ];
     return Section(
       title: 'Subtitles',
-      hint: 'Finds subtitles online for anything that plays without its own. Nothing to set up. Pick the language you want.',
+      hint: 'Finds subtitles online for anything without its own. Just pick a language.',
       children: [
         ToggleRow(
           title: 'Find subtitles automatically',
@@ -226,7 +225,7 @@ class SkipSection extends StatelessWidget {
       valueListenable: Store.changed,
       builder: (context, _, __) => Section(
         title: 'Skip intro and recap',
-        hint: 'A Skip button appears during intros and recaps. They are found from the file\u2019s chapters and, for TV episodes, from an online database.',
+        hint: 'A Skip button appears during intros and recaps, found from the file\u2019s chapters or, for TV episodes, an online database.',
         children: [
           ToggleRow(title: 'Skip automatically', subtitle: Store.skipAuto ? 'On' : 'Off', on: Store.skipAuto, onTap: () => Store.setSkipAuto(!Store.skipAuto)),
           ToggleRow(title: 'Look up intro/recap online', subtitle: Store.skipOnline ? 'On' : 'Off', on: Store.skipOnline, onTap: () => Store.setSkipOnline(!Store.skipOnline)),
@@ -249,7 +248,7 @@ class ActivitySection extends StatelessWidget {
       valueListenable: Store.changed,
       builder: (context, _, __) => Section(
         title: 'Background activity',
-        hint: 'A small line in the corner says what PEK TV is doing quietly (scanning, syncing, loading). It never takes a tap and hides while a video plays.',
+        hint: 'A small corner line shows what PEK TV is doing (scanning, syncing, loading). It never blocks taps and hides during video.',
         children: [
           for (final (id, name, desc) in const [
             ('off', 'Off', 'Show nothing'),
@@ -281,7 +280,7 @@ class PluginPostersSection extends StatelessWidget {
       valueListenable: Store.changed,
       builder: (context, _, __) => Section(
         title: 'Plugin posters',
-        hint: 'Movies you have watched get a tick in every plugin, and pressing and holding a poster marks or un-marks it. Plugins are never told which titles you watched.',
+        hint: 'Watched movies get a tick in every plugin. Press and hold a poster to mark or un-mark it. Plugins never learn what you watched.',
         children: [
           ToggleRow(
             title: 'Match by title when a poster has no year',
@@ -335,7 +334,7 @@ class _MusicOnlineSectionState extends State<MusicOnlineSection> {
     if (_available != true) return const SizedBox.shrink();
     return Section(
       title: 'Music',
-      hint: 'Artist, album and song names are sent to Deezer, Apple and LRCLIB to find pictures and lyrics; they are kept until the next rescan.',
+      hint: 'Artist, album and song names are sent to Deezer, Apple and LRCLIB to find art and lyrics, and kept until the next rescan.',
       children: [ToggleRow(title: 'Online art & lyrics', subtitle: _on ? 'On' : 'Off', on: _on, onTap: _flip)],
     );
   }
@@ -384,7 +383,7 @@ class AppearanceSection extends StatelessWidget {
               AppearanceSection.openSkinMaker(context, edit: s);
             })
           else
-            PekButton(label: 'Make my own from this', onTap: () {
+            PekButton(label: 'Make my own', onTap: () {
               Navigator.pop(c);
               AppearanceSection.openSkinMaker(context, from: s);
             }),
@@ -469,7 +468,7 @@ class AppearanceSection extends StatelessWidget {
       listenable: Skins.changes,
       builder: (context, _) => Section(
         title: 'Appearance',
-        hint: 'The look of the app. Each profile keeps its own. Hold a skin for more (edit, copy, delete). A skin from a .zip or GitHub gives this app its colours and corner size. A skin with a skin.css is refused.',
+        hint: 'The look of the app, kept per profile. Hold a skin to edit, copy or delete it. Skins from a .zip or GitHub only change colours and corner size.',
         children: [
           for (final s in Skins.all)
             ListRow(
@@ -481,11 +480,11 @@ class AppearanceSection extends StatelessWidget {
             ),
           SizedBox(height: 0.75 * p.rem),
           Wrap(spacing: 0.75 * p.rem, runSpacing: 0.75 * p.rem, children: [
-            PekButton(label: 'Browse the skin store', primary: true, shrink: true, onTap: () => openSkinStore(context)),
+            PekButton(label: 'Skin store', primary: true, shrink: true, onTap: () => openSkinStore(context)),
             PekButton(label: 'Make a skin', shrink: true, onTap: () => AppearanceSection.openSkinMaker(context)),
             PekButton(label: 'Paste skin.json', shrink: true, onTap: () => AppearanceSection.openSkinMaker(context, paste: true)),
-            PekButton(label: 'Install skin from .zip', shrink: true, onTap: () => openZipInstall(context, skin: true)),
-            PekButton(label: 'Install skin from GitHub', shrink: true, onTap: () => _github(context)),
+            PekButton(label: 'Skin from .zip', shrink: true, onTap: () => openZipInstall(context, skin: true)),
+            PekButton(label: 'Skin from GitHub', shrink: true, onTap: () => _github(context)),
           ]),
         ],
       ),
@@ -522,7 +521,7 @@ class _StorageSectionState extends State<StorageSection> {
   Widget build(BuildContext context) {
     return Section(
       title: 'Saved artwork',
-      hint: 'Posters and synopses are kept on this device so they show at once and work without internet. They are downloaded again when needed.',
+      hint: 'Posters and synopses are kept on this device so they show instantly and work offline.',
       children: [
         FutureBuilder<int>(
           future: _size,
@@ -582,7 +581,7 @@ class _UpdateSectionState extends State<UpdateSection> {
     final p = context.pek;
     return Section(
       title: 'App updates',
-      hint: 'PEK TV looks for a new version each time it starts. Use this to look right now.',
+      hint: 'PEK TV checks at every start. Tap to check now.',
       children: [
         if (_version.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: Text('Installed version: $_version', style: TextStyle(color: p.tokens.textMuted))),
         if (_result.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: Text(_result, style: TextStyle(color: p.tokens.text, height: 1.35))),

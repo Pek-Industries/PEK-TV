@@ -5,9 +5,9 @@ A skin can't run code, can't contain CSS and can't reach the network.
 
 ## Installing and removing
 
-- **Install:** Settings → Appearance → *Install skin from .zip*, then pick the .zip.
+- **Install:** Settings → Appearance → *Skin from .zip*, then pick the .zip.
   PEK TV shows the skin's name, author, version and description before it installs anything.
-- **From GitHub:** Settings → Appearance → *Install skin from GitHub*, then type `owner/repo` (a pasted github.com link
+- **From GitHub:** Settings → Appearance → *Skin from GitHub*, then type `owner/repo` (a pasted github.com link
   works too). PEK TV uses the repository's latest release `.zip` (up to 8 MB), or its source code if it has no
   release, and then shows the same details and confirm screen as a .zip install. A skin that came from GitHub is
   labelled "unverified" in the Skins list. The same *Install from GitHub* switch (Settings → Plugins and skins from GitHub) turns it off.
@@ -59,7 +59,7 @@ a zip with the same id again updates the skin.
 ## No CSS
 
 A skin is its colours and its corner size, nothing more. **A skin that contains a `skin.css` (any `.css` file) is refused**: by
-Install skin from .zip / GitHub in the app, by the server, by `SkinBuilder` and by
+Skin from .zip / GitHub in the app, by the server, by `SkinBuilder` and by
 `tools/make_skin.py`. The message is "skins can't contain CSS (skin.css): a skin is colours and a corner size only. Remove the .css
 file and try again."
 
@@ -79,7 +79,7 @@ the corner size, name it and save. A made skin appears in the Appearance list ne
 
 - **From one accent colour** makes a whole skin from one colour (dark or light) or one hue.
 - **Hold** any skin in the Appearance list to use it, edit it, start a new one from it, copy it as a `skin.json`, or delete it.
-  Edit / "Make my own from this" open the plugin on that skin.
+  Edit / "Make my own" open the plugin on that skin.
 - **Copy skin.json** gives a `skin.json` you can install from a .zip (put it in a folder and zip it).
 - **Paste skin.json** opens a `skin.json` made elsewhere in the maker, ready to save. Only the name, description and
   colours are used.
@@ -118,7 +118,7 @@ extra file, `--force` allows low-contrast text. A batch file is a list of
 
 ## Installing skins in the Flutter app
 
-Settings > Appearance has **Install skin from .zip** and **Install skin from GitHub**. They use the zip picker plugins use (this
+Settings > Appearance has **Skin from .zip** and **Skin from GitHub**. They use the zip picker plugins use (this
 device, library folders and network folders), the GitHub lookup (latest release `.zip`, else the source code), the checks in
 `flutter_ui/lib/src/skin_install.dart` (mirroring `backend/skin_install.h`) and a confirm screen. A skin from GitHub is labelled "unverified". Installing the same
 skin again updates it; hold it in the list to remove it.

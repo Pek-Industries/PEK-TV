@@ -20,7 +20,7 @@ The Flutter UI is the only UI.
 Everything lives on `main`. `flutter_ui/` (screens) and `backend/` (C++ server) are shared; each platform has its own host folder
 next to them. Today that is `android/` with its workflow `.github/workflows/build_android.yml`. A new platform adds its own folder (for
 example `linux/` or `windows/`) and its own workflow file; it does not need a branch. A host has to provide what Android's host
-does: start the backend on `127.0.0.1:8080`, and answer the `pek/*` platform channels (`pek/mpv`, `pek/music`, `pek/host`,
+does: start the backend on `127.0.0.1:8080`, and answer the `pek/*` platform channels (`pek/mpv`, `pek/music`, `pek/host`, `pek/pip` (Picture in picture: Home or the player's top bar button shrinks the app into a small floating window that keeps playing; `pip.dart`, FlutterHostActivity; no controls, Skip or Next episode card in the small window),
 `pek/plugins`, `pek/output`) that `flutter_ui/lib/src/` calls. Some pieces here are Android-only today (the Kotlin side of those
 channels, `webview_flutter_android` for plugin trailers).
 
@@ -100,7 +100,7 @@ Plugins can ship a Python `screen.py` that the Flutter UI draws natively (see `F
 Plugins > Open, or its own entry in the menu / More page.
 
 ## Plugin store
-Plugins > Browse the plugin store, and Settings > Appearance > Browse the skin store: one full-page store for both (`store_browser.dart`; the same worker, `kind=plugin` or `kind=skin`).
+Plugins > Plugin store, and Settings > Appearance > Skin store: one full-page store for both (`store_browser.dart`; the same worker, `kind=plugin` or `kind=skin`).
 - A search box that suggests as you type (names first, then authors: tap a name to open it, tap an author to show only theirs), the Official / Community shelves, a sort (best match, newest, oldest, name A-Z, author A-Z) and an author filter. "Newest" uses the `updated` time the worker already sends for every item.
 - Cards show the picture (a skin shows its own colours, drawn small from the skin's file, downloaded once per session), version, author, size, when it was uploaded, and an Installed / Update / New badge.
 - Opening a card goes to the same install screens as before: the warning and permissions screens for a plugin (`plugin_store.dart`, `plugin_store_ui.dart`; details in `FLUTTER_PLUGINS.md`), the colour preview for a skin (`skin_install_ui.dart`). Nothing installs from the browsing screen. A skin installed this way is remembered as `{'type': 'store', 'shelf': ...}` and shown as "PEK Store" under its name.
@@ -137,7 +137,7 @@ switch, no "Open classic UI" buttons. If the server does not start, or the Flutt
 **Try again** button is shown. `SplashOverlay.kt` (it drew over the web view) is gone. The old `www/` web UI folder has been deleted and the server no longer serves pages: it is API only.
 
 ## Skin install and skin builder
-- **Install skin from .zip / GitHub** (`skin_install.dart`, `skin_install_ui.dart`, Settings > Appearance): same checks as `backend/skin_install.h`.
+- **Skin from .zip / GitHub** (`skin_install.dart`, `skin_install_ui.dart`, Settings > Appearance): same checks as `backend/skin_install.h`.
   It reuses the plugin zip reader (`PluginZip.read`), the zip picker and the GitHub flow (`plugin_install_ui.dart`, now with a `skin:` switch;
   `PekGithub.downloadBytes` is the shared download). Colours and corner size are stored on the device like made skins (id `pkg-<slug>`);
   a skin with a `skin.css` is refused (no CSS in skins, here and in `SkinBuilder` / `tools/make_skin.py`). GitHub skins are labelled unverified. The Settings > Plugins and skins from GitHub switch covers both.
@@ -214,5 +214,5 @@ Settings > Account (signed in), `account_pages.dart` and `plan_ui.dart`:
   seconds after 10 minutes) and the moment the app comes back from the browser (`Cloud.refreshPlan(force: true)`). When the plan changes
   `Cloud.changes` fires, the badge turns to PAID, the box goes away, the dialog closes itself and the first backup starts. Opening
   the Account page also checks once (at most once a minute).
-- Signing in on a TV: **Sign in with your phone** (QR code and 6-digit code, no typing) or **Sign in with email**, which works with a
+- Signing in on a TV: **Sign in with phone** (QR code and 6-digit code, no typing) or **Sign in with email**, which works with a
   remote and the TV's on-screen keyboard (`AccountScreen`).

@@ -281,7 +281,7 @@ and people install it from there. It runs sandboxed; the `live` and `epg` permis
 today, so the section stays hidden until one is installed.
 
 ## The plugin store in the Flutter UI
-Plugins > **Browse the plugin store**. It talks to the
+Plugins > **Plugin store**. It talks to the
 same two places:
 
 1. **The PEK Store worker** (`https://pek-store.aquariusibeats.workers.dev`, `plugin_store.dart`): `GET /v1/store?shelf=official|community&kind=plugin`

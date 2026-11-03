@@ -183,11 +183,11 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
         if (!Cloud.linked) {
           return Section(
             title: 'Account',
-            hint: 'One account for the household. Each profile keeps its own watch history and resume points, and they follow you to your other devices. Profiles need an account. Accounts are created on our website (you need an invite code), then you sign in here.' + (p.tvDevice ? ' On a TV the easiest way is to sign in with your phone: no typing.' : ''),
+            hint: 'One account for the household. Each profile keeps its own history and resume points, synced across your devices. Create the account on our website (invite code needed), then sign in here.' + (p.tvDevice ? ' On a TV, sign in with your phone: no typing.' : ''),
             children: [
               Wrap(spacing: 8, runSpacing: 8, children: [
                 // Phone sign-in is for a TV (no keyboard); on a phone it would mean signing in with the phone you are holding.
-                if (p.tvDevice) PekButton(label: 'Sign in with your phone', primary: true, onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => const LinkScreen()))),
+                if (p.tvDevice) PekButton(label: 'Sign in with phone', primary: true, onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => const LinkScreen()))),
                 PekButton(label: 'Sign in with email', primary: !p.tvDevice, onTap: () => _open(AccountMode.signIn)),
                 PekButton(label: 'Create account', onTap: () => openSignUpPage(context)),
               ]),
@@ -226,7 +226,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
               if (Cloud.entitled) PekButton(label: _busy ? 'Syncing\u2026' : 'Sync now', primary: true, onTap: _busy ? null : _syncNow),
               if (!Cloud.entitled) PekButton(label: 'Upgrade', primary: true, onTap: _upgrade),
               // Monthly and yearly: change, cancel or move up to lifetime on the website. Lifetime and included accounts have nothing to buy.
-              if (Cloud.entitled && (Cloud.plan == 'monthly' || Cloud.plan == 'yearly')) PekButton(label: 'Manage or upgrade plan', onTap: () => openSitePage(context, Cloud.accountPage)),
+              if (Cloud.entitled && (Cloud.plan == 'monthly' || Cloud.plan == 'yearly')) PekButton(label: 'Manage plan', onTap: () => openSitePage(context, Cloud.accountPage)),
               PekButton(label: 'Switch profile', onTap: () {
                 Navigator.of(context).popUntil((r) => r.isFirst);
                 Profiles.openPicker();
@@ -236,7 +236,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
               PekButton(label: 'Delete account', onTap: _delete),
             ]),
             SizedBox(height: 0.5 * rem),
-            Text(Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'Your watch history and resume points stay on this device. PEK Cloud backs them up, syncs them across your devices and adds up to 5 profiles.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
+            Text(Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'History and resume points stay on this device. PEK Cloud backs them up, syncs your devices and adds up to 5 profiles.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
             if (Cloud.entitled) const PluginBackupSettings(),
           ],
         );
@@ -440,8 +440,8 @@ class _AccountScreenState extends State<AccountScreen> {
             SizedBox(height: 1.25 * rem),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (_mode == AccountMode.signIn) ...[
-                if (p.tvDevice) PekButton(compact: true, label: 'Sign in with your phone', onTap: () => Navigator.pushReplacement<void, void>(context, MaterialPageRoute<void>(builder: (_) => const LinkScreen()))),
-                PekButton(compact: true, label: 'Create account (website)', onTap: () => openSignUpPage(context)),
+                if (p.tvDevice) PekButton(compact: true, label: 'Sign in with phone', onTap: () => Navigator.pushReplacement<void, void>(context, MaterialPageRoute<void>(builder: (_) => const LinkScreen()))),
+                PekButton(compact: true, label: 'Create account', onTap: () => openSignUpPage(context)),
                 PekButton(compact: true, label: 'Forgot password?', onTap: () => _go(AccountMode.forgot)),
               ],
               if (_mode == AccountMode.verify)

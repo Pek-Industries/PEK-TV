@@ -515,7 +515,7 @@ class _RecommendWidgetState extends State<RecommendWidget> {
               children: [
                 Text('What do you like to watch?', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700)),
                 SizedBox(height: 0.5 * rem),
-                Text('Pick a few genres. You get a row of movies and shows for each, and the picks get better as you watch and rate. Saved to your account, so you are not asked again.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
+                Text('Pick a few genres for a row of movies and shows each. Picks improve as you watch and rate. Saved to your account.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
                 SizedBox(height: rem),
                 Flexible(
                   child: SingleChildScrollView(
@@ -647,7 +647,7 @@ class _RecommendWidgetState extends State<RecommendWidget> {
     final rem = p.rem;
     final genres = Recs.genres;
     if (genres.isEmpty) {
-      return _card(context, 'Recommended for you', 'Pick a few genres you like and we will suggest movies and shows to watch. The more you watch and rate, the better the picks get. Your choice is saved to your account.', [
+      return _card(context, 'Recommended for you', 'Pick a few genres and we will suggest movies and shows. Picks improve as you watch and rate. Saved to your account.', [
         PekButton(label: 'Pick genres', primary: true, shrink: true, onTap: _pick),
         PekButton(label: 'Remove widget', shrink: true, onTap: widget.onRemove),
       ]);

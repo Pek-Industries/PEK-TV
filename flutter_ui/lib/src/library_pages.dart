@@ -565,13 +565,13 @@ class HistoryPage extends StatelessWidget {
             if (items.isNotEmpty) sub('Finished'),
           ],
           if (items.isEmpty && resume.isEmpty)
-            const PekCard(title: 'Nothing watched yet', subtitle: 'Anything you stop partway through, and every movie or episode you finish, shows up here.')
+            const PekCard(title: 'Nothing watched yet', subtitle: 'Anything you stop partway or finish shows up here.')
           else if (items.isNotEmpty) ...[
             Padding(
               padding: EdgeInsets.only(bottom: rem),
               child: Wrap(spacing: 0.75 * rem, runSpacing: 0.5 * rem, children: [
                 PekButton(compact: true, label: 'Clear history', onTap: () => _clear(context)),
-                PekButton(compact: true, label: 'Export history & ratings', onTap: () => showExportSheet(context)),
+                PekButton(compact: true, label: 'Export history', onTap: () => showExportSheet(context)),
               ]),
             ),
             for (final e in items)

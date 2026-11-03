@@ -10,6 +10,7 @@ import 'cloud.dart';
 import 'live_tv.dart';
 import 'mpv.dart';
 import 'music_controller.dart';
+import 'pip.dart';
 import 'plugin_hooks.dart';
 import 'plugin_ui.dart' show PluginNextEpisodeScreen;
 import 'skip.dart';
@@ -74,6 +75,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _handedOff = false; // the next episode is a plugin's: its screen takes over and the shared player is torn down as usual
   bool _hookStarted = false; // plugins with the "playback" permission were told playback began
   bool _hookPaused = false;
+  bool _pipOk = false; // this device can shrink the app into a floating window (the button in the top bar)
+  VoidCallback? _afterPip; // the film ended / the file failed while the small window was up: handled once the person is back
 
   // Live TV (widget.live): the plugin's channels and guide, the channel playing, and the guide itself.
   LiveTv? _tv;
@@ -112,6 +115,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _skip = SkipController(player: _player, meta: widget.resume);
     _player.chapters.addListener(_onChapters);
     _player.position.addListener(_onPos);
+    if (!_live) {
+      // Picture in picture: Home (or the top bar button) shrinks the app into a small window that keeps playing.
+      Pip.active.addListener(_onPip);
+      _player.playing.addListener(_pipSync);
+      _player.duration.addListener(_pipSync); // the window takes the film's shape (4:3, 2.35:1 ...) once it is known
+      _player.ended.addListener(_pipSync);
+      _player.failed.addListener(_pipSync);
+      _pipSync();
+      unawaited(Pip.supported().then((ok) {
+        if (mounted && ok) setState(() => _pipOk = true);
+      }));
+    }
     unawaited(_skip.fetchRemote());
     final r = widget.resume;
     _next = r == null ? null : widget.nextFor?.call(r);
@@ -137,6 +152,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _player.subtitles.removeListener(_subs.onTracks);
     _player.chapters.removeListener(_onChapters);
     _player.position.removeListener(_onPos);
+    Pip.active.removeListener(_onPip);
+    _player.playing.removeListener(_pipSync);
+    _player.duration.removeListener(_pipSync);
+    _player.ended.removeListener(_pipSync);
+    _player.failed.removeListener(_pipSync);
+    Pip.release(this);
     _subs.dispose();
     _skip.dispose();
     _nextVisible.dispose();
@@ -151,6 +172,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
     widget.onClose?.call();
     if (Cloud.linked) Timer(const Duration(milliseconds: 800), () => Cloud.sync(light: true)); // push the new resume point
     super.dispose();
+  }
+
+  void _pipSync() {
+    if (_live || !mounted) return;
+    Pip.claim(this, playing: _player.playing.value && !_player.ended.value && !_player.failed.value, onToggle: () => unawaited(_player.togglePause()));
+  }
+
+  /// Entered or left the small window.
+  void _onPip() {
+    if (!mounted) return;
+    if (Pip.active.value) {
+      // A menu or the "Stop watching?" question above the player would show up in the small window: close them.
+      final route = ModalRoute.of(context);
+      if (route != null) Navigator.of(context).popUntil((r) => identical(r, route));
+    } else {
+      final later = _afterPip;
+      _afterPip = null;
+      later?.call();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _rootNode.requestFocus();
+      });
+    }
+    setState(() {});
   }
 
   void _onChapters() => _skip.setChapters(_player.chapters.value, _player.duration.value);
@@ -290,6 +334,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // The file would not open (the host already showed a message): leave the player.
   void _onFailed() {
     if (!_player.failed.value || !mounted || _leaving) return;
+    if (Pip.active.value) {
+      _afterPip = _onFailed; // leaving the player now would show the app's screens in the small window
+      return;
+    }
     if (_live) {
       _toast('This channel is not working right now.'); // a dead stream must not close the player: the person is flicking through channels
       return;
@@ -300,6 +348,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onEnded() {
     if (!_player.ended.value || !mounted || _leaving) return;
     if (_live) return; // a live stream that stops is not "the end of the film"
+    if (Pip.active.value) {
+      _afterPip = _onEnded; // no Up next countdown in the small window: the end is handled once the person expands it again
+      return;
+    }
     if (_next != null && !_nextDismissed && _nextEverShown) {
       _startCountdown();
     } else {
@@ -597,7 +649,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           unawaited(_confirmExit());
         }
       },
-      child: _screen(),
+      // In the small window nothing is drawn but the picture (it is a native surface behind Flutter).
+      child: ValueListenableBuilder<bool>(valueListenable: Pip.active, builder: (_, pip, __) => pip ? const SizedBox.expand() : _screen()),
     );
   }
 
@@ -802,6 +855,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _glassBtn(Icons.arrow_back, () => unawaited(_confirmExit())),
               const SizedBox(width: 12),
               Expanded(child: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17.5, fontWeight: FontWeight.w600, letterSpacing: 0.2, color: _fg))),
+              if (_pipOk && !_live) ...[
+                const SizedBox(width: 12),
+                _glassBtn(Icons.picture_in_picture_alt_rounded, () {
+                  _poke();
+                  unawaited(Pip.enter());
+                }),
+              ],
             ],
           ),
         ),

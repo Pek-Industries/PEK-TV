@@ -309,7 +309,7 @@ class PreparedPlugin {
     final text = [for (final t in rawText) if (t is String && t.trim().isNotEmpty) t.trim().substring(0, math.min(t.trim().length, 400))].take(5).toList();
     if (text.isEmpty) return null;
     String pick(Object? v, String fallback, int max) => v is String && v.trim().isNotEmpty ? v.trim().substring(0, math.min(v.trim().length, max)) : fallback;
-    return PluginWarning(pick(obj['title'], 'Before you install', 60), text, pick(obj['button'], 'I understand, continue', 40));
+    return PluginWarning(pick(obj['title'], 'Before you install', 60), text, pick(obj['button'], 'I understand', 40));
   }
 
   /// What the confirm screen lists, in plain words (the same sentences as the web UI's install screen).

@@ -138,7 +138,7 @@ class RatingsExport {
   }
 }
 
-/// The "Export history & ratings" sheet on the Watch History page.
+/// The "Export history" sheet on the Watch History page.
 Future<void> showExportSheet(BuildContext context) {
   final who = Profiles.current.name;
   final stamp = RatingsExport._date(DateTime.now().millisecondsSinceEpoch);

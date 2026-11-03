@@ -1,6 +1,13 @@
 package com.pektv.app.flutter
 
 import android.app.Activity
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.graphics.drawable.Icon
+import android.util.Rational
 import android.app.UiModeManager
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -55,6 +62,7 @@ import java.util.concurrent.Executors
  *                                    fullscreen, destroy
  *   pek/mpv/events  (EventChannel)   {event: time|state|tracks|ended|error, data: {...}}  - same payloads the web UI got; "error" = the file never loaded
  *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, dirs
+ *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
  *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
  *                                    status {status, message} comes back from the installer
  *   pek/output      (MethodChannel)  Settings > Video / Audio output: video, setMatchRate, setHdr, audio, setPassthrough
@@ -484,6 +492,21 @@ class FlutterHostActivity : FlutterActivity() {
             }
         }
 
+        pipChannel = MethodChannel(messenger, "pek/pip").also { ch ->
+            ch.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "supported" -> result.success(pipSupported())
+                    "set" -> {
+                        pipAllowed = call.argument<Boolean>("allowed") ?: false
+                        pipPlaying = call.argument<Boolean>("playing") ?: false
+                        updatePipParams()
+                        result.success(null)
+                    }
+                    "enter" -> result.success(enterPip())
+                    else -> result.notImplemented()
+                }
+            }
+        }
         hostChannel = MethodChannel(messenger, "pek/host")
         MethodChannel(messenger, "pek/host").setMethodCallHandler { call, result ->
             when (call.method) {
@@ -555,11 +578,98 @@ class FlutterHostActivity : FlutterActivity() {
     }
 
     override fun onStop() {
-        mpv?.onActivityStop()
+        mpv?.onActivityStop()   // also when the small window is closed with its X: the video stops
         super.onStop()
     }
 
+    // ---------------- Picture in picture ----------------
+    // Home (or the player's top bar button) shrinks the activity into a small floating window; mpv's surface is part of it, so the
+    // picture keeps playing. Dart (pip.dart) says when a player screen wants this and whether the video is playing; in the small
+    // window the player draws nothing but the picture.
+    private var pipChannel: MethodChannel? = null
+    private var pipAllowed = false
+    private var pipPlaying = false
+    private var pipReceiver: BroadcastReceiver? = null
+    private val pipToggleAction = "com.pektv.app.PIP_TOGGLE"
+
+    private fun isTvBox(): Boolean {
+        val ui = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+        return ui?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION || packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    }
+
+    private fun pipSupported(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isTvBox() && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    /** The window takes the film's shape, within what Android allows (between 1:2.39 and 2.39:1). */
+    private fun pipRatio(): Rational {
+        val shape = mpv?.videoShape() ?: return Rational(16, 9)
+        val r = shape.first.toDouble() / shape.second.toDouble()
+        return when {
+            r > 2.39 -> Rational(239, 100)
+            r < 1 / 2.39 -> Rational(100, 239)
+            else -> Rational(shape.first, shape.second)
+        }
+    }
+
+    private fun pipParams(): PictureInPictureParams {
+        val b = PictureInPictureParams.Builder().setAspectRatio(pipRatio())
+        val label = if (pipPlaying) "Pause" else "Play"
+        val icon = Icon.createWithResource("android", if (pipPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
+        val tap = PendingIntent.getBroadcast(this, 1, Intent(pipToggleAction).setPackage(packageName), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        b.setActions(listOf(RemoteAction(icon, label, label, tap)))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            b.setAutoEnterEnabled(pipAllowed && pipPlaying)   // Home / the gesture shrinks the app smoothly, no onUserLeaveHint needed
+            b.setSeamlessResizeEnabled(false)                  // video: no stretched frames while the window resizes
+        }
+        return b.build()
+    }
+
+    private fun updatePipParams() {
+        if (!pipSupported()) return
+        try { setPictureInPictureParams(pipParams()) } catch (t: Throwable) { /* not allowed right now: the next update sets it */ }
+    }
+
+    private fun enterPip(): Boolean {
+        if (!pipSupported() || isInPictureInPictureMode) return false
+        return try { enterPictureInPictureMode(pipParams()) } catch (t: Throwable) { false }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Android 12+ already did it through setAutoEnterEnabled; this covers Android 8 - 11.
+        if (pipAllowed && pipPlaying && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            val r = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) { pipChannel?.invokeMethod("toggle", null) }
+            }
+            pipReceiver = r
+            val filter = IntentFilter(pipToggleAction)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED) else registerReceiver(r, filter)
+        } else {
+            unregisterPipReceiver()
+            hideSystemBars()
+        }
+        pipChannel?.invokeMethod("state", isInPictureInPictureMode)
+    }
+
+    private fun unregisterPipReceiver() {
+        pipReceiver?.let { try { unregisterReceiver(it) } catch (e: Exception) { /* already gone */ } }
+        pipReceiver = null
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Closing the small window with its X, or coming back after it was closed, leaves Dart with a stale "small window" flag.
+        pipChannel?.invokeMethod("state", isInPictureInPictureMode)
+    }
+
     override fun onDestroy() {
+        unregisterPipReceiver()
+        pipChannel = null
         pluginPool.shutdown()
         AppUpdater.onStatus = null
         updateChannel = null

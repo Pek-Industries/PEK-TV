@@ -157,7 +157,7 @@ class _SubscribeBoxState extends State<SubscribeBox> with WidgetsBindingObserver
       Text('\$${PlanPrices.monthly} a month', style: price),
       SizedBox(height: 0.15 * rem),
       Text('\$${PlanPrices.yearly.toStringAsFixed(0)} a year \u00b7 just \$${PlanPrices.yearlyPerMonth} a month', style: price),
-      Text('Save \$${PlanPrices.yearlySaving.toStringAsFixed(2)} a year (${PlanPrices.yearlySavingPercent}% off) compared with paying monthly', style: TextStyle(color: t.accent, fontWeight: FontWeight.w600, fontSize: 0.9 * rem)),
+      Text('Save \$${PlanPrices.yearlySaving.toStringAsFixed(2)} a year (${PlanPrices.yearlySavingPercent}% off) vs paying monthly', style: TextStyle(color: t.accent, fontWeight: FontWeight.w600, fontSize: 0.9 * rem)),
       SizedBox(height: 0.15 * rem),
       Text('\$${PlanPrices.lifetime.toStringAsFixed(0)} once (lifetime)', style: price),
       SizedBox(height: 0.8 * rem),
@@ -165,7 +165,7 @@ class _SubscribeBoxState extends State<SubscribeBox> with WidgetsBindingObserver
       SizedBox(height: 0.2 * rem),
       Text(shown, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.05 * rem)),
       SizedBox(height: 0.2 * rem),
-      Text('Sign in with this same account, choose a plan and pay with Stripe. This screen updates by itself when the payment goes through.', style: muted),
+      Text('Sign in with this account, pick a plan and pay with Stripe. This screen updates when payment goes through.', style: muted),
     ]);
 
     return LayoutBuilder(builder: (context, box) {

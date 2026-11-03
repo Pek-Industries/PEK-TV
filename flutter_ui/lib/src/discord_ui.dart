@@ -60,7 +60,7 @@ class DiscordSection extends StatelessWidget {
     final p = context.pek;
     final t = p.tokens;
     final tv = p.isTv;
-    const hint = 'Shows what you are watching on your Discord profile, like Spotify does. Each profile links its own Discord account. Only the title (or just \u201cPEK TV\u201d) is shared, and nothing is shared while it is off.';
+    const hint = 'Shows what you are watching on your Discord profile, like Spotify. Each profile links its own account. Only the title (or just \u201cPEK TV\u201d) is shared, and nothing while it is off.';
     if (ready == false) {
       return Section(title: 'Discord', hint: hint, children: [
         Text('This version of PEK TV was built without Discord support.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * p.rem)),
@@ -240,7 +240,7 @@ class _DiscordLinkScreenState extends State<DiscordLinkScreen> {
             Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text(_error, style: const TextStyle(color: Colors.redAccent))),
             Align(alignment: Alignment.centerLeft, child: PekButton(label: 'Try again', onTap: _start)),
           ],
-          if (s != null) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text('This link works for ${_left(s)} more. A new one is made by itself.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem))),
+          if (s != null) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text('Works for ${_left(s)} more; a new link is made by itself.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem))),
         ]);
       }),
     );

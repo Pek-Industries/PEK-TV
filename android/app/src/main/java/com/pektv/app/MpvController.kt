@@ -411,6 +411,14 @@ class MpvController(
         surfaceView.layoutParams = lp
     }
 
+    /** The picture's shape as displayed (width, height), for the Picture-in-Picture window; null until a video has opened. */
+    fun videoShape(): Pair<Int, Int>? = try {
+        val m = mpv
+        val w = m?.getPropertyInt("dwidth") ?: m?.getPropertyInt("width")
+        val h = m?.getPropertyInt("dheight") ?: m?.getPropertyInt("height")
+        if (w != null && h != null && w > 0 && h > 0) Pair(w, h) else null
+    } catch (t: Throwable) { null }
+
     fun setFullscreen() {
         surfaceView.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)

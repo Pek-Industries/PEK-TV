@@ -510,7 +510,7 @@ class _MorePage extends StatelessWidget {
 
   static const _hint = {
     'search': 'Titles, actors, genres, years',
-    'history': 'Pick up where you stopped, and everything you finished',
+    'history': 'Pick up where you left off',
     'favorites': 'Your saved movies and shows',
     'duplicates': 'Files that appear twice',
     'unknown': 'Files PEK TV could not sort',

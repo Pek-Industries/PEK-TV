@@ -199,8 +199,8 @@ class ModeSection extends StatelessWidget {
     return Section(
       title: 'Mode',
       hint: on
-          ? 'Music mode hides movies, shows, plugins and everything else that is not music. Turn it off to get all of PEK TV back; nothing is deleted.'
-          : 'Music mode turns PEK TV into a music player and browser: your library, network folders and playlists, with every movie and TV screen hidden.',
+          ? 'Hides everything that is not music. Turn it off to get all of PEK TV back; nothing is deleted.'
+          : 'Turns PEK TV into a music player: your library, network folders and playlists, with movie and TV screens hidden.',
       children: [ToggleRow(title: 'Music mode', subtitle: on ? 'On' : 'Off', on: on, onTap: () => _flip(context))],
     );
   }

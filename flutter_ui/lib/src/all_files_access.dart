@@ -77,7 +77,7 @@ class _AllFilesAccessBannerState extends State<AllFilesAccessBanner> with Widget
         PekButton(
           compact: true,
           primary: true,
-          label: 'Allow access to all files',
+          label: 'Allow file access',
           onTap: () async {
             final ok = await AllFilesAccess.openSettings();
             if (!ok && mounted) {

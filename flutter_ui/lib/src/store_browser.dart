@@ -549,7 +549,7 @@ class _StoreBrowserState extends State<StoreBrowser> {
             ),
             if (!none) ...[
               SizedBox(height: 0.6 * p.rem),
-              Wrap(children: [PekButton(label: 'Clear search and filters', primary: true, shrink: true, onTap: _clearFilters)]),
+              Wrap(children: [PekButton(label: 'Clear filters', primary: true, shrink: true, onTap: _clearFilters)]),
             ],
           ]),
         ),

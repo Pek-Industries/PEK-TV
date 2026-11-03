@@ -399,7 +399,7 @@ class _DashboardPageState extends State<DashboardPage> {
                   if (nodes.isEmpty) {
                     return items.isEmpty
                         ? const PekCard(title: 'Your dashboard is empty', subtitle: 'Tap Add widget.')
-                        : const PekCard(title: 'Nothing to show yet', subtitle: 'Watch something or add favorites and they will appear here. Press and hold a widget to move or delete it.');
+                        : const PekCard(title: 'Nothing to show yet', subtitle: 'Watch something or add favorites to fill this. Press and hold a widget to move or delete it.');
                   }
                   return _grid(context, nodes);
                 },

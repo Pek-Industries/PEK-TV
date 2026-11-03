@@ -50,7 +50,7 @@ Widget _muted(BuildContext context, String t) {
 /// Plugins > Install from .PEK: pick a plugin .PEK file on this device or on a network folder, then the usual install screens.
 /// A .zip is refused (in red). Nothing is installed until the person confirms on the permissions screen.
 ///
-/// [skin] true: the same picker, but for a skin, which is still a .zip (Settings > Appearance > Install skin from .zip).
+/// [skin] true: the same picker, but for a skin, which is still a .zip (Settings > Appearance > Skin from .zip).
 Future<void> openZipInstall(BuildContext context, {bool skin = false}) {
   return Navigator.push<void>(
     context,
@@ -215,7 +215,7 @@ class _ZipPickerState extends State<_ZipPicker> {
 /// Plugins > Install from GitHub: type owner/repo, pick a release file, then the usual install screens.
 /// PEK TV lists nothing: the person types the name.
 ///
-/// [skin] true: the release file is opened as a skin (Settings > Appearance > Install skin from GitHub).
+/// [skin] true: the release file is opened as a skin (Settings > Appearance > Skin from GitHub).
 Future<void> openGithubInstall(BuildContext context, {bool skin = false}) {
   if (!PekGithub.enabled) {
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Installing from GitHub is switched off in Settings.')));
@@ -370,7 +370,7 @@ class _GithubFlowState extends State<_GithubFlow> {
                 ]),
           SizedBox(height: p.rem),
           Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
-            PekButton(label: 'I understand, continue', primary: true, autofocus: true, onTap: _accept),
+            PekButton(label: 'I understand', primary: true, autofocus: true, onTap: _accept),
             PekButton(label: 'Cancel', onTap: () => Navigator.maybePop(context)),
           ]),
         ]);
@@ -429,7 +429,7 @@ class _GithubInstallSectionState extends State<GithubInstallSection> {
     final on = PekGithub.enabled;
     return Section(
       title: 'Plugins and skins from GitHub',
-      hint: 'Lets you install a plugin or a skin by typing its GitHub name (Plugins > Install from GitHub, Appearance > Install skin from GitHub). They are not reviewed by PEK TV.',
+      hint: 'Install a plugin or skin by typing its GitHub name. They are not reviewed by PEK TV.',
       children: [ToggleRow(title: 'Install from GitHub', subtitle: on ? 'On' : 'Off', on: on, onTap: _flip)],
     );
   }

@@ -128,7 +128,7 @@ class DuplicatesPage extends StatelessWidget {
         builder: (context, d) {
           if (d.groups.isEmpty) return const PekCard(title: 'No duplicates found', subtitle: 'Every movie and episode in your library appears only once.');
           return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            PekCard(title: '${plural(d.groups.length, 'duplicate group')} found', subtitle: 'Keeping one copy of each would free up to ${formatBytes(d.wastedTotal)}. PEK TV only lists duplicates; delete files from your file manager.'),
+            PekCard(title: '${plural(d.groups.length, 'duplicate group')} found', subtitle: 'Keep one of each to free up to ${formatBytes(d.wastedTotal)}. PEK TV only lists them: delete files in your file manager.'),
             SizedBox(height: 1.25 * rem),
             for (final g in d.groups)
               Section(
@@ -245,7 +245,7 @@ class _PluginsPageState extends State<PluginsPage> {
     return ListView(padding: widget.padding, children: [
       const Heading('Plugins', weather: true),
       Wrap(spacing: 0.6 * rem, runSpacing: 0.6 * rem, children: [
-        PekButton(label: 'Browse the plugin store', primary: true, onTap: () => openPluginStore(context)),
+        PekButton(label: 'Plugin store', primary: true, onTap: () => openPluginStore(context)),
         PekButton(label: 'Install from .PEK', onTap: () => openZipInstall(context)),
         PekButton(label: 'Install from GitHub', onTap: () => openGithubInstall(context)),
       ]),
@@ -254,7 +254,7 @@ class _PluginsPageState extends State<PluginsPage> {
       Async<List<PluginInfo>>(
         future: _list,
         builder: (context, list) {
-          if (list.isEmpty) return const PekCard(title: 'No plugins installed', subtitle: 'Open the plugin store, or install one from a .PEK file or GitHub.');
+          if (list.isEmpty) return const PekCard(title: 'No plugins installed', subtitle: 'Open the plugin store, or install from a .PEK file or GitHub.');
           return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             for (final pl in list)
               ListRow(
