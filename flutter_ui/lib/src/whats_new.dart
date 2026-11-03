@@ -33,12 +33,8 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
-    ReleaseNotes('2.2.1', 'A friendlier dashboard', [
-      'A new greeting at the top of the Dashboard that fits the time of day and your profile.',
-      'A new Recommended widget on the Dashboard. Pick the genres you like and get a row of movies and shows for each one.',
-      'A new Updates button with news about PEK TV and app updates. A dot shows when something is new.',
-      'Resume Watching and Watch History are now one screen: Continue watching at the top, finished titles below.',
-      'PEK TV now asks you to confirm before removing anything from your watch history.',
+    ReleaseNotes('2.2.2', 'Check for updates', [
+      'A new Check for updates button in Settings \u2192 Advanced \u2192 App updates. Press it to look for a new version of PEK TV right away, and it tells you if you are up to date.',
     ]),
   ];
 

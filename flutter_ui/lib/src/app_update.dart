@@ -22,6 +22,13 @@ class AppRelease {
   final String installed; // the version running now
 }
 
+/// The result of a check: the release found (or null) and a sentence saying what happened.
+class UpdateCheck {
+  const UpdateCheck(this.release, this.message);
+  final AppRelease? release;
+  final String message;
+}
+
 /// Looks for a newer release of the app itself, downloads its apk and hands it to Android to install.
 ///
 ///  * A release is a tag push (v2.2.0) built by .github/workflows/build_android.yml, which attaches
@@ -83,25 +90,38 @@ class AppUpdate {
   }
 
   /// The newest release that is newer than the running app, or null (up to date, offline, a debug build, anything unexpected).
-  static Future<AppRelease?> check() async {
+  static Future<AppRelease?> check() async => (await checkDetailed()).release;
+
+  /// Same check, but says WHY nothing was found (shown by Settings > Advanced > App updates). [timeout] is longer for a manual check.
+  static Future<UpdateCheck> checkDetailed({Duration timeout = checkTimeout}) async {
     try {
       final info = await _channel.invokeMapMethod<String, dynamic>('info');
-      if (info == null) return null;
+      if (info == null) return const UpdateCheck(null, "Couldn't read this app's version.");
       final name = '${info['versionName']}';
       final code = (info['versionCode'] as num?)?.toInt() ?? 0;
-      if (info['debuggable'] == true || name.endsWith('-debug') || name.contains('-dev.')) return null;
+      if (info['debuggable'] == true || name.endsWith('-debug') || name.contains('-dev.')) {
+        return UpdateCheck(null, 'This is a debug or dev build ($name). Those never look for updates. Install a release build to test updating.');
+      }
       final abi = switch (code % 10) { 1 => 'armeabi-v7a', 2 => 'arm64-v8a', _ => null };
-      if (abi == null) return null; // a local build with both CPU types: not an installed release
+      if (abi == null) return UpdateCheck(null, 'This looks like a local build (version code $code), not an installed release, so it cannot update itself.');
 
       final r = await http
           .get(Uri.parse('https://api.github.com/repos/$repo/releases?per_page=15'), headers: {'Accept': 'application/vnd.github+json', 'User-Agent': 'PEK-TV'})
-          .timeout(checkTimeout);
-      if (r.statusCode != 200) return null;
+          .timeout(timeout);
+      if (r.statusCode != 200) {
+        final why = switch (r.statusCode) {
+          404 => ' The repository is private or its name is wrong ($repo).',
+          403 || 429 => ' GitHub is limiting requests from this network. Try again later.',
+          _ => '',
+        };
+        return UpdateCheck(null, 'GitHub answered ${r.statusCode}.$why');
+      }
       final list = jsonDecode(utf8.decode(r.bodyBytes));
-      if (list is! List) return null;
+      if (list is! List) return const UpdateCheck(null, 'GitHub sent an answer the app could not read.');
 
       final prefix = 'https://github.com/$repo/releases/download/'.toLowerCase();
       AppRelease? best;
+      String? noApk; // the newest newer release that has no apk for this device
       for (final rel in list) {
         if (rel is! Map || rel['draft'] == true) continue;
         final tag = '${rel['tag_name'] ?? ''}';
@@ -109,6 +129,7 @@ class AppUpdate {
         final version = tag.replaceFirst(RegExp(r'^[vV]'), '');
         if (compare(version, name) <= 0) continue;
         if (best != null && compare(version, best.version) <= 0) continue;
+        var found = false;
         for (final a in ((rel['assets'] as List?) ?? const [])) {
           if (a is! Map) continue;
           final file = '${a['name'] ?? ''}';
@@ -125,12 +146,18 @@ class AppUpdate {
             notes: '${rel['body'] ?? ''}',
             installed: name,
           );
+          found = true;
           break;
         }
+        if (!found && (noApk == null || compare(version, noApk) > 0)) noApk = version;
       }
-      return best;
+      if (best != null) return UpdateCheck(best, 'PEK TV ${best.version} is available (you have $name).');
+      if (noApk != null) return UpdateCheck(null, 'Version $noApk is on GitHub but has no file ending in -release-$abi.apk attached, so it cannot be installed here.');
+      return UpdateCheck(null, "You're up to date ($name). No newer release was found on GitHub.");
+    } on TimeoutException {
+      return const UpdateCheck(null, 'GitHub did not answer in time. Check the internet connection and try again.');
     } catch (_) {
-      return null; // offline, rate limited, malformed answer: just start the app
+      return const UpdateCheck(null, "Couldn't reach GitHub. Check the internet connection and try again.");
     }
   }
 

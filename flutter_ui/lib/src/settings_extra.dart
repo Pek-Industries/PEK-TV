@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import 'activity.dart';
 import 'api.dart';
+import 'app_update.dart';
 import 'common.dart';
 import 'fields.dart' show PekDropdown;
 import 'mpv.dart';
@@ -531,6 +532,61 @@ class _StorageSectionState extends State<StorageSection> {
           ),
         ),
         Align(alignment: Alignment.centerLeft, child: PekButton(label: _busy ? 'Clearing\u2026' : 'Clear saved artwork', onTap: _busy ? null : _clear)),
+      ],
+    );
+  }
+}
+
+
+/// Settings > Advanced > App updates: looks for a newer PEK TV right now (the app otherwise only checks when it starts),
+/// and says what it found, or why nothing was found.
+class UpdateSection extends StatefulWidget {
+  const UpdateSection({super.key});
+  @override
+  State<UpdateSection> createState() => _UpdateSectionState();
+}
+
+class _UpdateSectionState extends State<UpdateSection> {
+  String _version = '';
+  String _result = '';
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AppUpdate.installedVersion().then((v) {
+      if (mounted) setState(() => _version = v ?? '');
+    });
+  }
+
+  Future<void> _check() async {
+    setState(() {
+      _busy = true;
+      _result = '';
+    });
+    final r = await AppUpdate.checkDetailed(timeout: const Duration(seconds: 15));
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _result = r.message;
+    });
+    final rel = r.release;
+    if (rel != null) {
+      // Same screen as at start-up: Update now / Not now.
+      await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (ctx) => AppUpdateScreen(release: rel, onLater: () => Navigator.pop(ctx))));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    return Section(
+      title: 'App updates',
+      hint: 'PEK TV looks for a new version each time it starts. Use this to look right now.',
+      children: [
+        if (_version.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: Text('Installed version: $_version', style: TextStyle(color: p.tokens.textMuted))),
+        if (_result.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: Text(_result, style: TextStyle(color: p.tokens.text, height: 1.35))),
+        Align(alignment: Alignment.centerLeft, child: PekButton(label: _busy ? 'Checking\u2026' : 'Check for updates', onTap: _busy ? null : _check)),
       ],
     );
   }
