@@ -160,27 +160,39 @@ class Api {
   static final Map<String, Future<EpisodeInfo>> _episodeInfo = {};
 
   /// Title, synopsis and still picture of one episode: the library's own .nfo / thumbnail first, else TMDb (the server
-  /// does that). Kept for this run; a lookup that failed is asked again the next time the page opens.
+  /// does that). Kept for this run and on disk (details.json, like the posters: a show page's 20-odd episodes no longer ask
+  /// again after every restart), and run through the same queue as the poster look-ups so a whole season does not hit the
+  /// server at once. A lookup that failed is asked again once after a second, then the next time the page opens.
   static Future<EpisodeInfo> episodeDetails(String show, int season, int episode) {
     final key = '$show|$season|$episode';
-    return _episodeInfo.putIfAbsent(key, () async {
+    return _episodeInfo.putIfAbsent(key, () => _lookupEpisode(key, show, season, episode));
+  }
+
+  static Future<EpisodeInfo> _lookupEpisode(String key, String show, int season, int episode) async {
+    final diskKey = 'e:$key';
+    final saved = await _savedEntry(diskKey);
+    if (saved != null) return EpisodeInfo(name: '${saved['n'] ?? ''}', overview: '${saved['o'] ?? ''}', still: '${saved['p'] ?? ''}');
+    for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final j = await _get('/api/episode-details?show=${Uri.encodeQueryComponent(show)}&season=$season&episode=$episode');
-        return EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: abs('${j['still'] ?? ''}'));
+        final j = await _pool.run(() => _get('/api/episode-details?show=${Uri.encodeQueryComponent(show)}&season=$season&episode=$episode', timeout: const Duration(seconds: 12)));
+        final info = EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: abs('${j['still'] ?? ''}'));
+        unawaited(_saveEntry(diskKey, info.overview, info.still, name: info.name));
+        return info;
       } catch (_) {
-        _episodeInfo.remove(key);
-        return const EpisodeInfo(name: '', overview: '', still: '');
+        if (attempt == 0) await Future<void>.delayed(const Duration(seconds: 1));
       }
-    });
+    }
+    _episodeInfo.remove(key);
+    return const EpisodeInfo(name: '', overview: '', still: '');
   }
 
   /// Lookups that failed or came back without a poster (e.g. while offline): [forgetFailedDetails] lets them run again.
   static final Set<String> _noArt = {};
 
   /// A lookup that fails (the server is busy scanning, the TMDb proxy is slow or rate-limiting a screenful of requests) is
-  /// tried again after 2 s, 6 s and 12 s, and one that still has nothing is forgotten after a short rest, so the next time the
+  /// tried again after 1 s, 3 s and 8 s, and one that still has nothing is forgotten after a short rest, so the next time the
   /// screen is built it asks again. Before, the first failure was kept until Refresh, which left posters blank.
-  static const _detailRetryWaits = [Duration(seconds: 2), Duration(seconds: 6), Duration(seconds: 12)];
+  static const _detailRetryWaits = [Duration(seconds: 1), Duration(seconds: 3), Duration(seconds: 8)];
 
   static void _forgetDetailSoon(String key, Duration after) {
     _noArt.add(key);
@@ -248,24 +260,32 @@ class Api {
         return <String, dynamic>{};
       }();
 
-  static Future<Details?> _savedDetail(String key) async {
+  /// The saved entry for [key] if it is there, from the internet (https picture) and younger than 30 days.
+  static Future<Map<dynamic, dynamic>?> _savedEntry(String key) async {
     try {
       final e = (await _disk())[key];
       if (e is! Map) return null;
-      final poster = '${e['p'] ?? ''}';
+      final picture = '${e['p'] ?? ''}';
       final at = (e['t'] as num?)?.toInt() ?? 0;
-      if (!poster.startsWith('https://')) return null;
+      if (!picture.startsWith('https://')) return null;
       if (DateTime.now().millisecondsSinceEpoch - at > _detailsTtl.inMilliseconds) return null;
-      return Details(overview: '${e['o'] ?? ''}', poster: poster);
+      return e;
     } catch (_) {
       return null;
     }
   }
 
-  static Future<void> _saveDetail(String key, Details d) async {
-    if (!d.poster.startsWith('https://')) return;
+  static Future<Details?> _savedDetail(String key) async {
+    final e = await _savedEntry(key);
+    return e == null ? null : Details(overview: '${e['o'] ?? ''}', poster: '${e['p']}');
+  }
+
+  static Future<void> _saveDetail(String key, Details d) => _saveEntry(key, d.overview, d.poster);
+
+  static Future<void> _saveEntry(String key, String overview, String picture, {String name = ''}) async {
+    if (!picture.startsWith('https://')) return;
     final m = await _disk();
-    m[key] = {'o': d.overview, 'p': d.poster, 't': DateTime.now().millisecondsSinceEpoch};
+    m[key] = {'o': overview, 'p': picture, if (name.isNotEmpty) 'n': name, 't': DateTime.now().millisecondsSinceEpoch};
     if (m.length > _detailsMax) {
       for (final k in m.keys.take(m.length - _detailsMax + 1000).toList()) {
         m.remove(k);

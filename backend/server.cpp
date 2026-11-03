@@ -370,7 +370,7 @@ static bool tmdbSearch(const std::string& path, std::string& body) {
             applyTls(*client);
             client->set_keep_alive(true);
             client->set_connection_timeout(5);
-            client->set_read_timeout(6);
+            client->set_read_timeout(8);
         }
         auto r = client->Get(path.c_str());
         if (r && r->status == 200) {
@@ -1084,6 +1084,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
     //    a plot but no artwork, the synopsis only when there is artwork but no plot.
     //    Artwork is served by /api/artwork below; a local picture is a same-origin URL, so the page needs nothing new.
     svr.Get("/api/movie-details", [scanner](const httplib::Request& req, httplib::Response& res) {
+        scanner->noteInteractive();
         std::string id = req.get_param_value("id");
         MediaEntry entry;
         if (!scanner->findById(id, entry) || entry.kind != MediaKind::Movie) {
@@ -1130,6 +1131,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
 
     // 6b. TV show bio (poster + synopsis) — fires only when the user opens a show.
     svr.Get("/api/show-details", [scanner](const httplib::Request& req, httplib::Response& res) {
+        scanner->noteInteractive();
         std::string title = req.get_param_value("title");
         if (title.empty()) {
             res.status = 400;
@@ -1163,6 +1165,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
     // 6c. Episode bio (title + synopsis + still image). The Worker does the
     //     show lookup and episode fetch and returns a trimmed object.
     svr.Get("/api/episode-details", [scanner](const httplib::Request& req, httplib::Response& res) {
+        scanner->noteInteractive();
         std::string show = req.get_param_value("show");
         std::string season = req.get_param_value("season");
         std::string episode = req.get_param_value("episode");
@@ -1182,21 +1185,18 @@ void PekServer::start(int port, const std::string& plugins_dir,
         };
         if (!local.plot.empty() && !art.empty()) { reply(local.title, local.plot, art); return; }
 
-        httplib::Client client(tmdbProxyUrl());
-        applyTls(client);
-        client.set_connection_timeout(5);
-        client.set_read_timeout(8);
+        // Same kept-open connection and 6 h answer cache as the poster look-ups (a new client per episode meant a full TLS
+        // handshake for each of the 20-odd episodes of a show page, all at once).
         std::string q = "/episode?query=" + httplib::encode_uri(show) +
                         "&season=" + httplib::encode_uri(season) +
                         "&episode=" + httplib::encode_uri(episode);
-        auto tmdb_res = client.Get(q.c_str());
-        if (!tmdb_res || tmdb_res->status != 200) {
+        std::string body;
+        if (!tmdbSearch(q, body)) {
             if (!local.plot.empty() || !art.empty()) { reply(local.title, local.plot, art); return; }
             res.status = 502;
             res.set_content("{\"error\": \"TMDb lookup failed\"}", "application/json");
             return;
         }
-        const std::string& body = tmdb_res->body;
         std::string name = extractJsonString(body, "name");
         std::string overview = extractJsonString(body, "overview");
         std::string still = extractJsonString(body, "still_path");

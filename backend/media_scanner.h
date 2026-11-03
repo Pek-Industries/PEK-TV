@@ -127,6 +127,10 @@ public:
         std::string art;     // path or network URL of an image file; "" = none. Only ever read by readArtwork().
     };
     Local localMovie(const MediaEntry& entry);
+
+    /// Called by the poster / synopsis / episode lookups. The background NFO reader (indexMetadata) waits a moment between
+    /// batches while these are arriving, so a screenful of posters is answered before the reader takes the disk / network again.
+    void noteInteractive() { last_interactive_ms_ = nowSteadyMs(); }
     Local localEpisode(const std::string& show, int season, int episode);
     Local localShow(const std::string& show);
     // Reads the image named by Local::art (local or network). False = too big / unreadable.
@@ -198,6 +202,11 @@ private:
     std::unique_ptr<pekdb::Db> db_;            // null = could not be opened: the app still works, it just rescans at every start
     std::string db_path_;
     std::atomic<int> index_done_{0}, index_total_{0};
+    std::atomic<long long> last_interactive_ms_{0};
+    static long long nowSteadyMs() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    void yieldToInteractive();                 // short pause (at most ~1.5 s) while poster lookups are being answered
     void openDb();                             // opens, creates the tables, imports an old media_cache.tsv once
     void persistToDb();                        // brings the media table in line with entries_ (one transaction)
     void indexMetadata();                      // reads NFO genres / people for titles that are new or whose NFO changed

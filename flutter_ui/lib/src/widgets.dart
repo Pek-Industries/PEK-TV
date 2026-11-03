@@ -416,8 +416,8 @@ class _PosterCardState extends State<PosterCard> {
 
   // The look-up (poster address + synopsis) can fail or come back with no picture while the server is busy, the TMDb proxy
   // is slow or the internet is flaky. The card used to keep that answer until the screen was rebuilt (a manual Refresh);
-  // now it asks again by itself, after 5, 12, 25, 45, 60 and 60 seconds, and at once when the internet comes back.
-  static const _lookupWaits = [5, 12, 25, 45, 60, 60];
+  // now it asks again by itself, after 2, 6, 15, 30, 60 and 60 seconds, and at once when the internet comes back.
+  static const _lookupWaits = [2, 6, 15, 30, 60, 60];
   late Future<Details> _poster = widget.poster;
   int _lookups = 0;
   Timer? _lookupTimer;
@@ -597,7 +597,7 @@ class PosterImage extends StatefulWidget {
 }
 
 class _PosterImageState extends State<PosterImage> {
-  static const _lookupWaits = [5, 12, 25, 45, 60, 60];
+  static const _lookupWaits = [2, 6, 15, 30, 60, 60];
   late Future<Details> _poster = widget.poster;
   int _lookups = 0;
   Timer? _timer;

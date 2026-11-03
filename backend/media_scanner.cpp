@@ -18,6 +18,7 @@
 #include <memory>
 #include <cstdio>
 #include <chrono>
+#include <thread>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -1214,6 +1215,15 @@ void MediaScanner::persistToDb() {
     if (!writeEntries(*db_, snapshot)) std::cout << "[MediaScanner] Could not save the library: " << db_->lastError() << std::endl;
 }
 
+void MediaScanner::yieldToInteractive() {
+    // Poster lookups arrived within the last 600 ms: let them have the disk / network. Never wait more than 1.5 s in a row,
+    // so reading the details still finishes even while someone scrolls for a long time.
+    for (int waited = 0; waited < 1500; waited += 100) {
+        if (nowSteadyMs() - last_interactive_ms_.load() > 600) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
 void MediaScanner::indexMetadata() {
     if (!db_) return;
     std::vector<MediaEntry> all;
@@ -1294,8 +1304,9 @@ void MediaScanner::indexMetadata() {
     std::cout << "[MediaScanner] Reading details for " << jobs.size() << " title(s)..." << std::endl;
 
     FileIo io;
-    const size_t kBatch = 100;       // titles per transaction (each commit is synced to disk)
+    const size_t kBatch = 50;        // titles per transaction (each commit is synced to disk); small so posters can cut in between
     for (size_t b = 0; b < jobs.size(); b += kBatch) {
+        yieldToInteractive();
         const size_t end = std::min(jobs.size(), b + kBatch);
         std::vector<std::pair<bool, nfo::Info>> read;          // slow part (files, maybe over the network) outside the transaction
         for (size_t i = b; i < end; ++i) {
