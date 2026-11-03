@@ -1,7 +1,7 @@
 package com.pektv.app
 
 /**
- * The Discord Social SDK side of Rich Presence (discord_presence.cpp). Without the SDK files in android/discord_social_sdk
+ * The Discord Social SDK side of Rich Presence (discord_presence.cpp). Without android/app/libs/discord_partner_sdk.aar
  * (DISCORD.md) the native functions still exist: [available] says false and the rest do nothing.
  */
 object NativeDiscord {

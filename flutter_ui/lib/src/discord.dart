@@ -71,8 +71,9 @@ class DiscordPresence {
   /// This profile has a Discord account linked.
   static bool get linked => '${_read(Store.profileId)['access'] ?? ''}'.isNotEmpty;
 
-  /// Linked and not switched off: what is playing goes to Discord.
-  static bool get showing => linked && _read(Store.profileId)['on'] != false;
+  /// Signed in to PEK, Discord linked and not switched off: what is playing goes to Discord. (Signing out of PEK stops it; the
+  /// Discord link stays on the device and works again after signing back in.)
+  static bool get showing => Cloud.linked && linked && _read(Store.profileId)['on'] != false;
 
   /// False = Discord only says "Watching on PEK TV".
   static bool get showTitles => _read(Store.profileId)['titles'] != false;
@@ -149,6 +150,7 @@ class DiscordPresence {
     if (_started) return;
     _started = true;
     Store.profile.addListener(_profileChanged);
+    Cloud.changes.addListener(() => unawaited(_sync())); // signing out of PEK stops Discord presence, signing in resumes it
     unawaited(_sync());
   }
 
@@ -199,6 +201,7 @@ class DiscordPresence {
         return;
       }
       if (_connectedProfile == pid && _connectedToken == token) return;
+      _lastSent = ''; // a new connection starts with nothing shown: the next playback event must go out
       await _ch.invokeMethod<void>('connect', {'appId': app, 'token': token});
       _connectedProfile = pid;
       _connectedToken = token;
@@ -232,6 +235,7 @@ class DiscordPresence {
 
   /// Step 1. Returns the session, or the error code from the cloud (`discord_not_configured`, `rate_limited`, `offline`, ...).
   static Future<(DiscordLinkSession?, String)> startLink() async {
+    if (!Cloud.linked) return (null, 'not_linked'); // Discord can only be linked from a signed-in PEK account
     final r = await Cloud.discordStart();
     if (!r.ok) return (null, r.error.isEmpty ? 'server' : r.error);
     final url = '${r.body['url'] ?? ''}';
@@ -245,12 +249,14 @@ class DiscordPresence {
     );
   }
 
-  /// Step 2, every few seconds: `pending`, `done` (linked, tokens kept), `expired` (start again) or `error` (try again next time).
+  /// Step 2, every few seconds: `pending`, `done` (linked, tokens kept), `expired` (start again), `signed_out` (the PEK session is
+  /// gone: stop, the person has to sign in again) or `error` (try again next time).
   static Future<String> pollLink(DiscordLinkSession s) async {
     final r = await Cloud.discordPoll(s.poll);
     if (!r.ok) {
       // Cloud._failure turns every 410 into `account_deleted`, so the worker's own word is read from the body.
       if (r.status == 410 || r.body['error'] == 'expired') return 'expired';
+      if (r.error == 'not_linked' || r.error == 'session_expired' || r.error == 'account_deleted') return 'signed_out';
       return r.error == 'offline' || r.error == 'rate_limited' ? 'pending' : 'error';
     }
     if (r.body['status'] != 'approved') return 'pending';

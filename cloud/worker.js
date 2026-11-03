@@ -1676,6 +1676,12 @@ const DISCORD_API = 'https://discord.com/api/v10';
 
 function discordReady(env) { return !!(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET); }
 
+// Discord can only be linked from a signed-in PEK account: start, poll, refresh and revoke all need the PEK session token
+// (Authorization: Bearer ...). The poll secret is also tied to the account that started the link, so another account's session
+// (or a leaked poll value) cannot pick the tokens up. /go and /callback are opened in a browser (a phone that scanned the TV's QR
+// code is not signed in to PEK) and are protected by the unguessable one-use `state` that only a signed-in start can create.
+async function discordPollHash(userId, poll) { return sha256Hex('pek:discord:poll:' + userId + ':' + poll); }
+
 async function discordToken(env, params) {
     const body = new URLSearchParams(Object.assign({ client_id: env.DISCORD_CLIENT_ID, client_secret: env.DISCORD_CLIENT_SECRET }, params));
     const r = await fetch(DISCORD_API + '/oauth2/token', {
@@ -1699,12 +1705,14 @@ function discordPage(title, text, status = 200) {
 async function discordStart(request, env) {
     if (!discordReady(env)) return json({ error: 'discord_not_configured' }, 503);
     const db = env.DB, now = Date.now();
-    if (await limited(db, 'discord:start:' + clientIp(request), 20, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
+    const sess = await sessionFor(request, db, now);
+    if (!sess) return json({ error: 'bad_session' }, 401);
+    if (await limited(db, 'discord:start:' + sess.userId, 20, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
     await db.prepare('DELETE FROM discord_links WHERE expires < ?').bind(now).run();
     const poll = randomToken();
     const state = randomHex(16);
     await db.prepare('INSERT INTO discord_links (poll_hash, state, created, expires, scope) VALUES (?, ?, ?, ?, ?)')
-        .bind(await sha256Hex('pek:discord:poll:' + poll), state, now, now + DISCORD_TTL, DISCORD_SCOPE).run();
+        .bind(await discordPollHash(sess.userId, poll), state, now, now + DISCORD_TTL, DISCORD_SCOPE).run();
     const origin = new URL(request.url).origin;
     return json({ ok: true, poll, url: origin + '/v1/discord/go?s=' + state, appId: String(env.DISCORD_CLIENT_ID), expiresIn: Math.floor(DISCORD_TTL / 1000), interval: 3 });
 }
@@ -1741,11 +1749,13 @@ async function discordCallback(url, env) {
 }
 
 async function discordPoll(request, env) {
-    const { body, err } = await readJson(request); if (err) return err;
     const db = env.DB, now = Date.now();
+    const sess = await sessionFor(request, db, now);
+    if (!sess) return json({ error: 'bad_session' }, 401);
+    const { body, err } = await readJson(request); if (err) return err;
     const poll = typeof body.poll === 'string' ? body.poll : '';
     if (poll.length < 20 || poll.length > 100) return json({ error: 'expired' }, 410);
-    const pollHash = await sha256Hex('pek:discord:poll:' + poll);
+    const pollHash = await discordPollHash(sess.userId, poll);
     if (await limited(db, 'discord:poll:' + pollHash, 400, DISCORD_TTL, now)) return json({ error: 'rate_limited' }, 429);
     const row = await db.prepare('SELECT access, refresh, expires_in, scope, expires FROM discord_links WHERE poll_hash = ?').bind(pollHash).first();
     if (!row || row.expires < now) return json({ error: 'expired' }, 410);
@@ -1758,9 +1768,11 @@ async function discordPoll(request, env) {
 // Discord's access tokens last about 7 days. The app swaps its refresh token for a new pair here (the client secret is needed).
 async function discordRefresh(request, env) {
     if (!discordReady(env)) return json({ error: 'discord_not_configured' }, 503);
-    const { body, err } = await readJson(request); if (err) return err;
     const now = Date.now();
-    if (await limited(env.DB, 'discord:refresh:' + clientIp(request), 60, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
+    const sess = await sessionFor(request, env.DB, now);
+    if (!sess) return json({ error: 'bad_session' }, 401);
+    const { body, err } = await readJson(request); if (err) return err;
+    if (await limited(env.DB, 'discord:refresh:' + sess.userId, 60, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
     const refresh = typeof body.refresh_token === 'string' ? body.refresh_token : '';
     if (refresh.length < 10 || refresh.length > 300) return json({ error: 'invalid_token' }, 401);
     let t = null;
@@ -1773,9 +1785,11 @@ async function discordRefresh(request, env) {
 // "Unlink Discord": ask Discord to forget the grant. Best effort; the app forgets its tokens either way.
 async function discordRevoke(request, env) {
     if (!discordReady(env)) return json({ ok: true });
-    const { body, err } = await readJson(request); if (err) return err;
     const now = Date.now();
-    if (await limited(env.DB, 'discord:revoke:' + clientIp(request), 60, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
+    const sess = await sessionFor(request, env.DB, now);
+    if (!sess) return json({ error: 'bad_session' }, 401);
+    const { body, err } = await readJson(request); if (err) return err;
+    if (await limited(env.DB, 'discord:revoke:' + sess.userId, 60, 3600 * 1000, now)) return json({ error: 'rate_limited' }, 429);
     const token = typeof body.token === 'string' ? body.token : '';
     if (token.length < 10 || token.length > 300) return json({ ok: true });
     try {

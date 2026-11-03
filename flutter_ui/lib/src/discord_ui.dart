@@ -42,9 +42,9 @@ class DiscordSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: DiscordPresence.changed,
-      builder: (context, _, __) => ValueListenableBuilder<String>(
+    return ListenableBuilder(
+      listenable: Listenable.merge([DiscordPresence.changed, Cloud.changes]),
+      builder: (context, _) => ValueListenableBuilder<String>(
         valueListenable: Store.profile,
         builder: (context, _, __) {
           final known = DiscordPresence.knownAvailable;
@@ -64,6 +64,12 @@ class DiscordSection extends StatelessWidget {
     if (ready == false) {
       return Section(title: 'Discord', hint: hint, children: [
         Text('This version of PEK TV was built without Discord support.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * p.rem)),
+      ]);
+    }
+    if (!Cloud.linked) {
+      // Discord can only be linked from a signed-in PEK account (the cloud refuses the link otherwise).
+      return Section(title: 'Discord', hint: hint, children: [
+        Text('Sign in to your PEK account (Settings > Account) to link Discord.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * p.rem)),
       ]);
     }
     if (!DiscordPresence.linked) {
@@ -164,6 +170,11 @@ class _DiscordLinkScreenState extends State<DiscordLinkScreen> {
     }
     if (r == 'expired') {
       await _start();
+      return;
+    }
+    if (r == 'signed_out') {
+      _timer?.cancel();
+      Navigator.of(context).pop(); // the PEK session is gone: back to Settings, which says to sign in
       return;
     }
     if (mounted) setState(() {}); // refreshes the countdown

@@ -12,13 +12,17 @@ plays. Android only for now. Settings > Account > Discord (regular mode, not mus
 ## How it works
 
 ```
-TV / phone ──POST /v1/discord/start──▶ PEK cloud worker      (link + secret `poll` value)
+TV / phone ──POST /v1/discord/start──▶ PEK cloud worker      (needs the PEK session token; link + secret `poll` value)
 person opens link ─▶ /v1/discord/go ─▶ discord.com/oauth2/authorize ─▶ /v1/discord/callback
                       (the worker swaps the code for tokens with the client secret and keeps them for at most 10 minutes)
 app ──POST /v1/discord/poll──▶ gets the tokens ONCE (the row is deleted as it is read)
 app ─▶ pek/discord channel ─▶ FlutterDiscord.kt ─▶ NativeDiscord.kt ─▶ discord_presence.cpp ─▶ Discord Social SDK
 ```
 
+- **A signed-in PEK account is required.** `start`, `poll`, `refresh` and `revoke` all need the PEK session token (the worker answers 401
+  `bad_session` without it), the `poll` secret only works for the account that started the link, and Settings shows "Sign in to your PEK
+  account" instead of the link button while signed out. Signing out of PEK also stops presence. The phone that opens the approval link
+  does not need to be signed in to PEK: the TV (or phone app) that started the link is.
 - Tokens last about 7 days. The app swaps its refresh token for a new pair at `/v1/discord/refresh` when less than a day is left.
 - What is playing never goes to the PEK cloud. The SDK on the device tells Discord directly.
 - Tokens are kept on the device only, under `pek_discord_<profile id>` (device-wide, not in the synced profile keys).
@@ -42,8 +46,7 @@ app ─▶ pek/discord channel ─▶ FlutterDiscord.kt ─▶ NativeDiscord.kt 
    desktop.) Gradle adds the `.aar` by itself and passes its headers on through Prefab, exactly as Discord's Android guide says; CMake
    then prints `PEK: Discord Rich Presence ON`. The `.aar` holds the arm64-v8a, armeabi-v7a, x86 and x86_64 builds, so both of your CPU
    builds get it. Without the file the app builds exactly as before and Settings says "built without Discord support".
-   The file is listed in `.gitignore`: read Discord's terms before committing it. CI needs the file too (a private repo, or a step
-   that fetches it from somewhere private).
+   The file is committed to the repo (it is no longer in `.gitignore`), so CI builds include Discord support too.
 5. Build and install.
 
 ## Tests

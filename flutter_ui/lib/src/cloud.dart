@@ -393,18 +393,20 @@ class Cloud {
 
   /// Step 1: the body has `url` (what the phone opens / the TV turns into a QR code), `poll` (the secret to poll with), `appId`,
   /// `expiresIn` and `interval` in seconds. The error `discord_not_configured` means the cloud has no Discord app set up.
-  static Future<CloudResult> discordStart() => _auth('/v1/discord/start', {});
+  static Future<CloudResult> discordStart() => call('POST', '/v1/discord/start', {});
 
+  /// Linking Discord needs a signed-in PEK account: these four calls send the session token (`call`), and without one they
+  /// return the error `not_linked` without touching the network.
   /// Step 2 (every few seconds): ok with `status` pending, or approved with `access_token`, `refresh_token`, `expires_in`, `appId`.
   /// An `expired` error means: start again.
-  static Future<CloudResult> discordPoll(String poll) => _auth('/v1/discord/poll', {'poll': poll});
+  static Future<CloudResult> discordPoll(String poll) => call('POST', '/v1/discord/poll', {'poll': poll});
 
   /// Swaps a refresh token for a new pair; the error `invalid_token` means Discord no longer knows the link.
-  static Future<CloudResult> discordRefresh(String refresh) => _auth('/v1/discord/refresh', {'refresh_token': refresh});
+  static Future<CloudResult> discordRefresh(String refresh) => call('POST', '/v1/discord/refresh', {'refresh_token': refresh});
 
   /// Asks Discord to forget the link (best effort).
   static Future<void> discordRevoke(String token) async {
-    await _auth('/v1/discord/revoke', {'token': token});
+    await call('POST', '/v1/discord/revoke', {'token': token});
   }
 
   static Future<CloudResult> forgotPassword(String mail) async {

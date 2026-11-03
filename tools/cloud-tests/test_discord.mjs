@@ -1,5 +1,6 @@
 // Runs the Discord link flow (cloud/worker.js: /v1/discord/*) against a real SQLite database, with Discord's token
 // endpoint replaced by a fake. Needs Node 22 or newer. From this folder: sh run.sh
+import { createHash } from 'node:crypto';
 import { makeDB } from './d1shim.mjs';
 import worker from './worker.mjs';
 
@@ -24,15 +25,35 @@ globalThis.fetch = async (url, init = {}) => {
   return new Response('{}', { status: 404 });
 };
 
-const post = (path, obj) => worker.fetch(new Request('https://w.example' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) }), env);
+// Two signed-in PEK accounts (Discord can only be linked from a signed-in account) and one request helper per kind of caller.
+const tokA = 'token-alice-' + '-'.repeat(20), tokB = 'token-bob-' + '-'.repeat(20);
+const post = (path, obj, tok = tokA) => worker.fetch(new Request('https://w.example' + path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, tok ? { Authorization: 'Bearer ' + tok } : {}), body: JSON.stringify(obj) }), env);
 const get = (path) => worker.fetch(new Request('https://w.example' + path, { method: 'GET', redirect: 'manual' }), env);
 
 // not configured
 const off = await worker.fetch(new Request('https://w.example/v1/discord/start', { method: 'POST', body: '{}' }), { DB: db });
 check('start says not configured when the secrets are missing', off.status === 503 && (await off.json()).error === 'discord_not_configured');
 
+// accounts: the first request above created every table
+const addSession = (id, tok) => db._raw.prepare('INSERT INTO sessions (token_hash,user_id,created,expires) VALUES (?,?,?,?)').run(createHash('sha256').update('hesper:session:' + tok).digest('hex'), id, Date.now(), Date.now() + 30 * 86400000);
+addSession('u_alice', tokA); addSession('u_bob', tokB);
+
+// signed out: nothing works
+let r = await post('/v1/discord/start', {}, '');
+check('start refuses a caller who is not signed in to PEK', r.status === 401 && (await r.json()).error === 'bad_session');
+r = await post('/v1/discord/start', {}, 'not-a-real-session-token-xxxxxxxx');
+check('start refuses an unknown session token', r.status === 401);
+check('no link row was created for the refused starts', db._raw.prepare('SELECT COUNT(*) AS n FROM discord_links').get().n === 0);
+r = await post('/v1/discord/poll', { poll: 'x'.repeat(40) }, '');
+check('poll refuses a caller who is not signed in', r.status === 401);
+r = await post('/v1/discord/refresh', { refresh_token: 'refresh-1-abcdefghij' }, '');
+check('refresh refuses a caller who is not signed in', r.status === 401);
+r = await post('/v1/discord/revoke', { token: 'access-2-abcdefghij' }, '');
+check('revoke refuses a caller who is not signed in', r.status === 401);
+check('Discord was never contacted for any of those', calls.length === 0);
+
 // start
-let r = await post('/v1/discord/start', {});
+r = await post('/v1/discord/start', {});
 let start = await r.json();
 check('start gives a poll secret, a link and the app id', r.status === 200 && start.ok && start.poll.length >= 20 && start.appId === '1234567890' && /^https:\/\/w\.example\/v1\/discord\/go\?s=[a-f0-9]{32}$/.test(start.url), start.url);
 const state = start.url.split('s=')[1];
@@ -60,6 +81,11 @@ const ex = calls.find((c) => c.url.endsWith('/oauth2/token') && c.body.grant_typ
 check('callback exchanges the code with the client secret and our redirect', r.status === 200 && ex && ex.body.code === 'abc123' && ex.body.client_secret === 'sekret' && ex.body.redirect_uri === 'https://w.example/v1/discord/callback');
 r = await get('/v1/discord/callback?state=' + state + '&code=again');
 check('the same link cannot be used twice', r.status === 410);
+// another signed-in account (or a leaked poll secret) cannot collect the tokens
+r = await post('/v1/discord/poll', { poll: start.poll }, tokB);
+const stolen = await r.json();
+check('another account cannot pick up the tokens with the same poll secret', r.status === 410 && !stolen.access_token);
+check('and the tokens are still waiting for the right account', db._raw.prepare('SELECT COUNT(*) AS n FROM discord_links WHERE access IS NOT NULL').get().n === 1);
 
 // poll takes the tokens once
 r = await post('/v1/discord/poll', { poll: start.poll });
