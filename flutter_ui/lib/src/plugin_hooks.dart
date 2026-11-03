@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import 'api.dart';
+import 'discord.dart';
 import 'plugin_host.dart';
 import 'library_match.dart';
 import 'plugin_favorites.dart';
@@ -226,6 +227,8 @@ class PluginHooks {
     if (p.kind != 'movie' && p.kind != 'episode') return;
     final title = p.kind == 'episode' ? p.showTitle : p.title;
     if (title.trim().isEmpty) return;
+    // Discord Rich Presence (discord.dart): a profile that linked Discord shows what is playing. Same events, same fields.
+    DiscordPresence.playback(type, kind: p.kind, title: title, year: p.year, season: p.season, episode: p.episode, position: position, duration: duration);
     _send({
       'type': type,
       'kind': p.kind,

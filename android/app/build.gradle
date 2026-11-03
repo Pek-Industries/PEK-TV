@@ -124,6 +124,9 @@ if (flutterOn) {
     android.sourceSets.main.java.srcDir 'src/flutter/java'
 }
 
+// Discord Social SDK (DISCORD.md): its .so files ship in the APK when android/discord_social_sdk/lib/<abi>/ exists.
+if (new File(rootDir, 'discord_social_sdk/lib').exists()) android.sourceSets.main.jniLibs.srcDir new File(rootDir, 'discord_social_sdk/lib')
+
 dependencies {
     if (flutterOn) {
         implementation project(':flutter')

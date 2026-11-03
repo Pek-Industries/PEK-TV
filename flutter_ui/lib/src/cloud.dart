@@ -215,6 +215,8 @@ class Cloud {
         return 'There is already an account with that email. Sign in instead.';
       case 'rate_limited':
         return 'Too many tries. Wait a little and try again.';
+      case 'discord_not_configured':
+        return 'Discord linking is not turned on in the PEK cloud yet.';
       case 'session_expired':
         return 'You were signed out. Please sign in again.';
       case 'account_deleted':
@@ -372,7 +374,12 @@ class Cloud {
   /// website yet; ok without it once approved, and this device is then signed in. An `expired` error means: ask for a new code.
   static Future<CloudResult> devicePoll(String poll) async {
     final res = await _auth('/v1/device/poll', {'poll': poll});
-    if (!res.ok) return res;
+    if (!res.ok) {
+      // The worker answers 410 + `expired` for a code that ran out, but _failure turns every 410 into `account_deleted`, so the
+      // link screen's own `expired` check (link_login.dart) never matched. Here the worker's own word wins.
+      if (res.status == 410 && res.body['error'] == 'expired') return CloudResult(ok: false, status: 410, error: 'expired', body: res.body);
+      return res;
+    }
     final token = res.body['token'];
     if (res.body['status'] != 'approved' || token is! String || token.isEmpty) return const CloudResult(ok: true, pending: true);
     final mail = '${res.body['email'] ?? ''}'.toLowerCase();
@@ -380,6 +387,24 @@ class Cloud {
     await _savePlan(res.body);
     await Profiles.afterSignIn(mail, created: false);
     return CloudResult(ok: true, body: res.body);
+  }
+
+  // ---- Discord link (Rich Presence), see discord.dart and DISCORD.md. None of these needs an account.
+
+  /// Step 1: the body has `url` (what the phone opens / the TV turns into a QR code), `poll` (the secret to poll with), `appId`,
+  /// `expiresIn` and `interval` in seconds. The error `discord_not_configured` means the cloud has no Discord app set up.
+  static Future<CloudResult> discordStart() => _auth('/v1/discord/start', {});
+
+  /// Step 2 (every few seconds): ok with `status` pending, or approved with `access_token`, `refresh_token`, `expires_in`, `appId`.
+  /// An `expired` error means: start again.
+  static Future<CloudResult> discordPoll(String poll) => _auth('/v1/discord/poll', {'poll': poll});
+
+  /// Swaps a refresh token for a new pair; the error `invalid_token` means Discord no longer knows the link.
+  static Future<CloudResult> discordRefresh(String refresh) => _auth('/v1/discord/refresh', {'refresh_token': refresh});
+
+  /// Asks Discord to forget the link (best effort).
+  static Future<void> discordRevoke(String token) async {
+    await _auth('/v1/discord/revoke', {'token': token});
   }
 
   static Future<CloudResult> forgotPassword(String mail) async {

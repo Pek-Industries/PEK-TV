@@ -22,6 +22,7 @@ import 'music_mode.dart';
 import 'news.dart';
 import 'pages.dart';
 import 'plugin_backup.dart';
+import 'discord.dart';
 import 'plugin_hooks.dart';
 import 'plugin_host.dart' show PluginBack, PluginHost;
 import 'plugin_store_ui.dart' show PluginPicture;
@@ -178,6 +179,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _loadPluginScreens();
       PluginUpdates.checkOnStartup(); // built-in plugins update from the PEK Store, GitHub ones are offered an update
       Future<void>.delayed(const Duration(seconds: 6), PluginHooks.appStart); // plugins with hooks (Trakt import); once per run
+      DiscordPresence.start(); // Discord Rich Presence: connects if this profile linked Discord (discord.dart)
     }
     PluginHost.changed.addListener(_loadPluginScreens);
     PluginPins.changed.addListener(_pinsChanged);

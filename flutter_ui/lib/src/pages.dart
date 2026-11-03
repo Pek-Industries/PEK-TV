@@ -8,6 +8,7 @@ import 'layouts.dart';
 import 'api.dart';
 import 'common.dart';
 import 'detail.dart';
+import 'discord_ui.dart';
 import 'fields.dart' show PekField;
 import 'mpv.dart';
 import 'net_folders.dart';
@@ -310,7 +311,7 @@ class SettingsPage extends StatelessWidget {
       Heading('Settings', weather: !music),
       row('Mode', music ? 'Music mode is on. Switch back to regular PEK TV here' : 'Turn on music mode: the app becomes a music player', Icons.music_note_outlined, () => const _SettingsList(children: [ModeSection()])),
       row('Library', music ? 'The folders and network folders PEK TV scans for music' : 'The folders PEK TV scans for movies, shows and music', Icons.folder_outlined, () => _LibrarySettings(music: music)),
-      row('Account', 'Sign in, profiles and sync', Icons.person_outline, () => const _SettingsList(children: [AccountSection()])),
+      row('Account', music ? 'Sign in, profiles and sync' : 'Sign in, profiles, sync and Discord', Icons.person_outline, () => _SettingsList(children: [const AccountSection(), if (!music) const DiscordSection()])),
       // Regular mode: Updates is a main screen (bottom bar on a phone, side menu on a TV). Music mode has no such bar entry.
       if (music)
         ValueListenableBuilder<int>(

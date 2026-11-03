@@ -340,6 +340,7 @@ class FlutterHostActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
+        FlutterDiscord(this).register(messenger) // Discord Rich Presence (discord.dart)
 
         MethodChannel(messenger, "pek/mpv").setMethodCallHandler { call, result ->
             val c = mpv
