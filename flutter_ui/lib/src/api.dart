@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:http/http.dart' as http;
 
 import 'activity.dart' show Busy;
@@ -81,6 +82,16 @@ class Api {
 
   /// A rescan changes what the library holds, so cached lookups and lists are dropped.
   static void forgetLibrary() => _details.clear();
+
+  /// Bumped whenever the set of media sources changes (a folder or network location added or removed). The Movies / TV Shows
+  /// pages listen and read the library again as soon as the scan the server starts has finished. Watching the scan status
+  /// alone is not enough: a scan of a small folder takes about a second, so it can start and end between two polls and the
+  /// page never noticed it, which left the new library hidden until Refresh was tapped.
+  static final ValueNotifier<int> libraryRevision = ValueNotifier<int>(0);
+  static void libraryChanged() {
+    forgetLibrary();
+    libraryRevision.value++;
+  }
 
   // The last lists are kept on the device (art_cache.dart): if the server cannot answer, the titles still show.
   static List<Movie> _movieList(dynamic j) => (((j as Map)['movies'] as List?) ?? const []).map((e) => Movie.fromJson(e as Map<String, dynamic>)).toList();
@@ -324,7 +335,10 @@ class Api {
       final r = await _client
           .post(Uri.parse('$base/api/sources'), body: {'path': url, if (user.isNotEmpty) 'user': user, if (user.isNotEmpty) 'pass': pass})
           .timeout(const Duration(seconds: 60));
-      if (r.statusCode == 200) return null;
+      if (r.statusCode == 200) {
+        libraryChanged();
+        return null;
+      }
       try {
         final o = jsonDecode(utf8.decode(r.bodyBytes));
         if (o is Map && o['message'] != null) return '${o['message']}';
@@ -428,7 +442,7 @@ class Api {
   /// DELETE /api/sources?path=... (the folder is only forgotten, never deleted).
   static Future<void> removeSource(String path) async {
     await _client.delete(Uri.parse('$base/api/sources?path=${Uri.encodeQueryComponent(path)}')).timeout(const Duration(seconds: 20));
-    forgetLibrary();
+    libraryChanged();
   }
 
   /// The browse endpoint behind the folder picker: {path, parent, roots: [...], directories: [...]}.
@@ -441,7 +455,11 @@ class Api {
   /// POST /api/sources?path=... confirms a folder as a source (the server starts a scan).
   static Future<bool> addSource(String path) async {
     final r = await _client.post(Uri.parse('$base/api/sources?path=${Uri.encodeQueryComponent(path)}')).timeout(const Duration(seconds: 20));
-    forgetLibrary();
+    if (r.statusCode == 200) {
+      libraryChanged();
+    } else {
+      forgetLibrary();
+    }
     return r.statusCode == 200;
   }
 

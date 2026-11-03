@@ -31,12 +31,45 @@ class _LibraryPageState extends State<LibraryPage> {
   Timer? _timer;
   Timer? _watch;
   bool _polling = false;
+  int _changeTicket = 0; // a newer _followChange() replaces an older one
+  int _emptyRetries = 0; // how many times an empty list has been read again by itself
 
   @override
   void initState() {
     super.initState();
     _watch = Timer.periodic(const Duration(seconds: 3), (_) => _checkScan());
     _checkScan();
+    Api.libraryRevision.addListener(_onSourcesChanged);
+  }
+
+  /// A source was added or removed (Settings > Media sources).
+  void _onSourcesChanged() {
+    _emptyRetries = 0;
+    unawaited(_followChange());
+  }
+
+  /// Waits for the scan the server starts after a source change and then reads the library again. The scan status alone cannot
+  /// be relied on for this: a small folder is scanned in about a second, which fits between two 3 s polls, so the page never
+  /// saw "scanning" and never reloaded (the library showed up only after Refresh). Here the wait is by time as well: if no scan
+  /// is seen running by the third check (about 2 s) the list is read anyway.
+  Future<void> _followChange() async {
+    final ticket = ++_changeTicket;
+    var sawScan = false;
+    for (var i = 0; i < 45; i++) {
+      await Future<void>.delayed(Duration(milliseconds: i < 4 ? 700 : 1500));
+      if (!mounted || ticket != _changeTicket || _refreshing) return;
+      final busy = await Api.scanning();
+      if (!mounted || ticket != _changeTicket || _refreshing) return;
+      if (busy) {
+        sawScan = true;
+        continue;
+      }
+      if (sawScan || i >= 2) {
+        Api.forgetLibrary();
+        setState(() => _data = _load());
+        return;
+      }
+    }
   }
 
   /// Asks the server whether it is scanning; when a scan has just finished the library is read again.
@@ -65,12 +98,20 @@ class _LibraryPageState extends State<LibraryPage> {
   /// while a scan is saving, and a second try usually gets through.
   Future<List<Object>> _load() => Activity.track<List<Object>>('lib:${widget.tab}', 'Loading your library\u2026', () async {
         Future<List<Object>> once() async => widget.tab == 'movies' ? await Api.movies() : await Api.shows();
+        List<Object> list;
         try {
-          return await once();
+          list = await once();
         } catch (_) {
           await Future<void>.delayed(const Duration(milliseconds: 1500));
-          return await once();
+          list = await once();
         }
+        // An empty list right after a source was added (the page was opened while the first scan was still running) is read
+        // again by itself a few times, so the titles appear without tapping Refresh.
+        if (list.isEmpty && mounted && !_refreshing && _emptyRetries < 3) {
+          _emptyRetries++;
+          unawaited(_followChange());
+        }
+        return list;
       });
 
   @override
@@ -78,6 +119,7 @@ class _LibraryPageState extends State<LibraryPage> {
     if (_scanning) Activity.end('scan');
     _timer?.cancel();
     _watch?.cancel();
+    Api.libraryRevision.removeListener(_onSourcesChanged);
     super.dispose();
   }
 
@@ -94,6 +136,7 @@ class _LibraryPageState extends State<LibraryPage> {
   /// rescan() in app_sources.js: POST /api/rescan, poll /api/scan-status for up to a minute, then reload the library.
   Future<void> _rescan() async {
     if (_refreshing || _cooldown > 0) return;
+    _emptyRetries = 0;
     _startCooldown(10);
     setState(() => _refreshing = true);
     Activity.begin('scan', 'Scanning your media folders\u2026');

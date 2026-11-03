@@ -26,12 +26,19 @@ class ArtCache {
   static Future<void>? _ready;
   // Own HTTP client: a request that times out is really cancelled (abort), so a stuck download can't keep a connection
   // busy and slow down the pictures that come after it. The old shared client left those requests running.
-  // Connections to the picture server are kept for 90 s (was 10 s): after a short pause in browsing, the next screenful used to
-  // pay a fresh DNS + TLS handshake on every connection again, which is what made posters crawl while the text was already there.
+  // Idle connections to the picture server are dropped after 5 s. At 90 s a connection that the server or the Wi-Fi had already
+  // closed silently was still in the pool: the next picture was written to that dead connection and just hung until its timeout
+  // (10 s+), which is what made a single poster take about 15 s. A short idle time means a pooled connection is almost always alive.
   static final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 5)
     ..maxConnectionsPerHost = 16
-    ..idleTimeout = const Duration(seconds: 90);
+    ..idleTimeout = const Duration(seconds: 5);
+  // The second ("hedge") request of a slow download uses its own client, so it never lands on the same pooled connection that
+  // made the first one slow (one HttpClient always hands out its idle pooled connections first). Its connections are not kept.
+  static final HttpClient _hedgeHttp = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 5)
+    ..maxConnectionsPerHost = 8
+    ..idleTimeout = const Duration(seconds: 1);
 
   /// Opens a few connections to the TMDb picture server up front (DNS + TLS), so the first posters do not wait for that.
   static Future<void> _warm() async {
@@ -169,11 +176,12 @@ class ArtCache {
     return _inflight.putIfAbsent(url, () => _withRetry(url).whenComplete(() => _inflight.remove(url)));
   }
 
-  /// A try gives up after 10, 12 and 15 seconds. 4 seconds was too short on a slow or VPN connection: the download was
-  /// thrown away when it was nearly done, kept running in the background, and slowed down every other picture on the
-  /// screen. A failed picture is asked for again, up to 3 times. The pause between tries happens outside the queue, so a
-  /// failing picture never holds a place that another one could use.
-  static const _tryTimeouts = [Duration(seconds: 10), Duration(seconds: 12), Duration(seconds: 15)];
+  /// A try gives up after 5, 8 and 12 seconds. The first try used to wait 10 s, so one picture that hit a dead connection
+  /// showed up 10+ s late; now it is cut off and asked for again on a fresh connection much sooner. (4 s everywhere was too
+  /// short on a slow or VPN connection: downloads were thrown away when nearly done, so the last tries stay longer.) A failed
+  /// picture is asked for again, up to 3 times. The pause between tries happens outside the queue, so a failing picture
+  /// never holds a place that another one could use.
+  static const _tryTimeouts = [Duration(seconds: 5), Duration(seconds: 8), Duration(seconds: 12)];
   static final Set<String> _gone = HashSet(); // answers that will not change (404 ...): not asked again this run
 
   static Future<File?> _withRetry(String url) async {
@@ -241,7 +249,7 @@ class ArtCache {
   /// If a download has not finished after this long, the same picture is also asked for on a second, fresh connection and
   /// whichever finishes first wins (the other is cancelled). A stalled connection / slow handshake / slow CDN edge used to
   /// hold the picture for the whole 10 s before the retry even started.
-  static const _hedgeAfter = Duration(milliseconds: 2500);
+  static const _hedgeAfter = Duration(milliseconds: 2000);
 
   /// One download that is cut off for real when [timeout] passes. null = it failed or timed out.
   static Future<({int status, Uint8List bytes})?> _get(String url, Duration timeout) {
@@ -264,11 +272,11 @@ class ArtCache {
       done.complete(r);
     }
 
-    Future<void> attempt() async {
+    Future<void> attempt(HttpClient client) async {
       running++;
       HttpClientRequest? req;
       try {
-        req = await _http.getUrl(Uri.parse(url));
+        req = await client.getUrl(Uri.parse(url));
         if (done.isCompleted) {
           req.abort();
           return;
@@ -291,10 +299,10 @@ class ArtCache {
     }
 
     hedge = Timer(_hedgeAfter, () {
-      if (!done.isCompleted) unawaited(attempt());
+      if (!done.isCompleted) unawaited(attempt(_hedgeHttp));
     });
     limit = Timer(timeout, () => finish(null));
-    unawaited(attempt());
+    unawaited(attempt(_http));
     return done.future;
   }
 
