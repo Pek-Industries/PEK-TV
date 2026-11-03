@@ -74,22 +74,16 @@ target_compile_definitions(pek PRIVATE _FILE_OFFSET_BITS=64)
 # Google Play (apps targeting Android 15+) needs native libraries aligned for 16 KB memory pages.
 target_link_options(pek PRIVATE -Wl,-z,max-page-size=16384)
 
-# Discord Rich Presence (DISCORD.md). The Discord Social SDK is not in git: download it from the Discord developer portal (the
-# app's Social SDK > Downloads page) and put its files in android/discord_social_sdk/ :
-#   include/discordpp.h          lib/<abi>/lib*.so   (arm64-v8a, armeabi-v7a)
-# When they are missing the app still builds; Settings > Account > Discord then says this build has no Discord support.
-set(DISCORD_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../discord_social_sdk)
-file(GLOB DISCORD_SDK_SO ${DISCORD_SDK_DIR}/lib/${ANDROID_ABI}/*.so)
-if(EXISTS ${DISCORD_SDK_DIR}/include/discordpp.h AND DISCORD_SDK_SO)
-    list(GET DISCORD_SDK_SO 0 DISCORD_SDK_LIB)
-    add_library(discord_sdk SHARED IMPORTED)
-    set_target_properties(discord_sdk PROPERTIES IMPORTED_LOCATION ${DISCORD_SDK_LIB})
-    target_include_directories(pek PRIVATE ${DISCORD_SDK_DIR}/include)
+# Discord Rich Presence (DISCORD.md). The Discord Social SDK is not in git: download it from the Discord developer portal and put
+# its discord_partner_sdk.aar in android/app/libs/. Gradle (build.gradle) then adds it and exposes its headers and libraries as the
+# Prefab package found below. Without the .aar the app still builds; Settings > Account > Discord then says this build has no Discord support.
+find_package(discord_partner_sdk CONFIG QUIET)
+if(discord_partner_sdk_FOUND)
     target_compile_definitions(pek PRIVATE PEK_DISCORD_SDK)
-    target_link_libraries(pek discord_sdk)
-    message(STATUS "PEK: Discord Rich Presence ON (${DISCORD_SDK_LIB})")
+    target_link_libraries(pek discord_partner_sdk::discord_partner_sdk)
+    message(STATUS "PEK: Discord Rich Presence ON")
 else()
-    message(STATUS "PEK: Discord Rich Presence OFF (android/discord_social_sdk not found)")
+    message(STATUS "PEK: Discord Rich Presence OFF (android/app/libs/discord_partner_sdk.aar not found)")
 endif()
 
 # NFS via libnfs: off by default so a libnfs build problem can never break the

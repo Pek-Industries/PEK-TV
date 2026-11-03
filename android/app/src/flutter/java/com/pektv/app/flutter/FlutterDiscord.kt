@@ -14,6 +14,11 @@ import io.flutter.plugin.common.MethodChannel
  */
 class FlutterDiscord(private val activity: Activity) {
     fun register(messenger: BinaryMessenger) {
+        // Discord's Android SDK wants the activity once before its first Client (DiscordSocialSdkInit.setEngineActivity, from its
+        // setup guide). Reflection, so the app still compiles when the SDK's .aar is not there.
+        try {
+            Class.forName("com.discord.socialsdk.DiscordSocialSdkInit").methods.firstOrNull { it.name == "setEngineActivity" }?.invoke(null, activity)
+        } catch (t: Throwable) { /* no SDK in this build */ }
         MethodChannel(messenger, "pek/discord").setMethodCallHandler { call, result ->
             try {
                 when (call.method) {

@@ -42,3 +42,7 @@ plugins/*/data/
 *.jks
 *.keystore
 keystore.b64
+
+# Discord Social SDK (DISCORD.md): downloaded from the Discord developer portal, not committed
+android/app/libs/discord_partner_sdk.aar
+android/discord_social_sdk/

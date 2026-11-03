@@ -68,8 +68,7 @@ static void sdkConnect(const std::string& appId, const std::string& token) {
     const uint64_t id = std::strtoull(appId.c_str(), nullptr, 10);
     if (id == 0 || token.empty()) { g_status = 3; return; }
     if (!g_client) {
-        // TODO(verify): Discord's Android guide may ask for extra setup here (for example handing the SDK the JavaVM or an Android
-        // context) before the first Client is made.
+        // The SDK's Android startup call (DiscordSocialSdkInit.setEngineActivity) is made by FlutterDiscord.kt before this.
         g_client = std::make_shared<discordpp::Client>();
         g_client->SetStatusChangedCallback([](discordpp::Client::Status status, discordpp::Client::Error error, int32_t /*detail*/) {
             if (status == discordpp::Client::Status::Ready) g_status = 2;
@@ -96,12 +95,12 @@ static void sdkUpdate(const std::string& details, const std::string& state, int6
     std::lock_guard<std::recursive_mutex> lk(g_mu);
     if (!g_client || g_status.load() != 2) return;   // not connected (yet): the next event sets it
     discordpp::Activity activity;
-    activity.SetType(discordpp::ActivityTypes::Watching);   // TODO(verify): fall back to Playing if the SDK has no Watching
+    activity.SetType(discordpp::ActivityTypes::Watching);
     activity.SetDetails(details);
     if (!state.empty()) activity.SetState(state);
     if (startMs > 0) {
         discordpp::ActivityTimestamps ts;
-        ts.SetStart(static_cast<uint64_t>(startMs));   // TODO(verify): milliseconds since the epoch, as in Discord's own gateway
+        ts.SetStart(static_cast<uint64_t>(startMs));   // milliseconds since the Unix epoch (checked against discordpp.h)
         if (endMs > startMs) ts.SetEnd(static_cast<uint64_t>(endMs));
         activity.SetTimestamps(ts);
     }

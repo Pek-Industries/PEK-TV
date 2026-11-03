@@ -33,16 +33,17 @@ app ─▶ pek/discord channel ─▶ FlutterDiscord.kt ─▶ NativeDiscord.kt 
 3. **Cloud worker.** Paste the new `cloud/worker.js` and add: **Text** `DISCORD_CLIENT_ID` = the Application ID, **Secret**
    `DISCORD_CLIENT_SECRET` = the Client Secret. Deploy. (The `discord_links` table is created by itself.)
    Until these exist the app says "Discord linking is not turned on in the PEK cloud yet".
-4. **Social SDK for Android.** In the application: Discord Social SDK -> Getting Started (fill in the form to switch it on) ->
-   Downloads -> the Android package. Put its files here (the same idea as `android/libsmb2`):
+4. **Social SDK for Android.** In the application: Discord Social SDK (under **Games** in the portal menu) -> Getting Started (fill in
+   the form to switch it on) -> Downloads -> `DiscordSocialSdk-<version>.zip` (the C++ one). Inside it, take **one file**:
    ```
-   android/discord_social_sdk/include/discordpp.h
-   android/discord_social_sdk/lib/arm64-v8a/<the .so>
-   android/discord_social_sdk/lib/armeabi-v7a/<the .so>     (if the SDK ships 32-bit)
+   discord_social_sdk/lib/release/discord_partner_sdk.aar   ->   android/app/libs/discord_partner_sdk.aar
    ```
-   CMake finds them by itself (`PEK: Discord Rich Presence ON` in the build log) and Gradle packs the `.so` files into the APK.
-   Without them the app builds exactly as before and Settings says "built without Discord support". The CI workflow has to have these
-   files too (a private repo, or a step that fetches them); the SDK is not allowed to be redistributed publicly.
+   (Not the `krisp` files: those are voice noise suppression. Not the `.so` files in the zip's `bin` or `lib` folders: those are
+   desktop.) Gradle adds the `.aar` by itself and passes its headers on through Prefab, exactly as Discord's Android guide says; CMake
+   then prints `PEK: Discord Rich Presence ON`. The `.aar` holds the arm64-v8a, armeabi-v7a, x86 and x86_64 builds, so both of your CPU
+   builds get it. Without the file the app builds exactly as before and Settings says "built without Discord support".
+   The file is listed in `.gitignore`: read Discord's terms before committing it. CI needs the file too (a private repo, or a step
+   that fetches it from somewhere private).
 5. Build and install.
 
 ## Tests
@@ -50,17 +51,29 @@ app ─▶ pek/discord channel ─▶ FlutterDiscord.kt ─▶ NativeDiscord.kt 
 `sh tools/cloud-tests/run.sh` runs the link flow (start, approve, one-time pickup, expiry, refresh, revoke, rate limit) against a
 real SQLite database with a fake Discord. It passes.
 
+## Build changes this makes
+
+- `android/app/build.gradle`: Prefab on, and the `.aar` as a dependency only if `android/app/libs/discord_partner_sdk.aar` exists.
+- `AndroidManifest.xml`: the SDK's `.aar` adds voice chat permissions (microphone, Bluetooth, audio settings) and a voice service.
+  PEK TV only shows presence, so they are removed again (`tools:node="remove"`); `FOREGROUND_SERVICE` and
+  `FOREGROUND_SERVICE_MEDIA_PLAYBACK` stay because the app declares them itself.
+- `FlutterDiscord.kt` makes the SDK's one startup call (`DiscordSocialSdkInit.setEngineActivity`).
+- The app grows by about the size of the SDK's native library (roughly 9 MB per CPU build). Krisp is left out.
+- PKCE is not needed: Discord only requires it for custom-scheme deep links, and this flow redirects to the cloud worker over https.
+
+## Worth knowing
+
+On Android, Discord says presence can also be shown **without linking** when the Discord app is installed and signed in on the same
+phone. A later option for phones; the link flow stays because it also works on TVs, which have no Discord app.
+
 ## NOT verified (I had no Flutter SDK, no Android SDK and no Discord SDK here)
 
 - **The Dart code was never compiled or analysed.** Run `flutter analyze` first.
-- **The `discordpp` calls in `discord_presence.cpp`** were written from Discord's public docs and only syntax-checked against a mock of
-  that API. Check against the real `discordpp.h`: the names and signatures, whether `ActivityTypes::Watching` exists (else use
-  Playing), whether timestamps are milliseconds, and whether Discord's Android guide asks for an init call (JavaVM / context) before
-  the first `Client`. Every such spot is marked `TODO(verify)`.
-- **Android TV:** the Social SDK documents Android 7.0+ but I found nothing that says leanback TV boxes are supported. Try a real box
+- **The `discordpp` calls in `discord_presence.cpp`** now compile against the real `discordpp.h` (1.10.19337) and use its documented
+  names, `Watching` and millisecond timestamps. Not run against Discord itself.
+- **Android TV:** the Social SDK documents Android 7.0+ but nothing I found says leanback TV boxes are supported. Try a real box
   before relying on the QR flow.
-- **A phone opening the link:** the link is on the worker's address, so it opens in the browser first and then goes to Discord; whether
-  the Discord app takes over depends on the phone.
+- **A phone opening the link:** the link is on the worker's address, so it opens in the browser first and then goes to Discord.
 - **Presence while the app is in the background:** the connection is made when playback starts and cleared on stop; what Android does
   to it when the app is paused is untested.
 - No poster / artwork is sent yet (Discord needs an uploaded asset or a URL it accepts).

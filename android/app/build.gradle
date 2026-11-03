@@ -21,6 +21,11 @@ android {
     compileSdk 36
     ndkVersion '28.2.13676358'
 
+    // The Discord Social SDK's .aar ships its C++ headers as a Prefab package (DISCORD.md). Harmless when the .aar is not there.
+    buildFeatures {
+        prefab true
+    }
+
     defaultConfig {
         applicationId 'com.pektv.app'
         minSdk 26
@@ -124,13 +129,14 @@ if (flutterOn) {
     android.sourceSets.main.java.srcDir 'src/flutter/java'
 }
 
-// Discord Social SDK (DISCORD.md): its .so files ship in the APK when android/discord_social_sdk/lib/<abi>/ exists.
-if (new File(rootDir, 'discord_social_sdk/lib').exists()) android.sourceSets.main.jniLibs.srcDir new File(rootDir, 'discord_social_sdk/lib')
-
 dependencies {
     if (flutterOn) {
         implementation project(':flutter')
     }
     // mpv engine: the app's only video player (decoding + rendering)
     implementation 'dev.jdtech.mpv:libmpv:1.0.0'
+    // Discord Rich Presence (DISCORD.md): only when the SDK's .aar was put in android/app/libs/ (it is not in git).
+    if (file('libs/discord_partner_sdk.aar').exists()) {
+        implementation files('libs/discord_partner_sdk.aar')
+    }
 }
