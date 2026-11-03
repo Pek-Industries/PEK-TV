@@ -1562,7 +1562,7 @@ class _SearchBarState extends State<_SearchBar> {
         Icon(Icons.search_rounded, size: 1.3 * rem, color: t.textMuted),
         SizedBox(width: 0.6 * rem),
         Expanded(
-          child: TextField(
+          child: DpadEscape(controller: widget.controller, child: TextField(
             controller: widget.controller,
             autocorrect: false,
             enableSuggestions: false,
@@ -1581,7 +1581,7 @@ class _SearchBarState extends State<_SearchBar> {
               hintText: widget.hint,
               hintStyle: TextStyle(color: t.textMuted.withAlpha(190), fontSize: 0.95 * rem),
             ),
-          ),
+          )),
         ),
         if (!empty)
           IconButton(

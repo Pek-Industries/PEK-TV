@@ -1,3 +1,4 @@
+import 'fields.dart' show DpadEscape;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -52,14 +53,14 @@ class _NameDialogState extends State<_NameDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
         title: Text(widget.title),
-        content: TextField(
+        content: DpadEscape(controller: _c, child: TextField(
           controller: _c,
           autofocus: true,
           maxLength: 80,
           textInputAction: TextInputAction.done,
           onSubmitted: (v) => Navigator.pop(context, v.trim()),
           decoration: const InputDecoration(hintText: 'Playlist name'),
-        ),
+        )),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.pop(context, _c.text.trim()), child: Text(widget.action)),

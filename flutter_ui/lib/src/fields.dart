@@ -6,7 +6,12 @@ import 'widgets.dart' show PekFocusable;
 import 'suggest.dart' show SuggestAnchor;
 
 /// A text box in the app's look (the web UI's `ui.textInput`).
-class PekField extends StatelessWidget {
+///
+/// On a phone it is a plain text box. On a TV (remote control) the box is first just a thing the focus can rest on, like a
+/// button: moving through a form with Up / Down passes over it without opening the on-screen keyboard (which used to pop up on
+/// every box and take the arrow keys, so the focus never came out). OK / Enter starts typing; Done on the keyboard, Up / Down
+/// (see [DpadEscape]) or moving the focus away ends it.
+class PekField extends StatefulWidget {
   const PekField({super.key, required this.label, required this.controller, this.hint, this.obscure = false, this.onSubmitted, this.autofocus = false, this.keyboardType, this.onChanged, this.enabled = true});
   final String label;
   final TextEditingController controller;
@@ -19,43 +24,118 @@ class PekField extends StatelessWidget {
   final bool enabled; // false: shown greyed out and cannot be edited (the email once its code has been sent)
 
   @override
+  State<PekField> createState() => _PekFieldState();
+}
+
+class _PekFieldState extends State<PekField> {
+  final FocusNode _shell = FocusNode(debugLabel: 'PekField shell'); // what the remote lands on (TV only)
+  final FocusNode _edit = FocusNode(debugLabel: 'PekField text');
+  bool _editing = false;
+
+  static bool _select(LogicalKeyboardKey k) =>
+      k == LogicalKeyboardKey.select || k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter || k == LogicalKeyboardKey.gameButtonA;
+
+  @override
+  void initState() {
+    super.initState();
+    _edit.addListener(() {
+      // The focus left the text (Up / Down, a click elsewhere ...): typing is over, the keyboard goes with it.
+      if (!_edit.hasFocus && _editing && mounted) setState(() => _editing = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _shell.dispose();
+    _edit.dispose();
+    super.dispose();
+  }
+
+  void _startEditing() {
+    if (!widget.enabled || _editing) return;
+    setState(() => _editing = true);
+    final c = widget.controller;
+    c.selection = TextSelection.collapsed(offset: c.text.length);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editing) _edit.requestFocus();
+    });
+  }
+
+  /// Typing is over: back to the resting focus on the box (the keyboard closes because the text lost the focus).
+  void _stopEditing() {
+    if (!_editing) return;
+    setState(() => _editing = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _shell.requestFocus();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
+    final tv = p.isTv;
     OutlineInputBorder border(Color c) => OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: c == Colors.transparent ? BorderSide.none : BorderSide(color: c));
-    return Padding(
-      padding: EdgeInsets.only(bottom: 0.75 * p.rem),
-      // A text box keeps the arrow keys for its caret, so on a remote the focus went in and never came out (the GitHub install
-      // box, the library search ...). DpadEscape lets Up / Down (and Left / Right at the ends) move on.
-      child: DpadEscape(
-        controller: controller,
-        child: TextField(
-          controller: controller,
-          obscureText: obscure,
-          autofocus: autofocus,
-          enabled: enabled,
+
+    Widget field(bool ring) => TextField(
+          controller: widget.controller,
+          focusNode: _edit,
+          obscureText: widget.obscure,
+          autofocus: widget.autofocus && !tv, // on a TV the resting focus (the shell) takes the autofocus, not the keyboard
+          canRequestFocus: !tv || _editing,
+          enabled: widget.enabled,
           autocorrect: false,
           enableSuggestions: false,
-          keyboardType: keyboardType,
-          onChanged: onChanged,
+          keyboardType: widget.keyboardType,
+          textInputAction: tv ? TextInputAction.done : null,
+          onChanged: widget.onChanged,
           onTapOutside: (_) {}, // a tap on a suggestion under the box must not drop the focus first
-          onSubmitted: onSubmitted == null ? null : (_) => onSubmitted!(),
+          onSubmitted: (_) {
+            if (tv) _stopEditing();
+            widget.onSubmitted?.call();
+          },
           style: TextStyle(color: t.text),
           decoration: InputDecoration(
-            labelText: label,
-            hintText: hint,
+            labelText: widget.label,
+            hintText: widget.hint,
             labelStyle: TextStyle(color: t.textMuted),
             hintStyle: TextStyle(color: t.textMuted.withAlpha(180)),
             filled: true,
             fillColor: t.surface,
-            enabledBorder: border(Colors.transparent),
+            enabledBorder: border(ring ? t.text.withAlpha(150) : Colors.transparent),
             disabledBorder: border(Colors.transparent),
-            focusedBorder: border(t.text.withAlpha(70)),
+            focusedBorder: border(t.text.withAlpha(ring && !_editing ? 150 : 70)),
             border: border(Colors.transparent),
           ),
+        );
+
+    Widget box;
+    if (!tv) {
+      // A text box keeps the arrow keys for its caret, so on a remote the focus went in and never came out (the GitHub install
+      // box, the library search ...). DpadEscape lets Up / Down (and Left / Right at the ends) move on.
+      box = DpadEscape(controller: widget.controller, child: field(false));
+    } else {
+      box = Focus(
+        focusNode: _shell,
+        autofocus: widget.autofocus,
+        canRequestFocus: widget.enabled,
+        onKeyEvent: (node, KeyEvent e) {
+          if (_editing || e is! KeyDownEvent || !_select(e.logicalKey)) return KeyEventResult.ignored;
+          _startEditing();
+          return KeyEventResult.handled;
+        },
+        child: ListenableBuilder(
+          listenable: _shell,
+          builder: (context, _) => GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _startEditing,
+            // While it is only resting, touches go to the tap above; while typing, to the text (caret, selection).
+            child: IgnorePointer(ignoring: !_editing, child: DpadEscape(controller: widget.controller, child: field(_shell.hasFocus))),
+          ),
         ),
-      ),
-    );
+      );
+    }
+    return Padding(padding: EdgeInsets.only(bottom: 0.75 * p.rem), child: box);
   }
 }
 

@@ -13,6 +13,7 @@ import 'api.dart';
 import 'app_update.dart';
 import 'art_cache.dart';
 import 'common.dart';
+import 'fields.dart' show DpadEscape;
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -527,7 +528,9 @@ class _DevConsolePageState extends State<DevConsolePage> {
                   IconButton(tooltip: 'Older command', icon: const Icon(Icons.keyboard_arrow_up), onPressed: _older),
                   IconButton(tooltip: 'Newer command', icon: const Icon(Icons.keyboard_arrow_down), onPressed: _newer),
                   Expanded(
-                    child: TextField(
+                    child: DpadEscape(
+                      controller: _input,
+                      child: TextField(
                       controller: _input,
                       autocorrect: false,
                       enableSuggestions: false,
@@ -535,6 +538,7 @@ class _DevConsolePageState extends State<DevConsolePage> {
                       style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
                       decoration: const InputDecoration(hintText: 'command (type help)', prefixText: '\$ ', isDense: true),
                       onSubmitted: _submit,
+                    ),
                     ),
                   ),
                   const SizedBox(width: 6),

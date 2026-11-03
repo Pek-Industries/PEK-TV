@@ -518,7 +518,7 @@ class _ColorPickerState extends State<_ColorPicker> {
         slider('Light', _hsv.value, 1, (v) => _set(_hsv.withValue(v)), track: [Colors.black, HSVColor.fromAHSV(1, _hsv.hue, _hsv.saturation, 1).toColor()]),
         if (widget.alpha) slider('Opacity', _hsv.alpha, 1, (v) => _set(_hsv.withAlpha(v))),
         SizedBox(height: 0.4 * rem),
-        TextField(
+        DpadEscape(controller: _hex, child: TextField(
           controller: _hex,
           autocorrect: false,
           enableSuggestions: false,
@@ -526,7 +526,7 @@ class _ColorPickerState extends State<_ColorPicker> {
           onChanged: _typed,
           style: TextStyle(color: t.text),
           decoration: InputDecoration(labelText: 'Code', counterText: '', labelStyle: TextStyle(color: t.textMuted), hintText: widget.alpha ? '#rrggbbaa' : '#rrggbb'),
-        ),
+        )),
         if (_error != null) Padding(padding: EdgeInsets.only(top: 0.5 * rem), child: Text(_error!, style: const TextStyle(color: Color(0xFFFF6B6B)))),
         SizedBox(height: 1.1 * rem),
         Wrap(spacing: 0.75 * rem, runSpacing: 0.75 * rem, children: [

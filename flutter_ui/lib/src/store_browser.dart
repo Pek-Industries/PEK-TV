@@ -1,3 +1,4 @@
+import 'fields.dart' show DpadEscape;
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -690,7 +691,7 @@ class _StoreBrowserState extends State<StoreBrowser> {
         if (open != _sugOpen) setState(() => _sugOpen = open);
       },
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        TextField(
+        DpadEscape(controller: _q, child: TextField(
           controller: _q,
           focusNode: _qFocus,
           autocorrect: false,
@@ -724,7 +725,7 @@ class _StoreBrowserState extends State<StoreBrowser> {
             focusedBorder: border(t.borderFocus, p.isTv ? 0.2 * rem : 1.5),
             border: border(t.border),
           ),
-        ),
+        )),
         if (sugs.isNotEmpty)
           Container(
             margin: EdgeInsets.only(top: 0.5 * rem),
