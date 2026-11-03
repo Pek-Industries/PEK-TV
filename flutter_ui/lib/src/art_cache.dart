@@ -26,10 +26,25 @@ class ArtCache {
   static Future<void>? _ready;
   // Own HTTP client: a request that times out is really cancelled (abort), so a stuck download can't keep a connection
   // busy and slow down the pictures that come after it. The old shared client left those requests running.
+  // Connections to the picture server are kept for 90 s (was 10 s): after a short pause in browsing, the next screenful used to
+  // pay a fresh DNS + TLS handshake on every connection again, which is what made posters crawl while the text was already there.
   static final HttpClient _http = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 8)
-    ..maxConnectionsPerHost = 12
-    ..idleTimeout = const Duration(seconds: 10);
+    ..connectionTimeout = const Duration(seconds: 5)
+    ..maxConnectionsPerHost = 16
+    ..idleTimeout = const Duration(seconds: 90);
+
+  /// Opens a few connections to the TMDb picture server up front (DNS + TLS), so the first posters do not wait for that.
+  static Future<void> _warm() async {
+    Future<void> one() async {
+      try {
+        final r = await _http.getUrl(Uri.parse('https://image.tmdb.org/')).timeout(const Duration(seconds: 6));
+        final resp = await r.close().timeout(const Duration(seconds: 6));
+        await resp.drain<void>().timeout(const Duration(seconds: 6));
+      } catch (_) {}
+    }
+
+    await Future.wait([one(), one(), one(), one()]);
+  }
 
   /// Addresses whose file is known to exist, so a grid that scrolls back does not wait on a disk check again.
   static final Map<String, File> _known = HashMap();
@@ -106,6 +121,7 @@ class ArtCache {
       _dataDir = await Directory('${files.path}/pek_lists').create(recursive: true);
       _imgDir = await Directory('${cache.path}/pek_art').create(recursive: true);
       unawaited(_prune());
+      unawaited(_warm());
     } catch (_) {
       // No writable folder: everything below quietly does nothing and the app loads pictures from the network as before.
     }
@@ -205,7 +221,9 @@ class ArtCache {
       }
     } catch (_) {}
     try {
+      final sw = Stopwatch()..start();
       final r = await _get(url, timeout);
+      if (sw.elapsedMilliseconds > 2000) debugPrint('[art] slow picture: ${sw.elapsedMilliseconds} ms (${r == null ? 'failed' : 'ok'}) $url');
       if (r == null) return null;
       // Only "it is not there" is final. 403 / 429 / 5xx mean a busy or rate-limiting server: ask again later.
       if (r.status == 404 || r.status == 410) _gone.add(url);
@@ -220,27 +238,64 @@ class ArtCache {
     }
   }
 
+  /// If a download has not finished after this long, the same picture is also asked for on a second, fresh connection and
+  /// whichever finishes first wins (the other is cancelled). A stalled connection / slow handshake / slow CDN edge used to
+  /// hold the picture for the whole 10 s before the retry even started.
+  static const _hedgeAfter = Duration(milliseconds: 2500);
+
   /// One download that is cut off for real when [timeout] passes. null = it failed or timed out.
-  static Future<({int status, Uint8List bytes})?> _get(String url, Duration timeout) async {
-    HttpClientRequest? req;
-    try {
-      return await (() async {
+  static Future<({int status, Uint8List bytes})?> _get(String url, Duration timeout) {
+    final done = Completer<({int status, Uint8List bytes})?>();
+    final live = <HttpClientRequest>{};
+    var running = 0;
+    Timer? hedge;
+    Timer? limit;
+
+    void finish(({int status, Uint8List bytes})? r) {
+      if (done.isCompleted) return;
+      hedge?.cancel();
+      limit?.cancel();
+      for (final q in live) {
+        try {
+          q.abort();
+        } catch (_) {}
+      }
+      live.clear();
+      done.complete(r);
+    }
+
+    Future<void> attempt() async {
+      running++;
+      HttpClientRequest? req;
+      try {
         req = await _http.getUrl(Uri.parse(url));
-        req!.headers.set('accept', 'image/*');
-        final resp = await req!.close();
+        if (done.isCompleted) {
+          req.abort();
+          return;
+        }
+        live.add(req);
+        req.headers.set('accept', 'image/*');
+        final resp = await req.close();
         final b = BytesBuilder(copy: false);
         await for (final c in resp) {
           b.add(c);
         }
-        return (status: resp.statusCode, bytes: b.takeBytes());
-      })()
-          .timeout(timeout);
-    } catch (_) {
-      try {
-        req?.abort();
-      } catch (_) {}
-      return null;
+        live.remove(req); // finished normally: its connection goes back to the pool and must not be aborted
+        finish((status: resp.statusCode, bytes: b.takeBytes()));
+      } catch (_) {
+        if (req != null) live.remove(req);
+      } finally {
+        running--;
+        if (running == 0 && !(hedge?.isActive ?? false)) finish(null);
+      }
     }
+
+    hedge = Timer(_hedgeAfter, () {
+      if (!done.isCompleted) unawaited(attempt());
+    });
+    limit = Timer(timeout, () => finish(null));
+    unawaited(attempt());
+    return done.future;
   }
 
   /// Bytes the saved pictures take.

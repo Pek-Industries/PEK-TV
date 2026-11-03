@@ -1,6 +1,8 @@
 // Android replacement for main() in core.cpp (core.cpp itself is NOT
 // compiled into the app yet because it embeds Python).
 #include <jni.h>
+#include <android/log.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <atomic>
@@ -15,6 +17,40 @@
 
 static MediaScanner* g_scanner = nullptr;
 static std::atomic<bool> g_started{false};
+
+// The C++ server prints with std::cout. Android drops that, so it is sent into a pipe here and a thread copies every line to
+// the system log (tag PEKServer, see `logcat`) and to <root>/backend.log, which the developer console in the app shows
+// (flutter_ui/lib/src/dev_console.dart). The file starts over at each launch and again when it passes 2 MB.
+static void captureStdio(const std::string& file) {
+    int fds[2];
+    if (pipe(fds) != 0) return;
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+    if (dup2(fds[1], STDOUT_FILENO) < 0 || dup2(fds[1], STDERR_FILENO) < 0) { close(fds[0]); close(fds[1]); return; }
+    close(fds[1]);
+    const int rd = fds[0];
+    std::thread([rd, file]() {
+        FILE* out = fopen(file.c_str(), "w");
+        size_t written = 0;
+        std::string line;
+        char buf[2048];
+        ssize_t n;
+        while ((n = read(rd, buf, sizeof buf)) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                if (buf[i] != '\n') { line += buf[i]; continue; }
+                __android_log_write(ANDROID_LOG_INFO, "PEKServer", line.c_str());
+                if (out) {
+                    fputs(line.c_str(), out);
+                    fputc('\n', out);
+                    fflush(out);
+                    written += line.size() + 1;
+                    if (written > 2u * 1024 * 1024) { fclose(out); out = fopen(file.c_str(), "w"); written = 0; }
+                }
+                line.clear();
+            }
+        }
+    }).detach();
+}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot) {
@@ -35,6 +71,8 @@ Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot) 
         std::string pem = root + "/cacert.pem";
         if (access(pem.c_str(), R_OK) == 0) setenv("SSL_CERT_FILE", pem.c_str(), 1);
     }
+
+    captureStdio(root + "/backend.log");   // before anything prints
 
     std::string plugins = root + "/plugins";
     std::string skins   = root + "/skins";

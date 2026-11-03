@@ -121,9 +121,9 @@ class Api {
   }
 
   static final Map<String, Future<Details>> _details = {};
-  static final _Pool _pool = _Pool(6);
+  static final _Pool _pool = _Pool(10);
 
-  /// Poster + synopsis for a movie. Cached, and at most 6 lookups run at once so a big grid does not flood the box.
+  /// Poster + synopsis for a movie. Cached, and at most 10 lookups run at once so a big grid does not flood the box.
   /// Waiting lookups run newest first: the cards on screen now were built last, so they are served before the ones that were
   /// scrolled past.
   static Future<Details> movieDetails(String id) => _cachedDetails('m:$id', () async {

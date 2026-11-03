@@ -6,6 +6,7 @@ import 'activity.dart';
 import 'api.dart';
 import 'app_update.dart';
 import 'common.dart';
+import 'dev_console.dart';
 import 'fields.dart' show PekDropdown;
 import 'mpv.dart';
 import 'plugin_github.dart' show PekGithub;
@@ -583,7 +584,8 @@ class _UpdateSectionState extends State<UpdateSection> {
       title: 'App updates',
       hint: 'PEK TV checks at every start. Tap to check now.',
       children: [
-        if (_version.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: Text('Installed version: $_version', style: TextStyle(color: p.tokens.textMuted))),
+        // 7 taps here turn on developer mode (dev_console.dart).
+        Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: DevUnlockTap(child: Text('Installed version: ${_version.isEmpty ? 'unknown' : _version}', style: TextStyle(color: p.tokens.textMuted)))),
         if (_result.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.5 * p.rem), child: Text(_result, style: TextStyle(color: p.tokens.text, height: 1.35))),
         Align(alignment: Alignment.centerLeft, child: PekButton(label: _busy ? 'Checking\u2026' : 'Check for updates', onTap: _busy ? null : _check)),
       ],

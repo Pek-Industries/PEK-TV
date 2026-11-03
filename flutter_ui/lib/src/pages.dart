@@ -30,6 +30,7 @@ import 'tv_mode.dart';
 import 'tokens.dart';
 import 'widgets.dart';
 import 'art_cache.dart';
+import 'dev_console.dart';
 
 // ====================================================================== Favorites
 
@@ -325,7 +326,7 @@ class SettingsPage extends StatelessWidget {
         row('Playback', 'Subtitles, skip intro and online music', Icons.play_circle_outline, () => const _SettingsList(children: [SubtitleSection(), SkipSection(), MusicOnlineSection()])),
       if (!music) row('Plugins', 'Installing from GitHub and plugin posters', Icons.extension_outlined, () => const _SettingsList(children: [GithubInstallSection(), PluginPostersSection()])),
       row('Advanced', music ? 'TV mode and size, audio output, storage, app updates' : 'TV mode and size, video and audio output, storage, app updates', Icons.tune,
-          () => _SettingsList(children: [const TvModeSection(), if (!music) const VideoOutputSection(), const AudioOutputSection(), const StorageSection(), const UpdateSection()])),
+          () => _SettingsList(children: [const TvModeSection(), if (!music) const VideoOutputSection(), const AudioOutputSection(), const StorageSection(), const UpdateSection(), const DevConsoleSection()])),
       row('App', 'Exit PEK TV', Icons.power_settings_new, () => const _ExitSettings()),
     ]);
   }

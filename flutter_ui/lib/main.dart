@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 
 import 'src/deep_link.dart';
+import 'src/dev_console.dart';
 import 'src/activity.dart';
 import 'src/app_update.dart';
 import 'src/api.dart';
@@ -23,16 +24,31 @@ import 'src/tokens.dart';
 import 'src/whats_new.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // The same phone / TV test the web UI used for html.pek-tv; Settings > TV mode (tv_mode.dart) can force the look on or off.
-  // Asked right away so it runs alongside the storage load instead of after it.
-  final phoneAsk = PekPlayer.isPhone();
-  await Store.init();
-  Profiles.load();
-  MusicController.instance.restore(); // the song the active profile was playing when the app closed
-  Net.start(); // the green / red dot and offline mode (net.js)
-  final phone = await phoneAsk;
-  runApp(PekApp(isPhone: phone));
+  // Everything runs in one zone so the developer console (dev_console.dart) sees what the app prints and the errors nothing else
+  // catches. This costs nothing while developer mode is off: lines only go into a small buffer.
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      DevConsole.installErrorHooks();
+      // The same phone / TV test the web UI used for html.pek-tv; Settings > TV mode (tv_mode.dart) can force the look on or off.
+      // Asked right away so it runs alongside the storage load instead of after it.
+      final phoneAsk = PekPlayer.isPhone();
+      await Store.init();
+      DevConsole.init();
+      Profiles.load();
+      MusicController.instance.restore(); // the song the active profile was playing when the app closed
+      Net.start(); // the green / red dot and offline mode (net.js)
+      final phone = await phoneAsk;
+      runApp(PekApp(isPhone: phone));
+    },
+    (error, stack) => DevConsole.add('[uncaught] $error\n$stack'),
+    zoneSpecification: ZoneSpecification(
+      print: (self, parent, zone, line) {
+        DevConsole.add(line);
+        parent.print(zone, line);
+      },
+    ),
+  );
 }
 
 class PekApp extends StatelessWidget {
