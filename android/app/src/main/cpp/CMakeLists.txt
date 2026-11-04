@@ -119,7 +119,7 @@ else()
 endif()
 
 # Torrent streaming via libtorrent-rasterbar. OFF by default so a libtorrent build problem can
-# never break the app: the workflow turns it on (-PhesperTorrent=true -> PEK_TORRENT=ON) after
+# never break the app: the workflow turns it on (-PpekTorrent=true -> PEK_TORRENT=ON) after
 # cloning android/libtorrent and unpacking the Boost headers into android/boost, and retries the
 # build without it if that fails. Without it the torrent routes still exist and report
 # "not available"; the release search (Torznab) works either way.

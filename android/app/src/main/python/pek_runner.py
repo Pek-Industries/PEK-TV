@@ -13,10 +13,10 @@ sys.dont_write_bytecode = True  # no __pycache__ clutter inside plugins/
 
 
 def _run_module(module_name, folder):
-    # hesper_guard decides whether this plugin may run (bundled/trusted, or manifest +
-    # static scan + runtime backstop) and runs it. See hesper_guard.py.
-    import hesper_guard
-    hesper_guard.run_plugin(module_name, folder)
+    # pek_guard decides whether this plugin may run (bundled/trusted, or manifest +
+    # static scan + runtime backstop) and runs it. See pek_guard.py.
+    import pek_guard
+    pek_guard.run_plugin(module_name, folder)
 
 
 PLUGINS_DIR = ""   # read by pek_flutter (the Flutter UI's plugin screens) to find plugins/<id>/screen.py

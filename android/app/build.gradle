@@ -47,7 +47,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags '-std=c++17'
-                // -PpekTorrent=true or the older -PhesperTorrent=true (set by the workflow) builds in torrent streaming.
+                // -PpekTorrent=true or the older -PhesperTorrent=true (still accepted) builds in torrent streaming.
                 arguments "-DPEK_TORRENT=${((project.hasProperty('pekTorrent') && project.property('pekTorrent') == 'true') || (project.hasProperty('hesperTorrent') && project.property('hesperTorrent') == 'true')) ? 'ON' : 'OFF'}"
             }
         }
@@ -103,21 +103,21 @@ chaquopy {
     }
 }
 
-// hesper_guard.py has ONE source of truth now: backend/hesper_guard.py (the same file the
+// pek_guard.py has ONE source of truth now: backend/pek_guard.py (the same file the
 // C++/Termux build loads, see backend/core.cpp). It used to be hand-copied into this Python
 // source set and the two drifted apart; this task copies the real file in before every build
 // instead, so there is nothing left to keep in sync by hand. The copy lands in
-// src/main/python/hesper_guard.py, which is .gitignore'd (see android/.gitignore) so no one
+// src/main/python/pek_guard.py, which is .gitignore'd (see android/.gitignore) so no one
 // commits a second copy by accident.
-tasks.register('copyHesperGuard', Copy) {
-    from new File(rootDir, '../backend/hesper_guard.py')
+tasks.register('copyPekGuard', Copy) {
+    from new File(rootDir, '../backend/pek_guard.py')
     into 'src/main/python'
 }
-preBuild.dependsOn copyHesperGuard
+preBuild.dependsOn copyPekGuard
 // Gradle 8.14 validates that any task reading src/main/python declares the task that writes it.
 // Chaquopy's merge<Variant>PythonSources reads that folder, so it must run after the copy.
 tasks.matching { it.name ==~ /merge.*PythonSources/ }.configureEach {
-    dependsOn 'copyHesperGuard'
+    dependsOn 'copyPekGuard'
 }
 
 // Branding artwork (launcher icon, TV banner, splash videos) lives in the repo's top-level assets/ folder.

@@ -3,7 +3,7 @@ reads (pek_host.read_bundled_json), the 'live' permission (pek_ui.live_play, the
 
 Run from the repository root:   python3 tools/test_cable_shot.py
 
-Nothing touches the network: hesper_guard's connection class is replaced by a fake guide server, so the real policy code (host
+Nothing touches the network: pek_guard's connection class is replaced by a fake guide server, so the real policy code (host
 list, permissions, redirects, size caps) still runs.
 """
 import gzip
@@ -16,7 +16,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "android", "app", "src", "main", "python"))
-import hesper_guard as g          # noqa: E402
+import pek_guard as g          # noqa: E402
 import pek_epg                    # noqa: E402
 import pek_flutter as pf          # noqa: E402
 

@@ -91,7 +91,7 @@ object Boot {
         Thread {
             try {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(ctx))
-                Python.getInstance().getModule("hesper_runner")
+                Python.getInstance().getModule("pek_runner")
                     .callAttr("run_all", pluginsDir.absolutePath)
             } catch (e: Throwable) {
                 Log.e("PEK", "Python plugins failed", e)

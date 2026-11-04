@@ -1,7 +1,7 @@
 """PEK plugin guard: decides whether a plugin's Python backend may run, and how.
 
 Used by the C++ core (backend/core.cpp) and by the Android runner
-(hesper_runner.py). Both call run_plugin().
+(pek_runner.py). Both call run_plugin().
 
 Two tiers
 ---------
@@ -684,7 +684,7 @@ def _where():
         f = sys._getframe(2)
         while f is not None and len(out) < 4:
             name = os.path.basename(f.f_code.co_filename)
-            if name != "hesper_guard.py":
+            if name != "pek_guard.py":
                 out.append("%s:%d %s" % (name, f.f_lineno, f.f_code.co_name))
             f = f.f_back
     except Exception:  # noqa: BLE001

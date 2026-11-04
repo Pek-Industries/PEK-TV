@@ -471,14 +471,18 @@ void PekServer::start(int port, const std::string& plugins_dir,
         }
 
         if (remoteOpen && !fromLoopback) {
-            const std::string viaHeader = req.get_header_value("X-Hesper-Token");
-            const std::string viaCookie = cookieValue(req.get_header_value("Cookie"), "hesper_token");
-            if (constantTimeEquals(viaHeader, token) || constantTimeEquals(viaCookie, token))
+            const std::string viaHeader = req.get_header_value("X-Pek-Token");
+            const std::string viaCookie = cookieValue(req.get_header_value("Cookie"), "pek_token");
+            // old names (before the rename), still honoured so a saved cookie or script keeps working
+            const std::string viaOldHeader = req.get_header_value("X-Hesper-Token");
+            const std::string viaOldCookie = cookieValue(req.get_header_value("Cookie"), "hesper_token");
+            if (constantTimeEquals(viaHeader, token) || constantTimeEquals(viaCookie, token) ||
+                constantTimeEquals(viaOldHeader, token) || constantTimeEquals(viaOldCookie, token))
                 return httplib::Server::HandlerResponse::Unhandled;
 
             // First visit with ?token=...: remember it in a cookie, then drop it from the URL.
             if (req.has_param("token") && constantTimeEquals(req.get_param_value("token"), token)) {
-                res.set_header("Set-Cookie", "hesper_token=" + token + "; Path=/; HttpOnly; SameSite=Strict");
+                res.set_header("Set-Cookie", "pek_token=" + token + "; Path=/; HttpOnly; SameSite=Strict");
                 res.set_redirect(req.path.empty() ? "/" : req.path);
                 return httplib::Server::HandlerResponse::Handled;
             }

@@ -8,6 +8,8 @@ openssl/
 app/src/main/assets/hesper/
 libsmb2/
 libnfs/
-# copied in at build time from backend/hesper_guard.py (single source of truth, see
-# app/build.gradle's copyHesperGuard task) - never commit a copy here again
+# copied in at build time from backend/pek_guard.py (single source of truth, see
+# app/build.gradle's copyPekGuard task) - never commit a copy here again
+app/src/main/python/pek_guard.py
+# stale copy from before the rename
 app/src/main/python/hesper_guard.py

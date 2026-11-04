@@ -1,7 +1,7 @@
 """pek_epg: the XMLTV (TV guide) reader behind pek_host.fetch_epg().
 
-This is HOST code (trusted, like hesper_guard.py), not plugin code. A plugin with the "epg" permission asks
-pek_host.fetch_epg(url, ...) for one guide file; hesper_guard downloads it (only from a host in the plugin's
+This is HOST code (trusted, like pek_guard.py), not plugin code. A plugin with the "epg" permission asks
+pek_host.fetch_epg(url, ...) for one guide file; pek_guard downloads it (only from a host in the plugin's
 permissions.network, public addresses only, redirects re-checked) and hands the text to parse() here.
 
 Why it is host code and not something every plugin does for itself:

@@ -9,7 +9,7 @@ Flutter UI (plugin_ui.dart)  --'pek/plugins' channel-->  FlutterHostActivity.kt
         ^                                                         |  Chaquopy (same process)
         |  JSON tree + effects                                    v
         +-------------------------------------------  python/pek_flutter.py  -->  plugins/<id>/screen.py
-                                                       (hesper_guard: manifest, scan, pek_host, audit hook, time limits)
+                                                       (pek_guard: manifest, scan, pek_host, audit hook, time limits)
 ```
 
 It is the same idea as the JS side: the plugin can only describe a screen and ask for a few things; it never runs code in the app.
@@ -346,7 +346,7 @@ What it needed from the host, all in `pek_ui`:
 - `android/app/src/main/python/pek_epg.py` - the XMLTV reader behind `fetch_epg` (host code)
 - `flutter_ui/lib/src/live_tv.dart` - live TV in the player: the plugin client, the guide panel, the guide tab
 - `android/app/src/main/python/pek_providers.py` - streaming services (generated from `tools/providers.json`; `tools/sync_providers.js` also feeds `FlutterHostActivity.kt`)
-- `android/app/src/main/python/hesper_guard.py` (+ `backend/` copy) - allows `import pek_ui`; `hesper_runner.py` remembers the plugins folder
+- `android/app/src/main/python/pek_guard.py` (+ `backend/` copy) - allows `import pek_ui`; `pek_runner.py` remembers the plugins folder
 - `android/app/src/flutter/.../FlutterHostActivity.kt` - `pek/plugins` channel (`call`, `openUrl`)
 - `flutter_ui/lib/src/plugin_host.dart` - Dart client, host allow-list for pictures, TV Back hook
 - `flutter_ui/lib/src/plugin_ui.dart` - the renderer, effects, polling, "Saved from plugins"

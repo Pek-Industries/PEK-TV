@@ -22,7 +22,7 @@ import kotlin.math.sin
  */
 class NavSound {
     private val sr = 48000
-    private val thread = HandlerThread("hesper-navsound", Process.THREAD_PRIORITY_URGENT_AUDIO).apply { start() }
+    private val thread = HandlerThread("pek-navsound", Process.THREAD_PRIORITY_URGENT_AUDIO).apply { start() }
     private val handler = Handler(thread.looper)
     private val tracks = arrayOfNulls<AudioTrack>(2)      // 0 = tick, 1 = select
     @Volatile private var ready = false

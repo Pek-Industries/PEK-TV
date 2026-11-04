@@ -93,7 +93,7 @@ function shortText(v, max) { return typeof v === 'string' ? v.slice(0, max) : ''
 // Worker settings (Variables and Secrets):
 //   GITHUB_CLIENT_ID      (Text)    from your GitHub OAuth App
 //   GITHUB_CLIENT_SECRET  (Secret)  from your GitHub OAuth App
-//   SITE_URL              (Text)    the address of your GitHub Pages site, e.g. https://you.github.io/hesper-plugins/
+//   SITE_URL              (Text)    the address of your GitHub Pages site, e.g. https://you.github.io/pek-plugins/
 //   OWNER_GITHUB          (Text)    your GitHub username(s), comma separated
 //   MIN_ACCOUNT_DAYS      (Text, optional)  newest GitHub account allowed to upload, default 7
 //   BLOCKED_GITHUB        (Text, optional)  usernames (or numeric ids) refused at sign-in, comma separated
@@ -141,12 +141,12 @@ async function ghCallback(url, env) {
     try {
         const t = await fetch('https://github.com/login/oauth/access_token', {
             method: 'POST',
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'hesper-store' },
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'pek-store' },
             body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code })
         });
         access = ((await t.json()) || {}).access_token || '';
         if (access) {
-            const u = await fetch('https://api.github.com/user', { headers: { 'Authorization': 'Bearer ' + access, 'Accept': 'application/vnd.github+json', 'User-Agent': 'hesper-store' } });
+            const u = await fetch('https://api.github.com/user', { headers: { 'Authorization': 'Bearer ' + access, 'Accept': 'application/vnd.github+json', 'User-Agent': 'pek-store' } });
             if (u.ok) gh = await u.json();
         }
     } catch (e) { /* handled below */ }
@@ -155,7 +155,7 @@ async function ghCallback(url, env) {
         try {
             await fetch('https://api.github.com/applications/' + encodeURIComponent(env.GITHUB_CLIENT_ID) + '/token', {
                 method: 'DELETE',
-                headers: { 'Authorization': 'Basic ' + btoa(env.GITHUB_CLIENT_ID + ':' + env.GITHUB_CLIENT_SECRET), 'Accept': 'application/vnd.github+json', 'User-Agent': 'hesper-store', 'Content-Type': 'application/json' },
+                headers: { 'Authorization': 'Basic ' + btoa(env.GITHUB_CLIENT_ID + ':' + env.GITHUB_CLIENT_SECRET), 'Accept': 'application/vnd.github+json', 'User-Agent': 'pek-store', 'Content-Type': 'application/json' },
                 body: JSON.stringify({ access_token: access })
             });
         } catch (e) { /* not important */ }

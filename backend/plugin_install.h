@@ -9,7 +9,7 @@
 //   - every file path is relative, plain and stays inside the plugin folder
 //   - only plain file types are accepted: JSON, CSS, images, fonts, text, and
 //     Python (.py) for a plugin's optional backend. No .so, .dex, .html, .svg ...
-//     A third-party backend.py is not trusted: hesper_guard.py only runs it if plugin.json
+//     A third-party backend.py is not trusted: pek_guard.py only runs it if plugin.json
 //     declares its permissions and it passes the guard's source scan, and then it can only
 //     use the hosts it declared and its own data/ folder.
 //   - setting PEK_ALLOW_PLUGIN_BACKEND=0 refuses .py files altogether (for example for a
@@ -87,7 +87,7 @@ inline bool backendAllowed() {
     return !(v && std::string(v) == "0");
 }
 
-// hesper_guard.py refuses to run a .py file bigger than this, so catch it at install time.
+// pek_guard.py refuses to run a .py file bigger than this, so catch it at install time.
 constexpr size_t kMaxPythonBytes = 200u * 1024;
 
 // 1-40 chars: a-z 0-9 _ -, starting with a letter or digit.

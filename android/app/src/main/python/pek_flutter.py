@@ -6,7 +6,7 @@ a small JSON tree of widgets (see pek_ui.py). Flutter draws the tree natively an
     Flutter  --call({"op": ...})-->  pek_flutter  -->  plugins/<id>/screen.py  (sandboxed, same rules as backend.py)
     Flutter  <--tree + effects----   pek_flutter
 
-Everything the screen can do goes through the same guard as backend.py (hesper_guard.py): the manifest, the
+Everything the screen can do goes through the same guard as backend.py (pek_guard.py): the manifest, the
 static scan of every .py file, the allow-listed host API (pek_host) and the runtime backstop. This module only adds
 the session: the tree, the tap handlers, background work and the "effects" (open a link, save a favorite) that
 Flutter performs for the plugin.
@@ -22,10 +22,10 @@ import threading
 import time
 import traceback
 
-import hesper_guard as g
+import pek_guard as g
 import pek_ui
 
-PLUGINS_DIR = ""                      # set by hesper_runner.run_all, or sent by the host with every call
+PLUGINS_DIR = ""                      # set by pek_runner.run_all, or sent by the host with every call
 SCREEN_FILE = "screen"                # plugins/<id>/screen.py
 RENDER_LIMIT = 6.0                    # seconds a render() may take
 EVENT_LIMIT = 15.0                    # seconds a tap handler may take
@@ -301,8 +301,8 @@ def _plugins_dir(req):
     if PLUGINS_DIR:
         return PLUGINS_DIR
     try:
-        import hesper_runner
-        return getattr(hesper_runner, "PLUGINS_DIR", "") or ""
+        import pek_runner
+        return getattr(pek_runner, "PLUGINS_DIR", "") or ""
     except Exception:  # noqa: BLE001
         return ""
 

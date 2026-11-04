@@ -2,7 +2,7 @@
 
 Run from the repository root:   python3 tools/test_trakt_plugin.py
 
-Nothing touches the network: hesper_guard's connection class is replaced by a fake Trakt, so the real policy code
+Nothing touches the network: pek_guard's connection class is replaced by a fake Trakt, so the real policy code
 (host list, permissions, header rules, no redirects) still runs.
 """
 import base64
@@ -18,7 +18,7 @@ import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "android", "app", "src", "main", "python"))
-import hesper_guard as g          # noqa: E402
+import pek_guard as g          # noqa: E402
 import pek_flutter as pf          # noqa: E402
 
 PLUGIN_SRC = os.path.join(ROOT, "plugin_packages", "trakt")

@@ -72,10 +72,10 @@ public:
         return loaded_plugins;
     }
 
-    // Where hesper_guard.py lives (set from main()).
+    // Where pek_guard.py lives (set from main()).
     void setGuardDir(const std::string& dir) { guard_dir = dir; }
 
-    // Every plugin backend goes through hesper_guard.py, which decides whether it may
+    // Every plugin backend goes through pek_guard.py, which decides whether it may
     // run and applies the manifest permissions, static scan and runtime backstop (see
     // that file). If the guard itself cannot be loaded this FAILS CLOSED: only the
     // plugins that ship with PEK still run, everything else is refused.
@@ -87,7 +87,7 @@ public:
         }
         PyRun_SimpleString(("import sys\nif '" + safe_guard + "' not in sys.path: sys.path.insert(0, '" + safe_guard + "')\n").c_str());
 
-        PyObject* guard = PyImport_ImportModule("hesper_guard");
+        PyObject* guard = PyImport_ImportModule("pek_guard");
         if (guard != nullptr) {
             PyObject* r = PyObject_CallMethod(guard, "run_plugin", "ss", module_name.c_str(), plugins_path.c_str());
             if (r == nullptr) PyErr_Print(); else Py_DECREF(r);
@@ -97,11 +97,11 @@ public:
         PyErr_Print();
         std::string id = (module_name == "backend") ? fs::path(plugins_path).filename().string() : module_name;
         if (id != "weather" && id != "sample_scraper") {
-            std::cout << "[PEK Plugin Guard] hesper_guard.py not found in '" << guard_dir
+            std::cout << "[PEK Plugin Guard] pek_guard.py not found in '" << guard_dir
                       << "' - REFUSING to run plugin '" << id << "'." << std::endl;
             return;
         }
-        std::cout << "[PEK Plugin Guard] hesper_guard.py not found; running bundled plugin '" << id << "' only." << std::endl;
+        std::cout << "[PEK Plugin Guard] pek_guard.py not found; running bundled plugin '" << id << "' only." << std::endl;
         executePluginModuleUnguarded(module_name, plugins_path);
     }
 
