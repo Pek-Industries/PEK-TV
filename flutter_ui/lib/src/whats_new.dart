@@ -33,6 +33,10 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
+    ReleaseNotes('2.3.0', 'Mini player and Discord', [
+      'Mini player for movies and shows: press the new picture-in-picture button in the player, or press Home while something is playing, and the video keeps going in a small window while you use other apps. It only shows up on devices that support picture-in-picture (most phones and tablets, not TV boxes or some Android Go phones).',
+      'Discord: show what you are watching on your Discord profile. Sign in to your PEK account, then link Discord from Settings \u2192 Account (a Link Discord button on phones and tablets, a QR code on TV) and your friends see the title you are playing. You can pause or unlink it at any time.',
+    ]),
     ReleaseNotes('2.2.2', 'Check for updates', [
       'A new Check for updates button in Settings \u2192 Advanced \u2192 App updates. Press it to look for a new version of PEK TV right away, and it tells you if you are up to date.',
     ]),
