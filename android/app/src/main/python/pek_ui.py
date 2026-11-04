@@ -238,9 +238,14 @@ def _watch_url(kind, tmdb_id, region):
 
 def ctx():
     """What PEK TV tells the screen on every call: {"lang": "en-US", "region": "US", "tv": bool,
-    "favorites": ["movie:603", ...], "streamers": [...], "watched": [...]}. A fresh dict each call; changing it does
-    nothing. Prefer streamers() / is_watched(), which also check the plugin's permissions."""
-    d = dict(_sess().ctx)
+    "favorites": ["movie:603", ...], "streamers": [...], "watched": [...], "device": {...}}. A fresh dict each call; changing it does
+    nothing. Prefer streamers() / is_watched(), which also check the plugin's permissions. "device" (what this device decodes in
+    hardware and its screen: {"v": 1, "h264", "hevc", "hevc10", "av1" (tallest picture in pixels, 0 = none), "screenShort", "tv", "hdr",
+    "dv"}, or {"unknown": true}) is only there when plugin.json has "device": true."""
+    s = _sess()
+    d = dict(s.ctx)
+    if not s.perms.get("device"):
+        d.pop("device", None)
     d.pop("skins", None)          # only skins() hands these out, and it needs the official "skins" permission
     d.pop("weather", None)        # only weather() hands this out, and it needs the official "weather" permission
     return d

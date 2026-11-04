@@ -242,7 +242,7 @@ class PreparedPlugin {
     }
   }
 
-  static const permissionNames = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg'];
+  static const permissionNames = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg', 'device'];
   static final _host = RegExp(r'^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$');
   static final _ip = RegExp(r'^[\d.]+$');
 
@@ -326,6 +326,7 @@ class PreparedPlugin {
       if (perms.contains('storage')) 'Can keep its own private data',
       if (perms.contains('library')) 'Its Python code can read the titles and years in your library (never file names or folders).',
       if (perms.contains('torrent')) 'Can search for releases and start torrent streams through PEK TV (it never sees your provider key). Streams download and upload from your connection.',
+      if (perms.contains('device')) 'Can see what this device can play smoothly (which video formats its chip decodes, its screen size, and whether it is a TV or shows HDR), to pick a release that suits it. It learns nothing about you.',
       if (perms.contains('favorites')) 'Can add titles to your Favorites and remove them (it sees only which titles are favorites).',
       if (perms.contains('watched')) 'Can see which movies and episodes you have marked as watched and mark them watched or unwatched (it sees nothing else from your history).',
       if (perms.contains('playback')) 'Is told which movie or episode you start, pause and stop watching, how far you got, and when you mark one watched or unwatched (title, year, season and episode only, never file names). It runs in the background, even when its screen is closed.',

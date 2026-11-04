@@ -29,6 +29,20 @@ class PluginHost {
   /// Installed plugins that have a Python screen and can play a title ("provides": {"stream": true}); null until loaded.
   static List<Map<String, String>>? streamers;
 
+  /// What this device decodes in hardware and shows (DeviceProfile.kt); null until loaded. A plugin gets it as ctx["device"] only when
+  /// its plugin.json asks for "device": true. {"unknown": true} when it could not be read: the plugin then changes nothing.
+  static Map<String, dynamic>? device;
+
+  static Future<void> loadDevice() async {
+    if (device != null) return;
+    try {
+      final m = await _channel.invokeMapMethod<String, dynamic>('deviceProfile').timeout(const Duration(seconds: 8));
+      device = m == null || m.isEmpty ? <String, dynamic>{'v': 1, 'unknown': true} : Map<String, dynamic>.from(m);
+    } catch (_) {
+      device = <String, dynamic>{'v': 1, 'unknown': true};
+    }
+  }
+
   static Future<void> refreshStreamers() async {
     try {
       final all = await Api.plugins();
@@ -55,6 +69,8 @@ class PluginHost {
       'profile': Store.profileId,
       'favorites': Store.pluginFavoriteKeys(),
       'streamers': streamers ?? const <Map<String, String>>[],
+      // The decoders and screen of this device. Python only sees it when the plugin asked for the "device" permission (pek_ui.ctx()).
+      'device': device ?? const <String, dynamic>{'v': 1, 'unknown': true},
       'watched': Store.history().take(4000).map((e) => e.key).toList(),
       // The profile's favorite movies and shows (library and plugin favorites, each title once); pek_ui.favorites() hands them out.
       'favorites': PluginFavorites.snapshot(),

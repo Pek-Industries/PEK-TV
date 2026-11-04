@@ -458,6 +458,10 @@ class FlutterHostActivity : FlutterActivity() {
                         runOnUiThread { result.success(answer) }
                     }
                 }
+                "deviceProfile" -> pluginPool.execute {          // listing the decoders takes a moment
+                    val profile = com.pektv.app.DeviceProfile.read(applicationContext)
+                    runOnUiThread { result.success(profile) }
+                }
                 "pickFile" -> pickFile(call.argument<String>("ext") ?: "pek", result)
                 "openUrl" -> result.success(openUrl(call.arguments as? String ?: ""))
                 "openApp" -> result.success(openStreamingApp(call.argument<String>("packages") ?: "", call.argument<String>("url") ?: ""))

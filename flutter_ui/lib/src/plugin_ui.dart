@@ -238,6 +238,7 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
       if (fresh) _tree = null;
     });
     if (PluginHost.streamers == null) await PluginHost.refreshStreamers();
+    if (PluginHost.device == null) await PluginHost.loadDevice();
     if (!mounted) return;
     final r = await PluginHost.open(widget.pluginId, ctx: _ctx(), launch: widget.launch, fresh: fresh);
     if (mounted) _apply(r);

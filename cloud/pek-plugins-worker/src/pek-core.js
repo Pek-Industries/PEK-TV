@@ -13,7 +13,7 @@ const PekCore = (() => {
   const RESERVED_HOST = 'hesper-tmdb.aquariusibeats.workers.dev';
   const BUILTIN_IDS = ['weather', 'tmdb-discover', 'skin-maker', 'sample_scraper', 'sample_counter'];
   const OWNER_ONLY_IDS = ['trakt', 'm3u8'];   // owner may publish these on the Official shelf; nobody else may use them
-  const PERMISSIONS = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg'];
+  const PERMISSIONS = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg', 'device'];
 
   class Reject extends Error { constructor(msg) { super(msg); this.name = 'PekReject'; } }
   const no = (m) => new Reject(m);
