@@ -284,7 +284,7 @@ today, so the section stays hidden until one is installed.
 Plugins > **Plugin store**. It talks to the
 same two places:
 
-1. **The PEK Store worker** (`https://pek-store.aquariusibeats.workers.dev`, `plugin_store.dart`): `GET /v1/store?shelf=official|community&kind=plugin`
+1. **The PEK Store worker** (`https://store.pekindustries.com`, `plugin_store.dart`): `GET /v1/store?shelf=official|community&kind=plugin`
    lists a shelf; `GET /v1/store/chunk?id&fp&i` downloads the bundle in parts. The parts are joined, checked against the
    item's 64-bit fingerprint (`fingerprint()` in `plugin_store.dart`) and unpacked in memory.
 2. **PEK TV's own server** (`POST /api/plugins/install`): first a **dry run** (the server's safety checks, and whether it

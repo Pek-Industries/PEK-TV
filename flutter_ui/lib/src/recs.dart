@@ -209,7 +209,7 @@ class _Acc {
 }
 
 class RecFeed {
-  static const _base = 'https://hesper-tmdb.aquariusibeats.workers.dev'; // the proxy that holds the TMDb key
+  static const _base = 'https://tmdb.pekindustries.com'; // the proxy that holds the TMDb key
   static const _ttlMs = 6 * 3600 * 1000;
   static final _c = http.Client();
   /// The TMDb id of the movie called [name] (an exact title match first, else the top result), or 0 when none is found.

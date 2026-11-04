@@ -59,7 +59,7 @@ ALLOWED_EXT = {"json", "css", "md", "txt", "png", "jpg", "jpeg", "gif", "webp", 
                "woff", "woff2", "ttf", "otf", "py"}
 RESERVED_IDS = {"weather", "sample_scraper", "sample_counter", "tmdb-discover", "skin-maker"}
 STOCK_IDS = {"weather", "tmdb-discover", "skin-maker"}
-RESERVED_HOST = "hesper-tmdb.aquariusibeats.workers.dev"
+RESERVED_HOSTS = ("hesper-tmdb.aquariusibeats.workers.dev", "tmdb.pekindustries.com")   # old and new address
 
 # ----------------------------------------------------------------------------
 # Terminal output
@@ -190,8 +190,10 @@ def check_manifest(files, P, W, official):
     if not isinstance(m, dict):
         P.append("plugin.json is not a JSON object")
         return None
-    if not official and RESERVED_HOST in text.lower():
-        P.append("%s is reserved for PEK's official plugins" % RESERVED_HOST)
+    if not official:
+        for rh in RESERVED_HOSTS:
+            if rh in text.lower():
+                P.append("%s is reserved for PEK's official plugins" % rh)
 
     if not (isinstance(m.get("name"), str) and m["name"].strip()):
         P.append('plugin.json needs a "name" (non-empty text)')

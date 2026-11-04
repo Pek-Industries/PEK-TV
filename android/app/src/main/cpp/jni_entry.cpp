@@ -104,7 +104,7 @@ Java_com_pektv_app_NativeBridge_mintTorrentGrant(JNIEnv* env, jclass) {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_pektv_app_NativeBridge_tlsDiag(JNIEnv* env, jclass) {
     auto probe = [](int mode) -> std::string {
-        httplib::Client cli("https://hesper-tmdb.aquariusibeats.workers.dev");
+        httplib::Client cli("https://tmdb.pekindustries.com");
         cli.set_connection_timeout(8);
         cli.set_read_timeout(8);
         if (mode == 1) cli.set_ca_cert_path("", "/system/etc/security/cacerts");

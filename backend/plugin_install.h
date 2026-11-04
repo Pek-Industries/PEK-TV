@@ -78,7 +78,8 @@ inline bool isStockId(const std::string& id) {
 
 // PEK's built-in TMDb access (a proxy that holds PEK's key) is for official plugins only.
 // A plugin installed from a .zip can't list it, so it can't borrow PEK's key.
-inline const char* reservedHost() { return "hesper-tmdb.aquariusibeats.workers.dev"; }
+inline const char* reservedHost() { return "hesper-tmdb.aquariusibeats.workers.dev"; }      // the old address, still reserved
+inline const char* reservedHost2() { return "tmdb.pekindustries.com"; }
 
 // Python backends are accepted unless PEK_ALLOW_PLUGIN_BACKEND=0.
 inline bool backendAllowed() {
@@ -184,6 +185,8 @@ inline std::string checkFiles(const std::vector<InFile>& files, size_t& totalByt
             if (a >= f.data.size() || f.data[a] != '{') return "plugin.json is not a JSON object";
             if (!official && lowerCopy(f.data).find(reservedHost()) != std::string::npos)
                 return std::string(reservedHost()) + " is reserved for PEK's official plugins";
+            if (!official && lowerCopy(f.data).find(reservedHost2()) != std::string::npos)
+                return std::string(reservedHost2()) + " is reserved for PEK's official plugins";
             hasFlutterEntry = lowerCopy(f.data).find("\"flutter\"") != std::string::npos;
         }
         if (f.path == "screen.py") hasScreen = true;   // the Flutter UI's Python screen

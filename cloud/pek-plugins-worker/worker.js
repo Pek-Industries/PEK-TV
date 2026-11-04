@@ -10,7 +10,7 @@ const PekCore = (() => {
   const MAX_FILES = 200, MAX_FILE = 2 * 1024 * 1024, MAX_TOTAL = 8 * 1024 * 1024, MAX_MANIFEST = 16 * 1024;
   const MAX_PY = 200 * 1024, MAX_PATH = 120, MAX_DEPTH = 6, MAX_PEK = MAX_TOTAL + 1024 * 1024;
   const OK_EXT = ['json', 'css', 'md', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'otf', 'py'];
-  const RESERVED_HOST = 'hesper-tmdb.aquariusibeats.workers.dev';
+  const RESERVED_HOSTS = ['hesper-tmdb.aquariusibeats.workers.dev', 'tmdb.pekindustries.com'];   // old and new address
   const BUILTIN_IDS = ['weather', 'tmdb-discover', 'skin-maker', 'sample_scraper', 'sample_counter'];
   const OWNER_ONLY_IDS = ['trakt', 'm3u8'];   // owner may publish these on the Official shelf; nobody else may use them
   const PERMISSIONS = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg', 'device'];
@@ -181,7 +181,7 @@ const PekCore = (() => {
       catch (e) { P.push('plugin.json is not valid JSON.'); }
       if (manifest !== null && (typeof manifest !== 'object' || Array.isArray(manifest))) { P.push('plugin.json is not a JSON object.'); manifest = null; }
       if (manifest) {
-        if (!owner && text.toLowerCase().indexOf(RESERVED_HOST) >= 0) P.push(RESERVED_HOST + " is reserved for PEK's official plugins.");
+        if (!owner) for (const rh of RESERVED_HOSTS) if (text.toLowerCase().indexOf(rh) >= 0) P.push(rh + " is reserved for PEK's official plugins.");
         if (!(typeof manifest.name === 'string' && manifest.name.trim())) P.push('plugin.json needs a "name".');
         if (!(typeof manifest.version === 'string' && manifest.version.trim())) P.push('plugin.json needs a "version" (text such as "1.0.0").');
         const fl = manifest.flutter;

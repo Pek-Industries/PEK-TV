@@ -70,7 +70,7 @@ These mirror `backend/plugin_install.h`, so a PEK the tool accepts is one the in
 - Allowed types: `json css md txt png jpg jpeg gif webp ico woff woff2 ttf otf py`. No `.js`, `.so`, `.dex`, `.html`, `.svg`.
 - Paths: relative, `/` separated, no `.` or `..`, no hidden names, no `\ : * ? " < > |`, max 120 bytes, max 6 levels deep, no duplicates (case-insensitive).
 - `skin.json` means it is a skin, not a plugin.
-- `hesper-tmdb.aquariusibeats.workers.dev` is reserved for official plugins.
+- `tmdb.pekindustries.com` (and the old `hesper-tmdb.aquariusibeats.workers.dev`) are reserved for official plugins.
 - Built-in ids (`weather`, `tmdb-discover`, `skin-maker`, `sample_scraper`, `sample_counter`) are refused by the installer except for Official store updates. The tool warns about these rather than rejecting.
 
 ## Where the app reads it

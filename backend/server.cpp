@@ -328,7 +328,7 @@ long long nowMs() {
 static std::string tmdbProxyUrl() {
     const char* env = std::getenv("TMDB_PROXY_URL");
     if (env && *env) return env;
-    return "https://hesper-tmdb.aquariusibeats.workers.dev";
+    return "https://tmdb.pekindustries.com";
 }
 
 } // namespace

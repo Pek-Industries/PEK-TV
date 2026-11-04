@@ -34,7 +34,7 @@ Use Chrome menu (three dots) -> **Desktop site** for the Cloudflare dashboard.
    - **D1 database** -> variable name `DB` (exactly) -> `pek-plugins`.
    - **R2 bucket** -> variable name `PLUGINS` (exactly) -> `pek-plugins-files`.
    Deploy again if asked.
-4. Open `https://pek-plugins.aquariusibeats.workers.dev/v1/plugins`. You should see `{"ok":true,"items":[]}`. (If you see `no_database_bound` or `no_r2_bucket_bound`, a binding name is wrong.)
+4. Open `https://plugins.pekindustries.com/v1/plugins`. You should see `{"ok":true,"items":[]}`. (If you see `no_database_bound` or `no_r2_bucket_bound`, a binding name is wrong.)
 
 If you name the Worker something else, change `API` at the top of `public/pektv/js/store.js` and `pluginBase` in `flutter_ui/lib/src/plugin_store.dart`.
 
@@ -42,7 +42,7 @@ If you name the Worker something else, change `API` at the top of `public/pektv/
 1. GitHub -> Settings -> Developer settings -> **OAuth Apps -> New OAuth App** (make a new one; the old store's app has a different callback).
    - Application name: `PEK Plugin Store`
    - Homepage URL: `https://pekindustries.com/pektv/store`
-   - Authorization callback URL: `https://pek-plugins.aquariusibeats.workers.dev/v1/gh/callback`
+   - Authorization callback URL: `https://plugins.pekindustries.com/v1/gh/callback`
 2. Register, then **Generate a new client secret**. Copy the Client ID and the secret.
 3. Worker `pek-plugins` -> **Settings -> Variables and Secrets -> Add**:
 

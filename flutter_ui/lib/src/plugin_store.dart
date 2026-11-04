@@ -21,10 +21,10 @@ import 'store.dart';
 ///                    what is allowed; nothing here installs anything by itself, the person confirms on a screen first.
 class PekStoreApi {
   /// Plugins: the PEK Plugins worker (cloud/pek-plugins-worker, see its SETUP.md). Plugins are real .PEK files kept in R2.
-  static const pluginBase = 'https://pek-plugins.aquariusibeats.workers.dev';
+  static const pluginBase = 'https://plugins.pekindustries.com';
 
   /// Skins still come from the older PEK Store worker (skins are not .PEK files). See cloud/STORE-DEPLOY.md.
-  static const base = 'https://pek-store.aquariusibeats.workers.dev';
+  static const base = 'https://store.pekindustries.com';
   static final http.Client _client = http.Client();
 
   static Future<Map<String, dynamic>> _get(String path, {String from = base}) async {

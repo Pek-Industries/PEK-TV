@@ -18,7 +18,7 @@ import pek_host as h
 import pek_ui as ui
 
 API = "https://api.themoviedb.org/3"                           # only used with a personal key
-PROXY = "https://hesper-tmdb.aquariusibeats.workers.dev"       # PEK TV's built-in access (it adds the key)
+PROXY = "https://tmdb.pekindustries.com"       # PEK TV's built-in access (it adds the key)
 IMG = "https://image.tmdb.org/t/p/w342"
 IMG_WIDE = "https://image.tmdb.org/t/p/w780"          # backdrops (16:9) for landscape cards on a TV
 IMG_PERSON = "https://image.tmdb.org/t/p/w185"

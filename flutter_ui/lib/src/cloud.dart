@@ -38,7 +38,7 @@ class CloudResult {
 /// in the web UI) shows up here when the same title is in this device's library; otherwise it becomes a plugin favorite
 /// (Favorites > Saved from plugins). Favorites a plugin screen saves here already have their TMDb id and sync as they are.
 class Cloud {
-  static const api = 'https://pek-sync.aquariusibeats.workers.dev';
+  static const api = 'https://api.pekindustries.com';
 
   static const _kToken = 'pek_account_token';
   static const _kEmail = 'pek_account_email';
@@ -588,7 +588,7 @@ class Cloud {
   // ---------------------------------------------------------------- favorites (TMDb ids from the existing TMDb proxy)
 
   /// The same Cloudflare TMDb worker the C++ backend uses (backend/server.cpp tmdbProxyUrl()). It holds the key.
-  static const _tmdb = 'https://hesper-tmdb.aquariusibeats.workers.dev';
+  static const _tmdb = 'https://tmdb.pekindustries.com';
 
   /// null = could not ask (offline); id 0 = TMDb has no match.
   static Future<({int id, String poster})?> _tmdbLookup(bool tv, String title, int year) async {

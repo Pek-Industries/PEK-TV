@@ -240,7 +240,7 @@ inline void applyCa(httplib::SSLClient& c) {
 // Where the shared subtitle service lives: https://host[:port]
 inline bool workerHost(std::string& host, int& port) {
     const char* env = std::getenv("PEK_SUBS_URL");
-    std::string u = (env && *env) ? env : "https://pek-sync.aquariusibeats.workers.dev";
+    std::string u = (env && *env) ? env : "https://api.pekindustries.com";
     const std::string pre = "https://";
     if (u.compare(0, pre.size(), pre) != 0) return false;
     u = u.substr(pre.size());
