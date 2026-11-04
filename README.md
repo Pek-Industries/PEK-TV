@@ -41,6 +41,10 @@ See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md` and `MUSIC.md`
 - `assets/`: branding artwork: launcher icon, TV banner, splash videos (`assets/android/res`) and README screenshots.
 - `tools/`: helper scripts (`make_skin.py`, `sync_providers.js` with `providers.json`).
 
+## Contributing
+
+See `CONTRIBUTING.md` for how to report bugs and send changes. The Android app has its own guide in `android/CONTRIBUTING.md`.
+
 ## Legal
 
 PEK TV is free software under the GNU Affero General Public License v3.0 (AGPL-3.0). See the `LICENCE` file. You may use, change and self-host it (including your own cloud workers). If you run a modified version as a network service, you must offer its source to the people using it. PEK Cloud, the paid backup and sync service, is run by PEK Industries on its own servers; the names and logos "PEK" and "PEK TV" are trademarks of PEK Industries and are not covered by the licence.
