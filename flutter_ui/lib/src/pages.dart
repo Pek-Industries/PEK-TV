@@ -13,6 +13,7 @@ import 'fields.dart' show PekField;
 import 'mpv.dart';
 import 'net_folders.dart';
 import 'news.dart';
+import 'open_source.dart';
 import 'music_mode.dart';
 import 'plugin_backup.dart';
 import 'plugin_backup_ui.dart';
@@ -328,6 +329,7 @@ class SettingsPage extends StatelessWidget {
       row('Advanced', music ? 'TV mode and size, audio output, storage, app updates' : 'TV mode and size, video and audio output, storage, app updates', Icons.tune,
           () => _SettingsList(children: [const TvModeSection(), if (!music) const VideoOutputSection(), const AudioOutputSection(), const StorageSection(), const UpdateSection(), const DevConsoleSection()])),
       row('App', 'Exit PEK TV', Icons.power_settings_new, () => const _ExitSettings()),
+      row('Open source', 'The libraries PEK TV is built with and their licences', Icons.code, () => const _SettingsList(children: [OpenSourceSection()])),
     ]);
   }
 }

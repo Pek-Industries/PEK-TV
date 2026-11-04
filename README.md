@@ -43,7 +43,7 @@ See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md` and `MUSIC.md`
 
 ## Legal
 
-See the `LICENCE` file for what you may and may not do with the code.
+PEK TV is free software under the GNU Affero General Public License v3.0 (AGPL-3.0). See the `LICENCE` file. You may use, change and self-host it (including your own cloud workers). If you run a modified version as a network service, you must offer its source to the people using it. PEK Cloud, the paid backup and sync service, is run by PEK Industries on its own servers; the names and logos "PEK" and "PEK TV" are trademarks of PEK Industries and are not covered by the licence.
 
 PEK Industries is not associated with any illegal activity involving torrents. PEK TV does not host, provide or link to any content, and ships with no search provider or index. You are responsible for what you play.
 
