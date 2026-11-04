@@ -43,3 +43,6 @@ plugins/*/data/
 *.keystore
 keystore.b64
 
+
+# Built .PEK plugin packages
+dist/

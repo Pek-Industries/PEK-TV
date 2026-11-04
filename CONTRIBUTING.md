@@ -23,8 +23,7 @@ PEK TV is free software under the GNU Affero General Public License v3.0 (AGPL-3
 | `flutter_ui/` | The app's screens (Flutter). The only UI. |
 | `backend/` | The C++ server: library scanner, network sources, music, subtitles, torrent engine (plugins only). |
 | `android/` | The Android app and its build. See `android/CONTRIBUTING.md`. |
-| `plugins/`, `plugin_packages/`, `skins/` | Built-in plugins and skins. |
-| `cloud/` | The Cloudflare workers (accounts and sync, plugin store). |
+| `plugins/`, `skins/` | Built-in plugins and skins. |
 | `tools/` | Helper scripts (`pektool.py`, `make_skin.py`, `sync_providers.js`) and the cloud tests. |
 | `assets/` | Branding artwork and README screenshots. |
 
@@ -46,7 +45,7 @@ The reference docs are in the repository root: `PLUGINS.md`, `FLUTTER_PLUGINS.md
 2. Keep the change focused: one fix or one feature per pull request.
 3. Follow the style of the code around you. Do not reformat files you are not changing.
 4. Test it. The Flutter tests are in `flutter_ui/test` (`flutter test`), the C++ tests are in `backend/*_test.cpp`, and
-   the cloud tests are in `tools/cloud-tests`. Add or update a test when you change behaviour that has one.
+   the cloud tests are in the separate `pek-cloud` repo. Add or update a test when you change behaviour that has one.
 5. Update the documentation in the same pull request (see below).
 6. Open the pull request and say what changed, why, and how you tested it (device, Android version, TV or phone).
 
@@ -71,7 +70,7 @@ provider or index; contributions must not add one.
 
 Plugins run in a sandbox and declare what they may do. Read `PLUGINS.md` and `FLUTTER_PLUGINS.md` first. Plugins are
 installed only from `.PEK` files; build one with
-`python tools/pektool.py --official pack plugins/<id> --clean -o plugin_packages/<id>.PEK`.
+`python tools/pektool.py --official pack plugins/<id> --clean -o dist/<id>.PEK`.
 Skins are data only and cannot run code or reach the network; see `SKINS.md`.
 
 ## Platforms

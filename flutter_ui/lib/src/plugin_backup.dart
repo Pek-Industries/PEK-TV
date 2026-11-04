@@ -55,7 +55,7 @@ class _Packed {
   final int raw;
 }
 
-/// Plugin backup on the cloud routes (cloud/worker.js: /v1/plugins/*), so a backup made on another device
+/// Plugin backup on the cloud routes (pek-cloud/pek-sync: /v1/plugins/*), so a backup made on another device
 /// can be restored here and the other way round (same bundle format and fingerprint).
 ///
 ///  - Only third-party plugins are backed up, and only their own files (never their data/ folder).

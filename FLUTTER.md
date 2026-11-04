@@ -85,7 +85,7 @@ Resume progress, favorites and the dashboard layout are stored on the device wit
 Movie page: **Mark as watched / unwatched**. Show page: **Mark show ...**, **Mark season ...** and a tick on each watched episode (press and hold
 an episode to toggle just that one); movie posters show a tick before the year. Everything uses Watch History (`Store.setWatched`), so the
 Watch History page, plugins and PEK Cloud agree. A change is pushed to the worker about 2 s later (`watched.dart`); removals go up as
-`{deleted}` markers, which `cloud/worker.js` already stores for `m|` and `e|` keys, so the worker needed no change. Plugins with the `watched`
+`{deleted}` markers, which the sync worker (`pek-cloud/pek-sync`) already stores for `m|` and `e|` keys, so the worker needed no change. Plugins with the `watched`
 permission can check / set movies and episodes (see `FLUTTER_PLUGINS.md`). Plugin movie posters also get the tick and press-and-hold toggle automatically (Settings > Plugin posters).
 
 ## Background activity line and loading ring
@@ -200,7 +200,7 @@ Accounts are free and are created on the website (an invite code is needed while
 and no cloud backup. Plans, bought on the website with Stripe (never inside the app): **$5.99 a month**, **$48 a year** (just $4 a month:
 it saves $23.88 a year, 33%, compared with paying monthly) or **$199 once** (lifetime). Accounts made before plans existed are
 "grandfathered" and have everything. The prices shown in the app are in `PlanPrices` (`plan_ui.dart`); keep them in step with Stripe
-(`cloud/billing-worker.js`) and the website's account page.
+(`pek-cloud/billing-worker.js`) and the website's account page.
 
 Settings > Account (signed in), `account_pages.dart` and `plan_ui.dart`:
 

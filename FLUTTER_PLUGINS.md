@@ -189,17 +189,15 @@ wants to run there catches the error and treats everything as one profile.
 
 A hooks file is scanned and sandboxed exactly like `screen.py`. The hook session is separate from the screen's session (each imports its own
 copy of the plugin's helper modules, so a shared `*_core.py` gets the right `pek_host`); both share the plugin's `data/` folder. Because two
-sessions can write the same file, writes use a temp file per thread and a plugin that rotates tokens should re-read `auth.json` before refreshing
-(see `trakt_core.refresh`). Updating a plugin reloads its hooks without restarting the app.
+sessions can write the same file, writes use a temp file per thread and a plugin that rotates tokens should re-read `auth.json` before refreshing.
+Updating a plugin reloads its hooks without restarting the app.
 
 Reserved hosts: `hesper-tmdb...` is for `tmdb-discover` only (`RESERVED_HOSTS` in
 `pek_flutter.py`); `trakt` is also owner-only in the PEK Store.
 
-The Trakt plugin (`plugin_packages/trakt/`, tests in `tools/test_trakt_plugin.py`) is the reference user of all this.
-
 ## Live TV: channels, the TV guide and the guide reader (`live` and `epg` permissions)
 
-A plugin that is a TV directory (`plugin_packages/m3u8/` is the reference) needs three things a normal screen has no
+A plugin that is a TV directory (the official M3U8 plugin is the reference) needs three things a normal screen has no
 way to do, so the sandbox has them:
 
 ```json
@@ -252,7 +250,7 @@ Install screen: `live` -> "Can play live TV streams in PEK TV's player, from web
 can see your internet address"; `epg` -> "Can download TV guide files (XMLTV) from the sites listed above".
 
 ## M3U8 (official, 1.0.0)
-`plugin_packages/m3u8/` (packed with `tools/pektool.py pack`) takes `.m3u` / `.m3u8` playlists and turns them into a TV directory. It is an official plugin
+The M3U8 plugin (packed with `tools/pektool.py pack`; its source is not in this repository) takes `.m3u` / `.m3u8` playlists and turns them into a TV directory. It is an official plugin
 that is not bundled in the app: the owner publishes it on the PEK Store's Official shelf (`m3u8` is in the store worker's owner-only list, so nobody else can use the id)
 and people install it from there. It runs sandboxed; the `live` and `epg` permissions above are open to any plugin.
 
@@ -268,7 +266,6 @@ and people install it from there. It runs sandboxed; the `live` and `epg` permis
   under Settings -> Guide addresses, all read with `h.fetch_epg` and stored as in the Live TV section. The built-in list can be switched off.
 - **Screen and player share `data/`**: `lists.json` has a `rev` that changes whenever a playlist or guide address is added or removed, and both sessions
   reload the channels when it changes, so a playlist added on the screen is in the player's channel switcher without restarting.
-- Tests: `python3 tools/test_m3u8_plugin.py` (the guide reader, the playlist reader, the screens, the live provider and the sandbox limits).
 
 ## TMDb Discover (ported, 1.6.0)
 `plugins/tmdb-discover/screen.py` has:
@@ -338,7 +335,7 @@ What it needed from the host, all in `pek_ui`:
   the device (`custom-...`), and refuses unreadable colours again. Built-in and installed skins are never changed by a plugin.
 - Settings > Appearance opens it with `launch` `{"type": "skin", "id": <skin id>, "mode": "edit" | "from" | "paste"}`.
 - The store: `skin-maker` is in `PluginInstaller.stockIds`, `isReservedId` / `isStockId` (backend), `PluginBackup.builtin` and `MainActivity.stockPlugins`.
-  In `cloud/store-worker.js` the id is **owner-only** (`OWNER_ONLY_PLUGINS`): only the owner route may publish it, nobody else can take the id.
+  In `pek-cloud/store-worker.js` the id is **owner-only** (`OWNER_ONLY_PLUGINS`): only the owner route may publish it, nobody else can take the id.
 
 ## Files
 - `android/app/src/main/python/pek_ui.py` - what a screen imports (builders + host calls)
@@ -360,7 +357,7 @@ What it needed from the host, all in `pek_ui`:
 ## Plugin pictures, built-in plugins and updates (Fixes 4)
 - **Picture**: `plugin.json` `"icon": "icon.png"` (png / jpg / webp in the plugin folder, 256x256 recommended, under 60 KB). The Plugins page shows it
   (served from `/plugins/<id>/<icon>`), the store worker copies it into the listing as a small data: address (`icon` column, added by itself
-  on the first request after you paste `cloud/store-worker.js`) so the store list and the install screen show it without downloading the plugin.
+  on the first request after you paste `pek-cloud/store-worker.js`) so the store list and the install screen show it without downloading the plugin.
 - **Built-in plugins** (`weather`, `tmdb-discover`, `skin-maker`, `PluginInstaller.stockIds` / `isReservedId`) cannot be removed: no Remove button, and the
   server refuses (`/api/plugins` now reports `builtin`).
 - **Updates** (`plugin_updates.dart`, checked 6 s after start and whenever the Plugins page opens):

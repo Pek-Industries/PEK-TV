@@ -57,7 +57,9 @@ jobs:
       # Install the exact NDK AGP asks for ourselves, with retries, and wipe any half-downloaded copy first.
       - name: Install NDK (with retry)
         run: |
-          NDK=27.0.12077973
+          # Read the version from build.gradle so the two can never drift apart again.
+          NDK="$(grep -oP "ndkVersion '\K[^']+" android/app/build.gradle)"
+          [ -n "$NDK" ] || { echo "::error::ndkVersion not found in android/app/build.gradle"; exit 1; }
           SM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           for i in 1 2 3 4; do
             rm -rf "$ANDROID_HOME/ndk/$NDK"
@@ -96,7 +98,7 @@ jobs:
           grep -rl "flutter.compileSdkVersion" "$PUB_CACHE/hosted" --include=build.gradle.kts --include=build.gradle 2>/dev/null \
             | xargs -r sed -i 's/flutter\.compileSdkVersion/36/g'
 
-      # ---- Bundle the web UI, plugins and skins into the apk -------------
+      # ---- Bundle the plugins and skins into the apk -------------
       - name: Stage app assets
         run: |
           A=android/app/src/main/assets/hesper

@@ -21,7 +21,7 @@ class DiscordLinkSession {
 /// Discord Rich Presence: shows "Watching <title>" on the person's Discord profile while something plays (see DISCORD.md).
 ///
 /// How it fits together:
-///  - Linking. The person approves PEK TV on Discord's own page; the PEK cloud worker (cloud/worker.js, /v1/discord/*) keeps the
+///  - Linking. The person approves PEK TV on Discord's own page; the PEK cloud worker (pek-cloud/pek-sync, /v1/discord/*) keeps the
 ///    client secret, swaps the code for tokens and hands them to this device once. A phone opens the link in its browser or
 ///    the Discord app, a TV shows it as a QR code (the same idea as "Sign in with your phone").
 ///  - Presence. The tokens go to the native side (`pek/discord` channel, FlutterDiscord.kt -> discord_presence.cpp -> the Discord

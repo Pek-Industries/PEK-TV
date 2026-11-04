@@ -36,8 +36,8 @@ See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md` and `MUSIC.md`
 - `flutter_ui/`: the app's screens (Flutter). The only UI.
 - `backend/`: the C++ server (library scanner, network sources, music, subtitles, and a torrent engine that only plugins can start).
 - `android/`: the Android app (start-up, libmpv player, Python plugin host) and the GitHub Actions build.
-- `plugins/`, `plugin_packages/`, `skins/`: built-in plugins and skins (Weather, TMDb Discover, Skin maker); `plugin_packages/` holds the built-in plugins as `.PEK` files (build them with `python tools/pektool.py --official pack plugins/<id> --clean -o plugin_packages/<id>.PEK`); the old `.zip` files are kept in `plugin_packages/(legacy)/` and are no longer used. Plugins are only ever installed from `.PEK` files.
-- `cloud/`: the Cloudflare workers (accounts and sync, plugin store).
+- `plugins/`, `skins/`: built-in plugins and skins (Weather, TMDb Discover, Skin maker). Plugins are only ever installed from `.PEK` files; build one with `python tools/pektool.py --official pack plugins/<id> --clean -o dist/<id>.PEK` (`dist/` is not committed).
+- The Cloudflare workers (accounts and sync, plugin store, billing) are not in this repository; they live in the separate `pek-cloud` repo. `CLOUD_API.md` lists what the app calls.
 - `assets/`: branding artwork: launcher icon, TV banner, splash videos (`assets/android/res`) and README screenshots.
 - `tools/`: helper scripts (`make_skin.py`, `sync_providers.js` with `providers.json`).
 

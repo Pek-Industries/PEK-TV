@@ -140,5 +140,5 @@ normal sync (at start, every 5 minutes after a change, and when a profile is ope
   unless it was changed after the delete.
 - **What is stored:** the name, author, version, description, the colours, the corner size and, for an installed skin, where it came
   from (GitHub skins stay labelled "unverified"). Up to 50 skins per profile. Nothing else from a skin zip is kept in the cloud.
-- **Needs the new worker:** redeploy `cloud/worker.js` first (see cloud/DEPLOY.md). Until then the skins stay on the device and are
+- **Needs the new worker:** redeploy the sync worker (`pek-cloud/pek-sync`) first (see pek-cloud/DEPLOY.md). Until then the skins stay on the device and are
   sent once the worker is updated.

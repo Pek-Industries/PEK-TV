@@ -34,7 +34,7 @@ app ─▶ pek/discord channel ─▶ FlutterDiscord.kt ─▶ NativeDiscord.kt 
    shows). Note the Application ID and, under OAuth2, the Client Secret.
 2. **Redirect.** OAuth2 -> Redirects -> add `https://api.pekindustries.com/v1/discord/callback` (your worker's address
    if it differs, then the same address in `Cloud.api`).
-3. **Cloud worker.** Paste the new `cloud/worker.js` and add: **Text** `DISCORD_CLIENT_ID` = the Application ID, **Secret**
+3. **Cloud worker.** Update the sync worker from `pek-cloud/pek-sync` and add: **Text** `DISCORD_CLIENT_ID` = the Application ID, **Secret**
    `DISCORD_CLIENT_SECRET` = the Client Secret. Deploy. (The `discord_links` table is created by itself.)
    Until these exist the app says "Discord linking is not turned on in the PEK cloud yet".
 4. **Social SDK for Android.** In the application: Discord Social SDK (under **Games** in the portal menu) -> Getting Started (fill in
@@ -51,7 +51,7 @@ app ─▶ pek/discord channel ─▶ FlutterDiscord.kt ─▶ NativeDiscord.kt 
 
 ## Tests
 
-`sh tools/cloud-tests/run.sh` runs the link flow (start, approve, one-time pickup, expiry, refresh, revoke, rate limit) against a
+`sh tests/run.sh` in the `pek-cloud` repo runs the link flow (start, approve, one-time pickup, expiry, refresh, revoke, rate limit) against a
 real SQLite database with a fake Discord. It passes.
 
 ## Build changes this makes

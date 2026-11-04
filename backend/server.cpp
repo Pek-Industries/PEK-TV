@@ -1550,6 +1550,6 @@ void PekServer::start(int port, const std::string& plugins_dir,
         res.set_content(json, "application/json");
     });
 
-    std::cout << "[PEK Server] Web UI & API online at http://" << (remoteOpen ? bindAddr : std::string("127.0.0.1")) << ":" << port << std::endl;
+    std::cout << "[PEK Server] API online at http://" << (remoteOpen ? bindAddr : std::string("127.0.0.1")) << ":" << port << std::endl;
     svr.listen(bindAddr, port);
 }

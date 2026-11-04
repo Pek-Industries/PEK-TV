@@ -1,6 +1,6 @@
 // Discord Rich Presence for PEK TV (see ../../../../../DISCORD.md and flutter_ui/lib/src/discord.dart).
 //
-// Dart gives this file an app id and an OAuth2 access token (obtained by the link flow in cloud/worker.js); it connects to Discord
+// Dart gives this file an app id and an OAuth2 access token (obtained by the link flow in pek-cloud/pek-sync); it connects to Discord
 // as that person with the Discord Social SDK and sets the "Watching ..." activity.
 //
 // The Social SDK comes from the Discord developer portal as android/app/libs/discord_partner_sdk.aar. CMakeLists.txt defines

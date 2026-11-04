@@ -3,7 +3,7 @@
 // Automatic subtitle look-up
 //
 // The app does not talk to OpenSubtitles itself: one shared account lives in the cloud worker
-// (cloud/worker.js: /v1/subs/search and /v1/subs/get), so nobody needs their own key. This file is the
+// (pek-cloud/pek-sync: /v1/subs/search and /v1/subs/get), so nobody needs their own key. This file is the
 // local half: it forwards the page's requests to the worker and keeps the downloaded text so the player
 // (mpv, or the <video> element) can load it from this device.
 //
