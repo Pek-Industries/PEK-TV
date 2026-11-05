@@ -12,6 +12,7 @@ import 'ratings_export.dart';
 import 'store.dart';
 import 'suggest.dart';
 import 'tokens.dart';
+import 'watch_filter.dart';
 import 'watched.dart';
 import 'widgets.dart';
 
@@ -497,9 +498,33 @@ Future<bool> confirmRemoveFromHistory(BuildContext context, String title) async 
   return yes == true;
 }
 
-class HistoryPage extends StatelessWidget {
+class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key, required this.padding});
   final EdgeInsets padding;
+
+  @override
+  State<HistoryPage> createState() => _HistoryPageState();
+}
+
+class _HistoryPageState extends State<HistoryPage> {
+  final _q = TextEditingController();
+  WatchFilter _filter = WatchFilter.all; // all | watching (stopped partway) | watched (finished)
+
+  @override
+  void dispose() {
+    _q.dispose();
+    super.dispose();
+  }
+
+  EdgeInsets get padding => widget.padding;
+
+  /// Every word typed has to appear in [text] (case does not matter), so "office s02" finds The Office S02E05.
+  static bool _matches(String query, String text) {
+    final words = query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+    if (words.isEmpty) return true;
+    final hay = text.toLowerCase();
+    return words.every(hay.contains);
+  }
 
   static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -539,11 +564,29 @@ class HistoryPage extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: Store.changed,
       builder: (context, _, __) {
-        final items = Store.history();
-        final resume = Store.resumeItems();
+        final totalDone = Store.history().length;
+        final totalResume = Store.resumeItems().length;
+        final query = _q.text;
+        final searching = query.trim().isNotEmpty || _filter != WatchFilter.all;
+        // Watching = still in Continue watching, Watched = finished. The search looks at the title, season and episode, year.
+        final items = _filter == WatchFilter.watching ? <HistoryEntry>[] : [for (final e in Store.history()) if (_matches(query, '${e.label} ${e.year}')) e];
+        final resume = _filter == WatchFilter.watched ? <Progress>[] : [for (final r in Store.resumeItems()) if (_matches(query, '${r.title} ${r.showTitle}')) r];
         Widget sub(String text) => Padding(padding: EdgeInsets.only(top: 0.25 * rem, bottom: 0.6 * rem), child: Text(text, style: TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2)));
         return ListView(padding: padding, children: [
           const Heading('Watch History', weather: true),
+          Padding(
+            padding: EdgeInsets.only(bottom: 0.25 * rem),
+            child: PekField(key: const ValueKey('history-search'), label: 'Search watch history', controller: _q, hint: 'Title, season or episode, year', onChanged: (_) => setState(() {})),
+          ),
+          Padding(
+            padding: EdgeInsets.only(bottom: rem),
+            child: WatchFilterBar(
+              value: _filter,
+              options: const [WatchFilter.all, WatchFilter.watching, WatchFilter.watched],
+              counts: {WatchFilter.all: totalDone + totalResume, WatchFilter.watching: totalResume, WatchFilter.watched: totalDone},
+              onChanged: (f) => setState(() => _filter = f),
+            ),
+          ),
           if (resume.isNotEmpty) ...[
             sub('Continue watching'),
             for (final it in resume)
@@ -564,7 +607,9 @@ class HistoryPage extends StatelessWidget {
             SizedBox(height: rem),
             if (items.isNotEmpty) sub('Finished'),
           ],
-          if (items.isEmpty && resume.isEmpty)
+          if (items.isEmpty && resume.isEmpty && searching)
+            const PekCard(title: 'No matches', subtitle: 'Nothing in your watch history fits that search and filter.')
+          else if (items.isEmpty && resume.isEmpty)
             const PekCard(title: 'Nothing watched yet', subtitle: 'Anything you stop partway or finish shows up here.')
           else if (items.isNotEmpty) ...[
             Padding(
