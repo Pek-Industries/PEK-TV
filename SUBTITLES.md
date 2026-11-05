@@ -1,7 +1,7 @@
 # Automatic subtitles
 
 PEK TV looks subtitles up online when what you are watching has none (torrent streams, bare files).
-Nobody needs an OpenSubtitles account: one shared account lives in the cloud worker (see pek-cloud/DEPLOY.md, "Subtitles").
+Nobody needs an OpenSubtitles account: one shared account lives in the cloud worker.
 
 ## How it behaves
 - A few seconds after playback starts, if the file has no subtitle track of its own, the best match is
@@ -14,7 +14,7 @@ Nobody needs an OpenSubtitles account: one shared account lives in the cloud wor
   serves it to all later users for free, and caps new downloads per day and per person.
 
 ## Where things are
-- pek-cloud/pek-sync   /v1/subs/search, /v1/subs/get (shared account, D1 cache, daily limits)
+- cloud sync worker    /v1/subs/search, /v1/subs/get (shared account, D1 cache, daily limits)
 - backend/subtitles.h  local routes /api/subtitles/search, /fetch, /cache/<id>.srt (forwards to the worker)
 - flutter_ui/lib/src/subtitles.dart     release-name parsing, client, SRT handling, the per-player controller
 - flutter_ui/lib/src/settings_extra.dart Settings > Subtitles

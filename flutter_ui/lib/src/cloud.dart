@@ -30,7 +30,7 @@ class CloudResult {
   final bool changed;
 }
 
-/// The household account (email + password) of the PEK Cloud worker (pek-cloud/pek-sync) and the
+/// The household account (email + password) of the PEK Cloud worker and the
 /// two-way sync of watch history and resume points. Each profile syncs its own data under the account.
 ///
 /// Library favorites sync too. The cloud keys favorites by TMDb id (`f|movie:603`), so each favorite is looked up once through

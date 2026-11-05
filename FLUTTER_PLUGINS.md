@@ -335,7 +335,7 @@ What it needed from the host, all in `pek_ui`:
   the device (`custom-...`), and refuses unreadable colours again. Built-in and installed skins are never changed by a plugin.
 - Settings > Appearance opens it with `launch` `{"type": "skin", "id": <skin id>, "mode": "edit" | "from" | "paste"}`.
 - The store: `skin-maker` is in `PluginInstaller.stockIds`, `isReservedId` / `isStockId` (backend), `PluginBackup.builtin` and `MainActivity.stockPlugins`.
-  In `pek-cloud/store-worker.js` the id is **owner-only** (`OWNER_ONLY_PLUGINS`): only the owner route may publish it, nobody else can take the id.
+  In the store worker the id is **owner-only** (`OWNER_ONLY_PLUGINS`): only the owner route may publish it, nobody else can take the id.
 
 ## Files
 - `android/app/src/main/python/pek_ui.py` - what a screen imports (builders + host calls)
@@ -357,7 +357,7 @@ What it needed from the host, all in `pek_ui`:
 ## Plugin pictures, built-in plugins and updates (Fixes 4)
 - **Picture**: `plugin.json` `"icon": "icon.png"` (png / jpg / webp in the plugin folder, 256x256 recommended, under 60 KB). The Plugins page shows it
   (served from `/plugins/<id>/<icon>`), the store worker copies it into the listing as a small data: address (`icon` column, added by itself
-  on the first request after you paste `pek-cloud/store-worker.js`) so the store list and the install screen show it without downloading the plugin.
+  on the first request after you deploy the store worker) so the store list and the install screen show it without downloading the plugin.
 - **Built-in plugins** (`weather`, `tmdb-discover`, `skin-maker`, `PluginInstaller.stockIds` / `isReservedId`) cannot be removed: no Remove button, and the
   server refuses (`/api/plugins` now reports `builtin`).
 - **Updates** (`plugin_updates.dart`, checked 6 s after start and whenever the Plugins page opens):

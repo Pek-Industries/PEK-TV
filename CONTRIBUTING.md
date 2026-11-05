@@ -45,7 +45,7 @@ The reference docs are in the repository root: `PLUGINS.md`, `FLUTTER_PLUGINS.md
 2. Keep the change focused: one fix or one feature per pull request.
 3. Follow the style of the code around you. Do not reformat files you are not changing.
 4. Test it. The Flutter tests are in `flutter_ui/test` (`flutter test`), the C++ tests are in `backend/*_test.cpp`, and
-   the cloud tests are in the separate `pek-cloud` repo. Add or update a test when you change behaviour that has one.
+   the cloud workers have their own tests, outside this repository. Add or update a test when you change behaviour that has one.
 5. Update the documentation in the same pull request (see below).
 6. Open the pull request and say what changed, why, and how you tested it (device, Android version, TV or phone).
 

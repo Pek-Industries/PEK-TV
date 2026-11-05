@@ -11,7 +11,7 @@ import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
 
-/// One message from Settings > Updates (news, an update note or a coupon code). You post them with the sync worker (pek-cloud/pek-sync)
+/// One message from Settings > Updates (news, an update note or a coupon code). You post them with the sync worker
 /// (`POST /v1/news/post`, or the news-admin page on the website); the app only reads them.
 class NewsItem {
   const NewsItem({required this.id, required this.created, required this.kind, required this.title, this.body = '', this.code = '', this.link = ''});
