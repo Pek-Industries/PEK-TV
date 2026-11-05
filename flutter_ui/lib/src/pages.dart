@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'account_pages.dart';
+import 'activity.dart';
 import 'all_files_access.dart';
 import 'layouts.dart';
 import 'api.dart';
@@ -151,6 +152,88 @@ Future<void> _showFileInfo(BuildContext context, FileRow f, {String? note}) {
   );
 }
 
+/// The page shell shared by Duplicates and Unknown: a heading with the same Refresh button as Movies / TV Shows. After files
+/// are renamed or moved (in a file manager), Refresh asks the server to scan the media folders again (POST /api/rescan, then
+/// /api/scan-status until it is done, like LibraryPage._rescan) and reads the list again, so what was sorted drops off it.
+class _RescanListPage<T> extends StatefulWidget {
+  const _RescanListPage({required this.title, required this.padding, required this.load, required this.builder});
+  final String title;
+  final EdgeInsets padding;
+  final Future<T> Function() load;
+  final Widget Function(BuildContext, T) builder;
+
+  @override
+  State<_RescanListPage<T>> createState() => _RescanListPageState<T>();
+}
+
+class _RescanListPageState<T> extends State<_RescanListPage<T>> {
+  late Future<T> _data = widget.load();
+  bool _refreshing = false;
+  int _cooldown = 0;
+  Timer? _timer;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startCooldown(int seconds) {
+    _timer?.cancel();
+    setState(() => _cooldown = seconds);
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return t.cancel();
+      setState(() => _cooldown = _cooldown - 1);
+      if (_cooldown <= 0) t.cancel();
+    });
+  }
+
+  Future<void> _rescan() async {
+    if (_refreshing || _cooldown > 0) return;
+    _startCooldown(10);
+    setState(() => _refreshing = true);
+    Activity.begin('scan', 'Scanning your media folders\u2026');
+    try {
+      final wait = await Api.rescan();
+      if (wait != null) {
+        _startCooldown(wait); // the server asked to wait a little before the next scan
+      } else {
+        for (var i = 0; i < 60; i++) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          if (!await Api.scanning()) break;
+        }
+      }
+    } catch (_) {}
+    Activity.end('scan', 'Scan finished');
+    if (!mounted) return;
+    Api.forgetLibrary();
+    setState(() {
+      _refreshing = false;
+      _data = widget.load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final t = p.tokens;
+    final rem = p.rem;
+    final blocked = _refreshing || _cooldown > 0;
+    final label = _refreshing ? 'Scanning\u2026' : (_cooldown > 0 ? 'Refresh ($_cooldown' 's)' : 'Refresh');
+    final refresh = PekButton(
+      compact: true,
+      label: label,
+      onTap: blocked ? null : _rescan,
+      leading: Spin(spinning: _refreshing, child: Text('\u21bb', style: TextStyle(fontSize: 1.1 * rem, height: 1, color: t.accent))),
+    );
+    return ListView(padding: widget.padding, children: [
+      Heading(widget.title, trailing: refresh, weather: true),
+      if (_refreshing) const ScanLine(label: 'Scanning your library\u2026'),
+      Async<T>(future: _data, builder: widget.builder),
+    ]);
+  }
+}
+
 class DuplicatesPage extends StatelessWidget {
   const DuplicatesPage({super.key, required this.padding});
   final EdgeInsets padding;
@@ -160,25 +243,24 @@ class DuplicatesPage extends StatelessWidget {
     final rem = context.pek.rem;
     const kind = {'movie': 'Same movie', 'episode': 'Same episode', 'size': 'Same size, different names'};
     String plural(int n, String w) => '$n $w${n == 1 ? '' : 's'}';
-    return ListView(padding: padding, children: [
-      const Heading('Duplicates', weather: true),
-      Async<DuplicatesResult>(
-        future: Api.duplicates(),
-        builder: (context, d) {
-          if (d.groups.isEmpty) return const PekCard(title: 'No duplicates found', subtitle: 'Every movie and episode in your library appears only once.');
-          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            PekCard(title: '${plural(d.groups.length, 'duplicate group')} found', subtitle: 'Keep one of each to free up to ${formatBytes(d.wastedTotal)}. PEK TV only lists them: delete files in your file manager.'),
-            SizedBox(height: 1.25 * rem),
-            for (final g in d.groups)
-              Section(
-                title: g.kind == 'size' && g.files.isNotEmpty ? '${g.label}: ${formatBytes(g.files.first.size)}' : g.label,
-                hint: '${kind[g.kind] ?? 'Duplicate'} \u00b7 ${plural(g.files.length, 'copy')} \u00b7 up to ${formatBytes(g.wasted)} to free',
-                children: [for (final f in g.files) ListRow(title: f.filename, subtitle: '${formatBytes(f.size)} \u00b7 ${f.path}', onTap: () => _showFileInfo(context, f, note: 'PEK TV only lists duplicates: delete the copy you do not want in your file manager.'))],
-              ),
-          ]);
-        },
-      ),
-    ]);
+    return _RescanListPage<DuplicatesResult>(
+      title: 'Duplicates',
+      padding: padding,
+      load: Api.duplicates,
+      builder: (context, d) {
+        if (d.groups.isEmpty) return const PekCard(title: 'No duplicates found', subtitle: 'Every movie and episode in your library appears only once.');
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          PekCard(title: '${plural(d.groups.length, 'duplicate group')} found', subtitle: 'Keep one of each to free up to ${formatBytes(d.wastedTotal)}. PEK TV only lists them: delete files in your file manager.'),
+          SizedBox(height: 1.25 * rem),
+          for (final g in d.groups)
+            Section(
+              title: g.kind == 'size' && g.files.isNotEmpty ? '${g.label}: ${formatBytes(g.files.first.size)}' : g.label,
+              hint: '${kind[g.kind] ?? 'Duplicate'} \u00b7 ${plural(g.files.length, 'copy')} \u00b7 up to ${formatBytes(g.wasted)} to free',
+              children: [for (final f in g.files) ListRow(title: f.filename, subtitle: '${formatBytes(f.size)} \u00b7 ${f.path}', onTap: () => _showFileInfo(context, f, note: 'PEK TV only lists duplicates: delete the copy you do not want in your file manager.'))],
+            ),
+        ]);
+      },
+    );
   }
 }
 
@@ -188,16 +270,15 @@ class UnknownPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(padding: padding, children: [
-      const Heading('Unknown', weather: true),
-      Async<List<FileRow>>(
-        future: Api.unknown(),
-        builder: (context, files) {
-          if (files.isEmpty) return const PekCard(title: 'Nothing here', subtitle: 'Every scanned file was classified as a movie or TV episode.');
-          return Column(children: [for (final f in files) ListRow(title: f.filename, subtitle: f.path, onTap: () => _showFileInfo(context, f))]);
-        },
-      ),
-    ]);
+    return _RescanListPage<List<FileRow>>(
+      title: 'Unknown',
+      padding: padding,
+      load: Api.unknown,
+      builder: (context, files) {
+        if (files.isEmpty) return const PekCard(title: 'Nothing here', subtitle: 'Every scanned file was classified as a movie or TV episode.');
+        return Column(children: [for (final f in files) ListRow(title: f.filename, subtitle: f.path, onTap: () => _showFileInfo(context, f))]);
+      },
+    );
   }
 }
 
