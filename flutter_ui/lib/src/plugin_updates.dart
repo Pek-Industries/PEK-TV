@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -8,6 +9,7 @@ import 'plugin_github.dart';
 import 'plugin_install_ui.dart';
 import 'plugin_store.dart';
 import 'plugin_store_ui.dart';
+import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
 
@@ -18,10 +20,21 @@ import 'widgets.dart';
 ///    itself: it is PEK's own plugin, published by the owner.
 ///  * A plugin installed from GitHub is looked up on GitHub again (its latest release). A newer one is only OFFERED on the Plugins
 ///    page: it is third-party code from an unverified developer, so the person sees the permissions screen again and taps Update.
-///  * Plugins from the Community shelf or a .zip file are not checked here.
+///  * Plugins installed from the PEK Store (Official or Community shelf) are looked up on the store again. A newer version is OFFERED
+///    on the Updates screen (the dot on its tab), never installed by itself: the person taps it and lands on the install screen.
+///  * Plugins from a .zip file are not checked here.
+///  * The check runs a few seconds after start, again every few hours while the app stays open, and whenever Updates opens.
 class PluginUpdates {
   /// GitHub plugins with a newer release, by plugin id.
   static final ValueNotifier<Map<String, GithubUpdate>> github = ValueNotifier(const {});
+
+  /// Store plugins (Official or Community shelf) with a newer version, by plugin id.
+  static final ValueNotifier<Map<String, StoreUpdate>> store = ValueNotifier(const {});
+
+  /// How many available updates (GitHub + store) the person has not seen on the Updates screen yet: the dot on its tab.
+  static final ValueNotifier<int> unseen = ValueNotifier(0);
+
+  static const _kSeen = 'pek_plugin_updates_seen';
 
   /// Built-in plugins that were updated from the store during this run (for a one-time message on the Plugins page).
   static final ValueNotifier<List<String>> updatedStock = ValueNotifier(const []);
@@ -33,6 +46,42 @@ class PluginUpdates {
     if (_started) return;
     _started = true;
     Timer(const Duration(seconds: 6), () => unawaited(check()));
+    Timer.periodic(const Duration(hours: 3), (_) => unawaited(check())); // while the app stays open
+  }
+
+  /// One key per offered update ("store:id@version", "gh:id@tag"): a newer release later is a new key, so the dot comes back.
+  static List<String> currentKeys() => [
+        for (final e in github.value.entries) 'gh:${e.key}@${e.value.release.tag}',
+        for (final e in store.value.entries) 'store:${e.key}@${e.value.item.version}',
+      ];
+
+  /// The keys the person has already seen on the Updates screen.
+  static Set<String> seenKeys() {
+    try {
+      final raw = Store.strGet(_kSeen, scoped: false);
+      if (raw == null || raw.isEmpty) return {};
+      return {for (final e in (jsonDecode(raw) as List)) '$e'};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static void _recount() {
+    final seen = seenKeys();
+    unseen.value = currentKeys().where((k) => !seen.contains(k)).length;
+  }
+
+  /// The Updates screen was opened: everything offered so far counts as seen (the dot goes away).
+  static Future<void> markSeen() async {
+    final keys = currentKeys();
+    if (keys.isEmpty) {
+      unseen.value = 0;
+      return;
+    }
+    final seen = seenKeys()..addAll(keys);
+    final list = seen.toList();
+    await Store.strSet(_kSeen, jsonEncode(list.length > 60 ? list.sublist(list.length - 60) : list), scoped: false);
+    unseen.value = 0;
   }
 
   /// 1.10.0 is newer than 1.9.2; a missing number counts as 0. Letters after a number are ignored (1.2.0-beta = 1.2.0).
@@ -58,6 +107,8 @@ class PluginUpdates {
       }
       await _stock(installed);
       await _github(installed);
+      await _store(installed);
+      _recount();
     } finally {
       _checking = false;
     }
@@ -110,6 +161,56 @@ class PluginUpdates {
     github.value = found;
   }
 
+  /// Plugins installed from the PEK Store (Official or Community shelf, not the built-in ones: those update by themselves above).
+  static Future<void> _store(List<PluginInfo> installed) async {
+    final mine = <String, PluginInfo>{};
+    for (final p in installed) {
+      final src = PluginInstaller.sourceOf(p.folder);
+      if (src == 'community' || (src == 'official' && !PluginInstaller.stockIds.contains(p.folder))) mine[p.folder] = p;
+    }
+    if (mine.isEmpty) {
+      store.value = const {};
+      return;
+    }
+    List<StoreItem> items;
+    try {
+      items = await PekStoreApi.listAll();
+    } catch (_) {
+      return; // offline: keep what we knew
+    }
+    final found = <String, StoreUpdate>{};
+    for (final it in items) {
+      final have = mine[it.id];
+      if (have == null || it.version.isEmpty || have.version.isEmpty) continue;
+      if (!newer(it.version, have.version)) continue;
+      found[it.id] = StoreUpdate(plugin: have, item: it);
+    }
+    store.value = found;
+  }
+
+  /// Opens the install screen for a store update: the same permissions screen as a first install, straight in the app.
+  static Future<void> openStoreUpdate(BuildContext context, StoreUpdate u) async {
+    final it = u.item;
+    final shelf = it.shelf == 'official' ? 'official' : 'community';
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => SubScreen(
+          title: 'Update ${it.name}',
+          body: Builder(
+            builder: (c) => PluginInstallPage(
+              title: it.name,
+              shelf: shelf,
+              load: (progress) => PekStoreApi.download(it, onProgress: progress, official: shelf == 'official'),
+              padding: c.pek.pagePad,
+            ),
+          ),
+        ),
+      ),
+    );
+    unawaited(check());
+  }
+
   /// Opens the install screen for a GitHub update: the same permissions screen as a first install.
   static Future<void> openGithubUpdate(BuildContext context, GithubUpdate u) async {
     final rel = u.release;
@@ -138,6 +239,12 @@ class PluginUpdates {
     );
     unawaited(check());
   }
+}
+
+class StoreUpdate {
+  const StoreUpdate({required this.plugin, required this.item});
+  final PluginInfo plugin; // what is installed now
+  final StoreItem item; // the newer version on the store
 }
 
 class GithubUpdate {

@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'cloud.dart';
 import 'common.dart';
+import 'plugin_updates.dart';
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -92,6 +93,7 @@ class News {
 
   /// The person opened Updates: everything up to the newest message counts as read.
   static Future<void> markAllSeen() async {
+    await PluginUpdates.markSeen(); // the plugin updates listed on the same screen count as seen too
     if (items.isEmpty) return;
     final top = items.first.id;
     if (top > seenId()) await Store.strSet(_kSeen, '$top', scoped: false);
@@ -214,6 +216,70 @@ class _NewsSectionState extends State<NewsSection> {
   }
 }
 
+/// Plugin updates found by the automatic check (PEK Store or GitHub), at the top of Updates. Tapping a row opens that plugin's
+/// install screen inside the app, where the person checks the permissions and taps Update.
+class PluginUpdateRows extends StatefulWidget {
+  const PluginUpdateRows({super.key, this.markSeen = true});
+  final bool markSeen; // false on a phone swipe page: it is built before it is shown, so the shell marks it seen when swiped to
+  @override
+  State<PluginUpdateRows> createState() => _PluginUpdateRowsState();
+}
+
+class _PluginUpdateRowsState extends State<PluginUpdateRows> {
+  late final Set<String> _seenBefore; // updates not in here are shown as new
+
+  @override
+  void initState() {
+    super.initState();
+    _seenBefore = PluginUpdates.seenKeys();
+    PluginUpdates.checkOnStartup();
+    // Looks again every time Updates opens, so a plugin published a minute ago shows up without restarting the app.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await PluginUpdates.check();
+      if (mounted && widget.markSeen && PluginUpdates.currentKeys().isNotEmpty) await PluginUpdates.markSeen();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final t = p.tokens;
+    return ListenableBuilder(
+      listenable: Listenable.merge([PluginUpdates.store, PluginUpdates.github]),
+      builder: (context, _) {
+        final rows = <Widget>[
+          for (final e in PluginUpdates.store.value.entries)
+            ListRow(
+              leading: Icon(Icons.extension_outlined, color: t.accent),
+              title: '${e.value.item.name} has an update',
+              subtitle: '${e.value.plugin.version} \u2192 ${e.value.item.version} \u00b7 ${e.value.item.shelf == 'official' ? 'PEK Store official' : 'PEK Store'} \u00b7 tap to update',
+              highlight: !_seenBefore.contains('store:${e.key}@${e.value.item.version}'),
+              trailing: Icon(Icons.chevron_right, color: t.textMuted),
+              onTap: () => PluginUpdates.openStoreUpdate(context, e.value),
+            ),
+          for (final e in PluginUpdates.github.value.entries)
+            ListRow(
+              leading: Icon(Icons.extension_outlined, color: t.accent),
+              title: '${e.value.plugin.name} has an update',
+              subtitle: '${e.value.plugin.version} \u2192 ${e.value.release.tag} \u00b7 GitHub ${e.value.release.owner}/${e.value.release.repo} \u00b7 tap to update',
+              highlight: !_seenBefore.contains('gh:${e.key}@${e.value.release.tag}'),
+              trailing: Icon(Icons.chevron_right, color: t.textMuted),
+              onTap: () => PluginUpdates.openGithubUpdate(context, e.value),
+            ),
+        ];
+        if (rows.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: EdgeInsets.only(bottom: 1.0 * p.rem),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(padding: EdgeInsets.only(bottom: 0.4 * p.rem), child: Text('Plugin updates', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.0 * p.rem))),
+            ...rows,
+          ]),
+        );
+      },
+    );
+  }
+}
+
 /// Updates as a main screen: the news feed (news, update notes, coupon codes), reached from the phone's bottom bar or the TV menu.
 class UpdatesPage extends StatelessWidget {
   const UpdatesPage({super.key, required this.padding, this.markSeen = true});
@@ -226,6 +292,7 @@ class UpdatesPage extends StatelessWidget {
     return ListView(padding: padding, children: [
       const Heading('Updates', weather: true),
       Padding(padding: EdgeInsets.only(bottom: 0.75 * p.rem), child: Text('News about PEK TV, offers and coupon codes.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.9 * p.rem))),
+      PluginUpdateRows(markSeen: markSeen),
       NewsSection(page: true, markSeen: markSeen),
     ]);
   }

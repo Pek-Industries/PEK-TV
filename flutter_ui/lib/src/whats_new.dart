@@ -37,6 +37,7 @@ class WhatsNew {
       'Discord: show what you are watching on your Discord profile. Link it in Settings \u2192 Account (button on phones, QR code on TV). Pause or unlink any time.',
       'Mini player: tap the picture-in-picture button, or press Home, and your video keeps playing in a small window. Only on devices that support it.',
       'Posters appear right away: movies and shows from a new folder now load their posters and details on their own, no need to press Refresh.',
+      'Plugin updates: new versions of your plugins from the PEK Store or GitHub now show up in Updates (with a dot on the tab). Tap one to open its install screen.',
       'Check for updates: a new button in Settings \u2192 Advanced \u2192 App updates looks for a new version right away.',
     ]),
   ];

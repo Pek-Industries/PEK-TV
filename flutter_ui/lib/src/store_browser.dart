@@ -11,6 +11,7 @@ import 'common.dart';
 import 'fields.dart' show PekDropdown;
 import 'plugin_store.dart';
 import 'plugin_store_ui.dart' show PluginInstallPage, PluginPicture;
+import 'plugin_updates.dart' show PluginUpdates;
 import 'plugin_zip.dart';
 import 'skin_install.dart';
 import 'skin_install_ui.dart';
@@ -451,6 +452,7 @@ class _StoreBrowserState extends State<StoreBrowser> {
                 title: it.name,
                 shelf: shelf,
                 load: (progress) => PekStoreApi.download(it, onProgress: progress, official: shelf == 'official'),
+                installedVersion: _installedVersion(it),
                 padding: c.pek.pagePad,
               ),
             ),
@@ -837,7 +839,8 @@ class _StoreCard extends StatelessWidget {
 
     // One badge: an update beats "installed", which beats "new".
     Widget? badge;
-    if (installed != null && it.version.isNotEmpty && installed != it.version) {
+    // "Update" only when the store really has a NEWER version (not just a different one: 1.0 vs 1.0.0, or a newer local copy).
+    if (installed != null && it.version.isNotEmpty && PluginUpdates.newer(it.version, installed!)) {
       badge = _badge(context, 'Update', solid: true, icon: Icons.arrow_upward);
     } else if (installed != null) {
       badge = _badge(context, 'Installed', solid: false, icon: Icons.check);

@@ -1,3 +1,4 @@
+import 'plugin_updates.dart' show PluginUpdates;
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -24,8 +25,12 @@ enum _Stage { downloading, error, warning, confirm, installing, done }
 ///   source   what to remember about where it came from (defaults to [shelf])
 ///   notice   extra lines for the top of the permissions screen
 class PluginInstallPage extends StatefulWidget {
-  const PluginInstallPage({super.key, required this.title, required this.shelf, required this.load, required this.padding, this.source, this.notice});
+  const PluginInstallPage({super.key, required this.title, required this.shelf, required this.load, required this.padding, this.source, this.notice, this.installedVersion});
   final String title, shelf;
+
+  /// The version installed now (null = not installed). When the plugin being offered is not newer than this, the screen says
+  /// "up to date" with an Open button instead of offering an Update.
+  final String? installedVersion;
   final Future<PreparedPlugin> Function(void Function(int, int) progress) load;
   final EdgeInsets padding;
   final Object? source;
@@ -115,6 +120,13 @@ class _InstallPageState extends State<PluginInstallPage> {
     }
   }
 
+  /// Installed already, and the offered version is not newer: nothing to update.
+  bool _upToDate(PreparedPlugin prep) {
+    final have = widget.installedVersion;
+    if (have == null || have.isEmpty || !_replaced) return false;
+    return !PluginUpdates.newer(prep.version, have);
+  }
+
   Widget _para(BuildContext context, String t) {
     final p = context.pek;
     final bad = t.startsWith(PluginPek.rejected); // a file that is not a correct .PEK plugin: red
@@ -171,6 +183,19 @@ class _InstallPageState extends State<PluginInstallPage> {
           Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: w.button, primary: true, autofocus: true, onTap: () => setState(() => _stage = _Stage.confirm)),
             PekButton(label: 'Cancel', onTap: () => Navigator.maybePop(context)),
+          ]),
+        ]);
+      case _Stage.confirm when _upToDate(prep!):
+        children.addAll([
+          if (prep!.iconBytes != null) Padding(padding: EdgeInsets.only(bottom: 0.6 * p.rem), child: PluginPicture(bytes: prep!.iconBytes, size: 5 * p.rem)),
+          Heading('\u201c${prep!.name}\u201d is up to date'),
+          _panel(context, ['You have version ${widget.installedVersion}, the newest one available.']),
+          SizedBox(height: p.rem),
+          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+            if (prep!.hasFlutterScreen)
+              PekButton(label: 'Open', primary: true, autofocus: true, onTap: () => openPluginScreen(context, pluginId: prep!.id, title: prep!.navTab.isEmpty ? prep!.name : prep!.navTab)),
+            PekButton(label: 'Reinstall', onTap: _install),
+            PekButton(label: 'Close', autofocus: !prep!.hasFlutterScreen, primary: !prep!.hasFlutterScreen, onTap: () => Navigator.maybePop(context)),
           ]),
         ]);
       case _Stage.confirm:

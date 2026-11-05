@@ -682,11 +682,11 @@ class _BarItem extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           if (badge)
-            ValueListenableBuilder<int>(
-              valueListenable: News.unread,
-              builder: (context, n, _) => Stack(clipBehavior: Clip.none, children: [
+            ListenableBuilder(
+              listenable: Listenable.merge([News.unread, PluginUpdates.unseen]), // news OR a plugin update the person has not seen
+              builder: (context, _) => Stack(clipBehavior: Clip.none, children: [
                 Icon(icon, size: 22, color: c),
-                if (n > 0) Positioned(right: -3, top: -1, child: Container(width: 9, height: 9, decoration: BoxDecoration(color: t.accent, shape: BoxShape.circle))),
+                if (News.unread.value + PluginUpdates.unseen.value > 0) Positioned(right: -3, top: -1, child: Container(width: 9, height: 9, decoration: BoxDecoration(color: t.accent, shape: BoxShape.circle))),
               ]),
             )
           else
