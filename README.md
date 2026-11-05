@@ -37,7 +37,7 @@ See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md` and `MUSIC.md`
 - `backend/`: the C++ server (library scanner, network sources, music, subtitles, and a torrent engine that only plugins can start).
 - `android/`: the Android app (start-up, libmpv player, Python plugin host) and the GitHub Actions build.
 - `plugins/`, `skins/`: built-in plugins and skins (Weather, TMDb Discover, Skin maker). Plugins are only ever installed from `.PEK` files; build one with `python tools/pektool.py --official pack plugins/<id> --clean -o dist/<id>.PEK` (`dist/` is not committed).
-- The Cloudflare workers (accounts and sync, plugin store, billing) are not in this repository. `CLOUD_API.md` lists what the app calls.
+- The Cloudflare workers (accounts and sync, plugin store, billing) are run by PEK Industries. They are separate, proprietary software and are not in this repository. `CLOUD_API.md` lists what the app calls.
 - `assets/`: branding artwork: launcher icon, TV banner, splash videos (`assets/android/res`) and README screenshots.
 - `tools/`: helper scripts (`make_skin.py`, `sync_providers.js` with `providers.json`).
 
@@ -47,7 +47,7 @@ See `CONTRIBUTING.md` for how to report bugs and send changes. The Android app h
 
 ## Legal
 
-PEK TV is free software under the GNU Affero General Public License v3.0 (AGPL-3.0). See the `LICENCE` file. You may use, change and self-host it (including your own cloud workers). If you run a modified version as a network service, you must offer its source to the people using it. PEK Cloud, the paid backup and sync service, is run by PEK Industries on its own servers; the names and logos "PEK" and "PEK TV" are trademarks of PEK Industries and are not covered by the licence.
+The PEK TV app in this repository is free software under the GNU Affero General Public License v3.0 (AGPL-3.0). See the `LICENCE` file. You may use, study, change and share it under that licence, and if you run a modified version as a network service, you must offer its source to the people using it. PEK Cloud (accounts, backup and sync, the plugin store and billing) is separate software that PEK Industries runs on its own servers. Its server code is proprietary, is not part of this repository and is not covered by the AGPL. The app works without it. The names and logos "PEK" and "PEK TV" are trademarks of PEK Industries and are not covered by the licence.
 
 PEK Industries is not associated with any illegal activity involving torrents. PEK TV does not host, provide or link to any content, and ships with no search provider or index. You are responsible for what you play.
 

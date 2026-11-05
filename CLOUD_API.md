@@ -1,6 +1,6 @@
 # Cloud endpoints the app calls
 
-The server side (Cloudflare workers) is not in this repository.
+The server side (Cloudflare workers) is run by PEK Industries. It is proprietary and is not part of this repository.
 
 ## Hosts
 

@@ -18,7 +18,7 @@ class OssLib {
 const List<(String, List<OssLib>)> ossGroups = [
   ('PEK TV', [
     OssLib('PEK TV', 'This app, free software under the GNU Affero General Public License v3 (AGPL-3.0). Tap for the licence', 'AGPL-3.0', 'https://github.com/Pek-Industries/PEK-TV/blob/HEAD/LICENCE'),
-    OssLib('PEK TV source code', 'The full source of the app and the cloud workers, so you can self-host. Tap to open it', 'AGPL-3.0', 'https://github.com/Pek-Industries/PEK-TV'),
+    OssLib('PEK TV source code', 'The full source of the app. The PEK Cloud server is separate software and is not included. Tap to open it', 'AGPL-3.0', 'https://github.com/Pek-Industries/PEK-TV'),
   ]),
   ('App interface (Flutter)', [
     OssLib('Flutter', 'The framework the app screens are built with', 'BSD 3-Clause', 'https://github.com/flutter/flutter/blob/master/LICENSE'),

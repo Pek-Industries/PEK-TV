@@ -13,8 +13,9 @@ PEK TV is free software under the GNU Affero General Public License v3.0 (AGPL-3
   licence is not compatible with the AGPL-3.0.
 - The names and logos "PEK" and "PEK TV" are trademarks of PEK Industries and are not covered by the licence. Forks
   must not present themselves as the official app.
-- If you run a modified version as a network service (for example your own cloud workers), the AGPL requires you to
-  offer its source to the people using it.
+- If you run a modified version of the app as a network service, the AGPL requires you to offer its source to the
+  people using it. The PEK Cloud server is separate, proprietary software: it is not part of this repository, is not
+  covered by the AGPL and does not take contributions here.
 
 ## Where things live
 
