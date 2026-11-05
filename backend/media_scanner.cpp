@@ -1081,7 +1081,18 @@ void MediaScanner::scan(bool onlyNewSources) {
         after = after_scan_;
     }
     if (after) { try { after(); } catch (...) {} }
+    // Posters asked for while this scan was still running were looked up against the old / half-built library and the
+    // answer (often "no artwork") was remembered for minutes. Drop those now, so the first poster request after the scan
+    // already sees the new files, exactly as it does after pressing Refresh.
+    {
+        std::lock_guard<std::mutex> lock(local_mutex_);
+        local_cache_.clear();
+    }
     try { indexMetadata(); } catch (const std::exception& ex) { std::cout << "[MediaScanner] Reading details failed: " << ex.what() << std::endl; }
+    {
+        std::lock_guard<std::mutex> lock(local_mutex_);
+        local_cache_.clear();
+    }
 }
 
 void MediaScanner::setAfterScan(std::function<void()> callback) {
@@ -1127,6 +1138,9 @@ MediaScanner::Local MediaScanner::cachedLocal(const std::string& key, const std:
         if (it != local_cache_.end() && now - it->second.first < std::chrono::minutes(2)) return it->second.second;
     }
     Local value = make();                       // slow (network): never hold the lock while it runs
+    // While a scan runs the library is being rebuilt: an empty answer (no plot, no artwork) may only mean "not read yet",
+    // so it is not remembered; the next request looks again.
+    if (active_scans_.load() > 0 && value.plot.empty() && value.art.empty()) return value;
     std::lock_guard<std::mutex> lock(local_mutex_);
     if (local_cache_.size() > 4000) local_cache_.clear();
     local_cache_[key] = {now, value};

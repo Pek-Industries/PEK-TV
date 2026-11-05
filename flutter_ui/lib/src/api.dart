@@ -91,6 +91,31 @@ class Api {
   static void libraryChanged() {
     forgetLibrary();
     libraryRevision.value++;
+    unawaited(_settleAfterScan());
+  }
+
+  static int _settleTicket = 0;
+
+  /// Does for a new / removed source what the Refresh button does: waits until the scan the server started has really
+  /// finished, then drops every cached lookup (including posters that came back empty while the scan was still running)
+  /// and tells the Movies / TV Shows pages to read the library again. Works even when those pages are not open.
+  static Future<void> _settleAfterScan() async {
+    final ticket = ++_settleTicket;
+    var sawScan = false;
+    for (var i = 0; i < 180; i++) {
+      await Future<void>.delayed(Duration(milliseconds: i < 4 ? 700 : 1000));
+      if (ticket != _settleTicket) return; // a newer change replaces this one
+      final busy = await scanning();
+      if (busy) {
+        sawScan = true;
+        continue;
+      }
+      if (sawScan || i >= 3) break;
+    }
+    if (ticket != _settleTicket) return;
+    forgetLibrary();
+    _noArt.clear();
+    libraryRevision.value++;
   }
 
   // The last lists are kept on the device (art_cache.dart): if the server cannot answer, the titles still show.
@@ -227,7 +252,7 @@ class Api {
           try {
             final d = await _pool.run(load);
             if (d.poster.isEmpty) {
-              _forgetDetailSoon(key, const Duration(seconds: 60)); // no picture (yet): ask again later
+              _forgetDetailSoon(key, const Duration(seconds: 8)); // no picture (yet): ask again soon
             } else {
               _noArt.remove(key);
               unawaited(_saveDetail(key, d));

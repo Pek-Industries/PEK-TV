@@ -36,7 +36,7 @@ Every release, **before you push the tag**:
 
 1. Replace the entry in `releases` in `flutter_ui/lib/src/whats_new.dart` with a `ReleaseNotes('x.y.z', 'Short title', ['line', 'line', ...])`
    for this release (or add it at the TOP to keep older notes for people who skip versions). `x.y.z` must be the tag you push, without the `v`.
-   The current entry is 2.2.2: the Check for updates button in Settings > Advanced.
+   The current entry is 2.2.2: Discord, mini player, faster posters and the Check for updates button.
 2. Raise `version:` in `flutter_ui/pubspec.yaml` and `pekBaseCode` in `android/app/build.gradle` (see "Publishing a release").
 
 How it behaves:
