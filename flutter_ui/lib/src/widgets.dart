@@ -10,6 +10,7 @@ import 'tokens.dart';
 import 'art_cache.dart';
 import 'ratings.dart';
 import 'store.dart';
+import 'tv_nav.dart';
 
 /// The `.focusable` of the web UI. On a remote / keyboard (focus highlight on) it gets `.focused`:
 /// border-focus colour, background surface-focused, and a glow (10px accent-glow) or, in TV mode, a 0.2rem ring.
@@ -63,8 +64,8 @@ class _PekFocusableState extends State<PekFocusable> {
   bool _focus = false;
   Timer? _hold;
   bool _heldFired = false;
-  late final FocusNode _node = FocusNode(debugLabel: 'PekFocusable', onKeyEvent: _holdKey);
   final GlobalKey _revealKey = GlobalKey();
+  late final FocusNode _node = FocusNode(debugLabel: 'PekFocusable', onKeyEvent: _holdKey);
 
   /// The scrolling page only brings the item's own (unscaled) box into view, so the edge of a raised card could stay cut off at
   /// the top / bottom of the screen. This brings a slightly larger invisible box around the card into view as well (and only
@@ -73,9 +74,8 @@ class _PekFocusableState extends State<PekFocusable> {
     if (!mounted) return;
     final c = _revealKey.currentContext;
     if (c == null || !c.mounted) return;
-    const d = Duration(milliseconds: 90);
-    Scrollable.ensureVisible(c, duration: d, curve: Curves.easeOut, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
-    Scrollable.ensureVisible(c, duration: d, curve: Curves.easeOut, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
+    Scrollable.ensureVisible(c, duration: TvNav.scrollDuration, curve: TvNav.scrollCurve, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+    Scrollable.ensureVisible(c, duration: TvNav.scrollDuration, curve: TvNav.scrollCurve, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
   }
 
   @override
@@ -117,10 +117,11 @@ class _PekFocusableState extends State<PekFocusable> {
     final t = p.tokens;
     final focused = _focus && widget.enabled;
     // On a TV the focus ring is drawn ON TOP of the box (foregroundDecoration). A solid BoxShadow behind a see-through focus
-    // fill shines through it and turns the whole row deep orange. No fade either: the old item lets go at once, so two
-    // items are never lit together.
+    // fill shines through it and turns the whole row deep orange. The ring crossfades quickly (150 ms), like Netflix / Prime.
     final ringColor = (widget.focusBackground != null && widget.focusBackground != Colors.transparent ? t.text : t.borderFocus).withAlpha(210);
-    final box = Container(
+    final box = AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeOutCubic,
       padding: widget.padding,
       alignment: widget.alignment,
       constraints: widget.minHeight == null ? null : BoxConstraints(minHeight: widget.minHeight!),
@@ -158,11 +159,12 @@ class _PekFocusableState extends State<PekFocusable> {
             ? Stack(clipBehavior: Clip.none, fit: StackFit.passthrough, children: [
                 // Invisible, a little bigger than the card, never takes a touch: only used by _revealMargin.
                 Positioned(left: -widget.focusMargin, right: -widget.focusMargin, top: -widget.focusMargin, bottom: -widget.focusMargin, child: IgnorePointer(child: SizedBox(key: _revealKey))),
-                AnimatedScale(scale: focused ? widget.focusScale : 1.0, duration: const Duration(milliseconds: 120), child: box),
+                AnimatedScale(scale: focused ? widget.focusScale : 1.0, duration: const Duration(milliseconds: 180), curve: Curves.easeOutCubic, child: box),
               ])
             : AnimatedScale(
                 scale: focused ? widget.focusScale : 1.0,
-                duration: const Duration(milliseconds: 120),
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
                 child: box,
               ),
       ),

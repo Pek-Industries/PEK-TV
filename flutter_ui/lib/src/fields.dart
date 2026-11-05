@@ -59,6 +59,11 @@ class _PekFieldState extends State<PekField> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _editing) _edit.requestFocus();
     });
+    // The on-screen keyboard takes a moment to slide up and shrinks the page: glide the box back into view above it.
+    Future<void>.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted || !_editing) return;
+      Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 240), curve: Curves.easeOutCubic);
+    });
   }
 
   /// Typing is over: back to the resting focus on the box (the keyboard closes because the text lost the focus).
@@ -75,7 +80,7 @@ class _PekFieldState extends State<PekField> {
     final p = context.pek;
     final t = p.tokens;
     final tv = p.isTv;
-    OutlineInputBorder border(Color c) => OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: c == Colors.transparent ? BorderSide.none : BorderSide(color: c));
+    OutlineInputBorder border(Color c, [double w = 1.0]) => OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: c == Colors.transparent ? BorderSide.none : BorderSide(color: c, width: w));
 
     Widget field(bool ring) => TextField(
           controller: widget.controller,
@@ -102,9 +107,11 @@ class _PekFieldState extends State<PekField> {
             hintStyle: TextStyle(color: t.textMuted.withAlpha(180)),
             filled: true,
             fillColor: t.surface,
-            enabledBorder: border(ring ? t.text.withAlpha(150) : Colors.transparent),
+            // On a TV the resting focus and the typing focus use the same bold ring as buttons and cards (it fades in, the
+            // box does not snap); typing is told apart by a fuller ring.
+            enabledBorder: border(tv && ring ? t.borderFocus.withAlpha(210) : Colors.transparent, 0.16 * p.rem),
             disabledBorder: border(Colors.transparent),
-            focusedBorder: border(t.text.withAlpha(ring && !_editing ? 150 : 70)),
+            focusedBorder: tv ? border(_editing ? t.borderFocus : t.borderFocus.withAlpha(210), _editing ? 0.22 * p.rem : 0.16 * p.rem) : border(t.text.withAlpha(70)),
             border: border(Colors.transparent),
           ),
         );
@@ -126,11 +133,17 @@ class _PekFieldState extends State<PekField> {
         },
         child: ListenableBuilder(
           listenable: _shell,
-          builder: (context, _) => GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: _startEditing,
-            // While it is only resting, touches go to the tap above; while typing, to the text (caret, selection).
-            child: IgnorePointer(ignoring: !_editing, child: DpadEscape(controller: widget.controller, child: field(_shell.hasFocus))),
+          builder: (context, _) => AnimatedScale(
+            scale: _shell.hasFocus ? 1.015 : 1.0,
+            alignment: Alignment.centerLeft,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _startEditing,
+              // While it is only resting, touches go to the tap above; while typing, to the text (caret, selection).
+              child: IgnorePointer(ignoring: !_editing, child: DpadEscape(controller: widget.controller, child: field(_shell.hasFocus))),
+            ),
           ),
         ),
       );

@@ -216,3 +216,6 @@ Settings > Account (signed in), `account_pages.dart` and `plan_ui.dart`:
   the Account page also checks once (at most once a minute).
 - Signing in on a TV: **Sign in with phone** (QR code and 6-digit code, no typing) or **Sign in with email**, which works with a
   remote and the TV's on-screen keyboard (`AccountScreen`).
+
+## TV navigation (D-pad)
+`flutter_ui/lib/src/tv_nav.dart` installs the `dpad` package once, above every screen (`main.dart`: `TvNav.root`). It replaces Flutter's "closest widget" focus search with a Leanback-style one: beam-based moves, animated scroll into view, lazy lists that scroll and continue, focus that never dies (a screen that opens gets focus, focus returns after a dialog), text boxes that let the arrows out at the caret's edge. `TvNav.region` marks one visual section (the sidebar, the top bar, a poster row on the dashboard): moves stay inside it first and coming back lands on the item you left. `PekFocusable`, `PekField` and Material widgets keep their own focus nodes, since the package works with plain `Focus` widgets. `KeyGuard` still sits inside the root, so held arrows are throttled before the package sees them. To add a row or grid, wrap it in `TvNav.region(memoryKey: ..., child: ...)`.

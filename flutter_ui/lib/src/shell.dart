@@ -30,6 +30,7 @@ import 'plugin_store_ui.dart' show PluginPicture;
 import 'plugin_ui.dart';
 import 'store.dart';
 import 'tokens.dart';
+import 'tv_nav.dart';
 import 'weather.dart' show Weather;
 import 'widgets.dart';
 
@@ -421,7 +422,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         child: Row(children: [
           Padding(padding: EdgeInsets.only(right: 1.5 * rem), child: Text(_music ? 'PEK Music' : 'PEK TV', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.accent))),
           Expanded(
-            child: SizedBox(
+            child: TvNav.region(
+              memoryKey: 'shell/topbar',
+              child: SizedBox(
               height: 3 * rem,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
@@ -434,7 +437,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onTap: () => setState(() => _tab = _nav[i].$1),
                 ),
               ),
-            ),
+            )),
           ),
         ]),
       );
@@ -453,7 +456,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             child: Text(_music ? 'PEK Music' : 'PEK TV', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.accent)),
           ),
           Expanded(
-            child: ListView.separated(
+            child: TvNav.region(
+              memoryKey: 'shell/sidebar',
+              columnEdgesStop: true,
+              child: ListView.separated(
               padding: const EdgeInsets.all(4),
               itemCount: _nav.length,
               separatorBuilder: (_, __) => SizedBox(height: (Layouts.id == 'compact' ? 0.3 : 0.5) * rem),
@@ -463,7 +469,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 autofocus: _nav[i].$1 == _tab,
                 onTap: () => setState(() => _tab = _nav[i].$1),
               ),
-            ),
+            )),
           ),
           Container(
             padding: EdgeInsets.only(top: rem),

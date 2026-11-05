@@ -16,6 +16,7 @@ import 'plugin_store_ui.dart' show PluginPicture;
 import 'plugin_ui.dart';
 import 'store.dart';
 import 'tokens.dart';
+import 'tv_nav.dart';
 import 'weather.dart';
 import 'widgets.dart';
 
@@ -48,16 +49,20 @@ class DashRow extends StatelessWidget {
           if (more != null) PekButton(compact: true, label: 'See all', onTap: more),
         ]),
         SizedBox(height: 0.75 * rem),
-        SizedBox(
+        TvNav.region(
+          memoryKey: 'dash/widgetrow/$title',
+          rowEndStops: true,
+          child: SizedBox(
           height: cellH,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             clipBehavior: Clip.none,
+            cacheExtent: 1200, // keep cards beyond the edge built so the D-pad always has a next card to glide to
             itemCount: cells.length,
             separatorBuilder: (_, __) => SizedBox(width: 0.75 * rem),
             itemBuilder: (_, i) => SizedBox(width: cellW, child: cells[i]),
           ),
-        ),
+        )),
       ]),
     );
   }

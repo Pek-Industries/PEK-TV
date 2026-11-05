@@ -17,6 +17,7 @@ import 'plugin_ui.dart';
 import 'recs.dart';
 import 'store.dart';
 import 'tokens.dart';
+import 'tv_nav.dart';
 import 'widgets.dart';
 
 /// The Dashboard tab (app_dashboard.js): a grid of widgets. Clock and plugin shortcuts are tiles (1 column, or 2 when
@@ -642,16 +643,20 @@ class _DashboardPageState extends State<DashboardPage> {
           if (more != null) PekButton(compact: true, label: 'See all', onTap: more),
         ]),
         SizedBox(height: 0.75 * rem),
-        SizedBox(
+        TvNav.region(
+          memoryKey: 'dash/row/$title',
+          rowEndStops: true,
+          child: SizedBox(
           height: w * 1.5 + textRoom,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             clipBehavior: Clip.none,
+            cacheExtent: 1200, // keep cards beyond the edge built so the D-pad always has a next card to glide to
             itemCount: cells.length,
             separatorBuilder: (_, __) => SizedBox(width: 0.75 * rem),
             itemBuilder: (_, i) => SizedBox(width: w * (widthFactors != null && i < widthFactors.length ? widthFactors[i] : 1.0), child: Align(alignment: Alignment.topCenter, child: cells[i])),
           ),
-        ),
+        )),
       ]),
     );
   }

@@ -23,8 +23,11 @@ class _FocusCardState extends State<FocusCard> {
     final r = BorderRadius.circular(Pek.radius);
     return AnimatedScale(
       scale: _focused ? 1.06 : 1.0,
-      duration: const Duration(milliseconds: 120),
-      child: DecoratedBox(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
           borderRadius: r,
           border: Border.all(color: _focused ? Pek.accent : Colors.transparent, width: 3),
