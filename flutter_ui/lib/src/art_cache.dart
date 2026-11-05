@@ -15,13 +15,20 @@ import 'package:flutter/services.dart';
 ///  * small text files (details.json = synopsis + poster address per title, movies.json / shows.json = the last library
 ///    lists) under the app's files folder
 ///
-/// Pictures served by the app's own server (127.0.0.1) are not copied: they are already on the device.
+/// Pictures served by the app's own server (127.0.0.1) are not copied, with ONE exception: the library's artwork
+/// (/api/artwork: the poster.jpg / folder.jpg next to a movie or show, local or on a network share). Reading those can be slow
+/// (a network share, a sleeping disk, the server busy scanning), so a copy is kept in the app's files folder (not the cache
+/// folder, which Android may empty) and used on every later start. The Refresh button on Movies / TV Shows drops these copies
+/// ([clearLocal]) so changed files are read again.
 class ArtCache {
   static const _host = MethodChannel('pek/host');
   static const _maxBytes = 300 * 1024 * 1024;
   static const _keepBytes = 240 * 1024 * 1024;
+  static const _localMaxBytes = 400 * 1024 * 1024;
+  static const _localKeepBytes = 320 * 1024 * 1024;
 
   static Directory? _imgDir;
+  static Directory? _localDir; // the library's own artwork (see above)
   static Directory? _dataDir;
   static Future<void>? _ready;
   // Own HTTP client: a request that times out is really cancelled (abort), so a stuck download can't keep a connection
@@ -127,7 +134,9 @@ class ArtCache {
     try {
       _dataDir = await Directory('${files.path}/pek_lists').create(recursive: true);
       _imgDir = await Directory('${cache.path}/pek_art').create(recursive: true);
+      _localDir = await Directory('${files.path}/pek_local_art').create(recursive: true);
       unawaited(_prune());
+      unawaited(_pruneDir(_localDir, _localMaxBytes, _localKeepBytes));
       unawaited(_warm());
     } catch (_) {
       // No writable folder: everything below quietly does nothing and the app loads pictures from the network as before.
@@ -160,7 +169,15 @@ class ArtCache {
 
   // ---------------------------------------------------------------- pictures
 
-  static bool _cacheable(String url) => url.startsWith('http') && !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost');
+  static const _localArtPrefix = 'http://127.0.0.1:8080/api/artwork?';
+
+  /// A picture of the library itself (served by the app's own server from the user's local or network files).
+  static bool isLocalArt(String url) => url.startsWith(_localArtPrefix);
+
+  static bool _cacheable(String url) =>
+      isLocalArt(url) || (url.startsWith('http') && !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost'));
+
+  static Directory? _dirFor(String url) => isLocalArt(url) ? (_localDir ?? _imgDir) : _imgDir;
 
   static String _name(String url) => sha1.convert(utf8.encode(url)).toString();
 
@@ -219,7 +236,7 @@ class ArtCache {
 
   static Future<File?> _fetch(String url, Duration timeout) async {
     await init();
-    final d = _imgDir;
+    final d = _dirFor(url);
     if (d == null) return null;
     final f = File('${d.path}/${_name(url)}');
     try {
@@ -309,14 +326,15 @@ class ArtCache {
   /// Bytes the saved pictures take.
   static Future<int> size() async {
     await init();
-    final d = _imgDir;
-    if (d == null) return 0;
     var total = 0;
-    try {
-      await for (final e in d.list()) {
-        if (e is File) total += await e.length();
-      }
-    } catch (_) {}
+    for (final d in [_imgDir, _localDir]) {
+      if (d == null) continue;
+      try {
+        await for (final e in d.list()) {
+          if (e is File) total += await e.length();
+        }
+      } catch (_) {}
+    }
     return total;
   }
 
@@ -325,8 +343,8 @@ class ArtCache {
   static Future<void> clear() async {
     await init();
     _known.clear();
-    final d = _imgDir;
-    if (d != null) {
+    for (final d in [_imgDir, _localDir]) {
+      if (d == null) continue;
       try {
         await for (final e in d.list()) {
           try {
@@ -344,6 +362,22 @@ class ArtCache {
     }
   }
 
+  /// Drops the saved copies of the library's own artwork (the Refresh button): they are read again from the files next time.
+  static Future<void> clearLocal() async {
+    await init();
+    _known.removeWhere((url, _) => isLocalArt(url));
+    _gone.removeWhere(isLocalArt);
+    final d = _localDir;
+    if (d == null) return;
+    try {
+      await for (final e in d.list()) {
+        try {
+          await e.delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   /// A file that would not decode (cut off, or not a picture): drop it so the next look-up downloads it again.
   static void forget(String url) {
     final f = _known.remove(url);
@@ -355,8 +389,9 @@ class ArtCache {
   }
 
   /// Once per start: when the pictures take more than 300 MB, the least recently written go until 240 MB are left.
-  static Future<void> _prune() async {
-    final d = _imgDir;
+  static Future<void> _prune() => _pruneDir(_imgDir, _maxBytes, _keepBytes);
+
+  static Future<void> _pruneDir(Directory? d, int maxBytes, int keepBytes) async {
     if (d == null) return;
     try {
       final files = <File>[];
@@ -372,7 +407,7 @@ class ArtCache {
         files.add(e);
         total += await e.length();
       }
-      if (total <= _maxBytes) return;
+      if (total <= maxBytes) return;
       final stamped = <(File, DateTime, int)>[];
       for (final f in files) {
         final st = await f.stat();
@@ -380,7 +415,7 @@ class ArtCache {
       }
       stamped.sort((a, b) => a.$2.compareTo(b.$2));
       for (final s in stamped) {
-        if (total <= _keepBytes) break;
+        if (total <= keepBytes) break;
         try {
           await s.$1.delete();
           total -= s.$3;

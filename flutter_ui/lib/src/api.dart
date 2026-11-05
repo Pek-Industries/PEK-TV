@@ -267,8 +267,9 @@ class Api {
         throw lastError!;
   }
 
-  // ---- details kept on disk: synopsis + poster address per title. Only pictures from the internet are kept (a poster the
-  // library itself has comes from the local server, which answers at once and may change when the files do).
+  // ---- details kept on disk: synopsis + poster address per title. Pictures from the internet are kept, and so are the
+  // library's own posters (local folders and network shares: reading those can be slow, so they are kept too, and dropped
+  // by the Refresh button, see [forgetLocalArt]).
   static const _detailsTtl = Duration(days: 30);
   static const _detailsMax = 6000;
   static Future<Map<String, dynamic>>? _diskLoad;
@@ -292,7 +293,7 @@ class Api {
       if (e is! Map) return null;
       final picture = '${e['p'] ?? ''}';
       final at = (e['t'] as num?)?.toInt() ?? 0;
-      if (!picture.startsWith('https://')) return null;
+      if (!picture.startsWith('https://') && !ArtCache.isLocalArt(picture)) return null; // the internet, or the library's own artwork
       if (DateTime.now().millisecondsSinceEpoch - at > _detailsTtl.inMilliseconds) return null;
       return e;
     } catch (_) {
@@ -308,7 +309,7 @@ class Api {
   static Future<void> _saveDetail(String key, Details d) => _saveEntry(key, d.overview, d.poster);
 
   static Future<void> _saveEntry(String key, String overview, String picture, {String name = ''}) async {
-    if (!picture.startsWith('https://')) return;
+    if (!picture.startsWith('https://') && !ArtCache.isLocalArt(picture)) return;
     final m = await _disk();
     m[key] = {'o': overview, 'p': picture, if (name.isNotEmpty) 'n': name, 't': DateTime.now().millisecondsSinceEpoch};
     if (m.length > _detailsMax) {
@@ -318,6 +319,18 @@ class Api {
     }
     _diskSave?.cancel();
     _diskSave = Timer(const Duration(seconds: 3), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
+  }
+
+  /// The Refresh button: the saved poster addresses and picture copies that came from the user's own files (local folders and
+  /// network shares) are dropped, so changed posters / .nfo files are read again. Pictures from the internet stay saved.
+  static Future<void> forgetLocalArt() async {
+    try {
+      final m = await _disk();
+      m.removeWhere((_, e) => e is Map && ArtCache.isLocalArt('${e['p'] ?? ''}'));
+      _diskSave?.cancel();
+      _diskSave = Timer(const Duration(seconds: 1), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
+    } catch (_) {}
+    await ArtCache.clearLocal();
   }
 
   /// Back online: forget the lookups that had no result so the next screen build asks again.

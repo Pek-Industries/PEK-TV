@@ -152,6 +152,7 @@ class _LibraryPageState extends State<LibraryPage> {
       }
     } catch (_) {}
     Activity.end('scan', 'Scan finished');
+    await Api.forgetLocalArt(); // Refresh = read the posters / .nfo files again (the next ones are saved again)
     if (!mounted) return;
     Api.forgetLibrary();
     setState(() {
