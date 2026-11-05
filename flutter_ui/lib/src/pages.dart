@@ -114,6 +114,43 @@ class _FavoritesPageState extends State<FavoritesPage> {
 
 // ====================================================================== Duplicates / Unknown
 
+/// The full file name and path of one row. The rows of Duplicates / Unknown used to do nothing when pressed, so a remote's
+/// D-pad had nothing to land on and the lists could not be scrolled on a TV box or an Nvidia Shield (a D-pad scrolls a list
+/// by moving the focus down it). Giving each row an action makes it focusable; this is what OK does: it shows the whole path
+/// (the row cuts long ones after two lines) and the size.
+Future<void> _showFileInfo(BuildContext context, FileRow f, {String? note}) {
+  final p = context.pek;
+  final t = p.tokens;
+  final rem = p.rem;
+  return showDialog<void>(
+    context: context,
+    barrierColor: t.overlay,
+    builder: (c) => Dialog(
+      backgroundColor: t.glassStrong,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(t.radius), side: BorderSide(color: t.border)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 36 * rem),
+        child: Padding(
+          padding: EdgeInsets.all(1.5 * rem),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(f.filename, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 1.15 * rem, fontWeight: FontWeight.w700)),
+              SizedBox(height: 0.6 * rem),
+              Text(f.path, style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
+              if (f.size > 0) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text(formatBytes(f.size), style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem))),
+              if (note != null) Padding(padding: EdgeInsets.only(top: 0.6 * rem), child: Text(note, style: TextStyle(fontSize: 0.9 * rem))),
+              SizedBox(height: 1.25 * rem),
+              PekButton(label: 'Close', primary: true, autofocus: true, onTap: () => Navigator.pop(c)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class DuplicatesPage extends StatelessWidget {
   const DuplicatesPage({super.key, required this.padding});
   final EdgeInsets padding;
@@ -136,7 +173,7 @@ class DuplicatesPage extends StatelessWidget {
               Section(
                 title: g.kind == 'size' && g.files.isNotEmpty ? '${g.label}: ${formatBytes(g.files.first.size)}' : g.label,
                 hint: '${kind[g.kind] ?? 'Duplicate'} \u00b7 ${plural(g.files.length, 'copy')} \u00b7 up to ${formatBytes(g.wasted)} to free',
-                children: [for (final f in g.files) ListRow(title: f.filename, subtitle: '${formatBytes(f.size)} \u00b7 ${f.path}')],
+                children: [for (final f in g.files) ListRow(title: f.filename, subtitle: '${formatBytes(f.size)} \u00b7 ${f.path}', onTap: () => _showFileInfo(context, f, note: 'PEK TV only lists duplicates: delete the copy you do not want in your file manager.'))],
               ),
           ]);
         },
@@ -157,7 +194,7 @@ class UnknownPage extends StatelessWidget {
         future: Api.unknown(),
         builder: (context, files) {
           if (files.isEmpty) return const PekCard(title: 'Nothing here', subtitle: 'Every scanned file was classified as a movie or TV episode.');
-          return Column(children: [for (final f in files) ListRow(title: f.filename, subtitle: f.path)]);
+          return Column(children: [for (final f in files) ListRow(title: f.filename, subtitle: f.path, onTap: () => _showFileInfo(context, f))]);
         },
       ),
     ]);
