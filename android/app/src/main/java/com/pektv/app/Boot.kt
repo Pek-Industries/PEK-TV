@@ -1,6 +1,9 @@
 package com.pektv.app
 
+import android.app.UiModeManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -53,6 +56,7 @@ object Boot {
                 copyAssetDir(ctx, "hesper", root)
                 markAssetsCopied(ctx, root)
             }
+            if (isTv(ctx)) File(root, "plugins/skin-maker").deleteRecursively()   // Skin Maker is off on TV devices (checked every start, so a store copy goes too)
             StorageVolumes.init(ctx, root)   // before the server starts: it reads the volume list for the folder picker
             NativeBridge.startServer(root.absolutePath)
             startPythonPlugins(ctx, File(root, "plugins"))
@@ -69,6 +73,10 @@ object Boot {
         }
         return false
     }
+
+    private fun isTv(ctx: Context): Boolean =
+        (ctx.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+            ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 
     // Flutter's own start-up (libflutter, the app snapshot) while the video plays. Reflection, because this file is also compiled
     // when the Flutter module is not wired in; any problem just means Flutter loads later, as before.

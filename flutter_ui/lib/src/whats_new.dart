@@ -33,13 +33,11 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
-    ReleaseNotes('2.2.2', 'Discord, mini player and faster posters', [
-      'Discord: show what you are watching on your Discord profile. Link it in Settings \u2192 Account (button on phones, QR code on TV). Pause or unlink any time.',
-      'Mini player: tap the picture-in-picture button, or press Home, and your video keeps playing in a small window. Only on devices that support it.',
-      'Posters appear right away: movies and shows from a new folder now load their posters and details on their own, no need to press Refresh.',
-      'Posters stay saved: posters from your local and network folders are now kept on your device, so they show instantly each time you open the app. Refresh reloads them.',
-      'Plugin updates: new versions of your plugins from the PEK Store or GitHub now show up in Updates (with a dot on the tab). Tap one to open its install screen.',
-      'Check for updates: a new button in Settings \u2192 Advanced \u2192 App updates looks for a new version right away.',
+    ReleaseNotes('2.2.3', 'Sorting, Shield fixes and refresh fixes', [
+      'Sort by watched: you can now sort your library by what you have watched.',
+      'NVIDIA Shield: fixed the navigation problems some people had when moving around with the remote.',
+      'Refresh: titles that were shown as unknown, and duplicate titles, now refresh properly.',
+      'Skin Maker: the plugin is now turned off on TV devices.',
     ]),
   ];
 
