@@ -28,6 +28,7 @@ import 'plugin_hooks.dart';
 import 'plugin_host.dart' show PluginBack, PluginHost;
 import 'plugin_store_ui.dart' show PluginPicture;
 import 'plugin_ui.dart';
+import 'skins.dart' show Skins;
 import 'store.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
@@ -208,6 +209,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     PluginHost.changed.addListener(_backupSoon); // installed / updated here: back it up
     Weather.edited.addListener(_weatherSoon); // a new city / unit: send it to the profile
     Layouts.edited.addListener(_weatherSoon); // a new layout / poster size: same
+    Skins.changes.addListener(_weatherSoon); // a new skin (or a skin made / installed / deleted): send it to the profile
     Store.dashEdited.addListener(_weatherSoon); // a changed dashboard: same
     Cloud.changes.addListener(_backupSoon); // just signed in: back up what is installed
   }
@@ -222,6 +224,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     PluginHost.changed.removeListener(_backupSoon);
     Weather.edited.removeListener(_weatherSoon);
     Layouts.edited.removeListener(_weatherSoon);
+    Skins.changes.removeListener(_weatherSoon);
     Store.dashEdited.removeListener(_weatherSoon);
     _weatherTimer?.cancel();
     Cloud.changes.removeListener(_backupSoon);

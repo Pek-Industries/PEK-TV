@@ -439,6 +439,10 @@ class Cloud {
   /// account (every profile's data, the profile list) leaves this device; the cloud keeps it.
   static Future<void> signOut() async {
     if (linked) {
+      // Push what changed on this device (a new skin, layout, ...) before the data is wiped, or it is lost. Never blocks sign-out for long.
+      try {
+        await sync(light: true).timeout(const Duration(seconds: 10));
+      } catch (_) {}
       try {
         await _request('POST', '/v1/auth/logout', body: <String, dynamic>{}, withToken: true);
       } catch (_) {}
