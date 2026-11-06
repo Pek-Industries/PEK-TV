@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'common.dart';
 import 'plugin_store.dart' show StoreException;
+import 'plugin_store_ui.dart' show PinnedActionsList;
 import 'skin_install.dart';
 import 'skins.dart';
 import 'tokens.dart';
@@ -132,6 +133,7 @@ class _SkinInstallPageState extends State<SkinInstallPage> {
   Widget build(BuildContext context) {
     final p = context.pek;
     final children = <Widget>[];
+    final actions = <Widget>[];
     final prep = _prep;
     switch (_stage) {
       case _Stage.loading:
@@ -140,11 +142,10 @@ class _SkinInstallPageState extends State<SkinInstallPage> {
         children.addAll([
           const Heading('Can\u2019t install this skin'),
           _panel(context, [_error]),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
-            PekButton(label: 'Close', primary: true, autofocus: true, onTap: _close),
-          ]),
         ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+            PekButton(label: 'Close', primary: true, autofocus: true, onTap: _close),
+          ]));
       case _Stage.confirm || _Stage.installing:
         final pr = prep!;
         final replaced = _existing != null;
@@ -162,28 +163,26 @@ class _SkinInstallPageState extends State<SkinInstallPage> {
           _panel(context, lines),
           SizedBox(height: p.rem),
           _preview(context, pr.tokens),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: installing ? 'Installing\u2026' : (replaced ? 'Update skin' : 'Install skin'), primary: true, autofocus: true, onTap: installing ? null : _install),
             PekButton(label: 'Cancel', onTap: installing ? null : _close),
-          ]),
-        ]);
+          ]));
       case _Stage.done:
         children.addAll([
           Heading('${_existing != null ? 'Updated' : 'Installed'} ${_stored?.name ?? ''}'),
           _panel(context, const ['The skin is in Settings > Appearance.']),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: 'Use it now', primary: true, autofocus: true, onTap: () {
               final id = _stored?.id;
               if (id != null) unawaited(Skins.set(id));
               _close();
             }),
             PekButton(label: 'Done', onTap: _close),
-          ]),
-        ]);
+          ]));
     }
-    return ListView(padding: widget.padding, children: children);
+    return PinnedActionsList(padding: widget.padding, actions: actions, children: children);
   }
 }
 

@@ -156,6 +156,7 @@ class _InstallPageState extends State<PluginInstallPage> {
     final p = context.pek;
     final prep = _prep;
     final children = <Widget>[];
+    final actions = <Widget>[]; // pinned under the scrolling text, so the buttons can never be scrolled out of reach
     switch (_stage) {
       case _Stage.downloading:
         children.addAll([
@@ -168,47 +169,43 @@ class _InstallPageState extends State<PluginInstallPage> {
         children.addAll([
           const Heading("Can't install this plugin"),
           _panel(context, [_error]),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: 'Try again', primary: true, autofocus: true, onTap: _prepare),
             PekButton(label: 'Back', onTap: () => Navigator.maybePop(context)),
-          ]),
-        ]);
+          ]));
       case _Stage.warning:
         final w = prep!.warning!;
         children.addAll([
           Heading(w.title),
           _panel(context, w.text),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: w.button, primary: true, autofocus: true, onTap: () => setState(() => _stage = _Stage.confirm)),
             PekButton(label: 'Cancel', onTap: () => Navigator.maybePop(context)),
-          ]),
-        ]);
+          ]));
       case _Stage.confirm when _upToDate(prep!):
         children.addAll([
           if (prep!.iconBytes != null) Padding(padding: EdgeInsets.only(bottom: 0.6 * p.rem), child: PluginPicture(bytes: prep!.iconBytes, size: 5 * p.rem)),
           Heading('\u201c${prep!.name}\u201d is up to date'),
           _panel(context, ['You have version ${widget.installedVersion}, the newest one available.']),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             if (prep!.hasFlutterScreen)
               PekButton(label: 'Open', primary: true, autofocus: true, onTap: () => openPluginScreen(context, pluginId: prep!.id, title: prep!.navTab.isEmpty ? prep!.name : prep!.navTab)),
             PekButton(label: 'Reinstall', onTap: _install),
             PekButton(label: 'Close', autofocus: !prep!.hasFlutterScreen, primary: !prep!.hasFlutterScreen, onTap: () => Navigator.maybePop(context)),
-          ]),
-        ]);
+          ]));
       case _Stage.confirm:
         children.addAll([
           if (prep!.iconBytes != null) Padding(padding: EdgeInsets.only(bottom: 0.6 * p.rem), child: PluginPicture(bytes: prep.iconBytes, size: 5 * p.rem)),
           Heading('${_replaced ? 'Update' : 'Install'} \u201c${prep.name}\u201d?'),
           _panel(context, prep.describe(replaced: _replaced, shelf: widget.shelf, notice: widget.notice?.call(prep, _replaced) ?? const [])),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: _replaced ? 'Update plugin' : 'Install plugin', primary: true, autofocus: true, onTap: _install),
             PekButton(label: 'Cancel', onTap: () => Navigator.maybePop(context)),
-          ]),
-        ]);
+          ]));
       case _Stage.installing:
         children.addAll([
           Heading('${_replaced ? 'Updating' : 'Installing'} ${prep!.name}\u2026'),
@@ -223,17 +220,16 @@ class _InstallPageState extends State<PluginInstallPage> {
             if (pr.hasFlutterScreen) 'It is ready: open it below${pr.navTab.isNotEmpty ? ', or from \u201c${pr.navTab}\u201d in the menu' : ''}.',
             if (pr.hasBackend) 'Close and reopen PEK TV once so the plugin\u2019s Python part starts.',
           ]),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             if (pr.hasFlutterScreen)
               PekButton(label: 'Open ${pr.name}', primary: true, autofocus: true, onTap: () => openPluginScreen(context, pluginId: pr.id, title: pr.navTab.isEmpty ? pr.name : pr.navTab)),
             PekButton(label: 'Done', autofocus: !pr.hasFlutterScreen, primary: !pr.hasFlutterScreen, onTap: () => Navigator.maybePop(context)),
-          ]),
-        ]);
+          ]));
     }
     return PopScope(
       canPop: _stage != _Stage.installing, // never walk away in the middle of writing files
-      child: ListView(padding: widget.padding, children: children),
+      child: PinnedActionsList(padding: widget.padding, actions: actions, children: children),
     );
   }
 }
@@ -275,5 +271,69 @@ class PluginPicture extends StatelessWidget {
       child = fallback();
     }
     return ClipRRect(borderRadius: BorderRadius.circular(w * 0.2), child: SizedBox(width: w, height: w, child: child));
+  }
+}
+
+
+/// A scrolling page whose buttons are pinned under it. The buttons used to be the last row of the list: with a long
+/// description (permissions, a plugin's warning) they started below the screen, and the autofocused button was never
+/// scrolled into view. Here they are always visible, and Up / Down on a remote or keyboard scrolls the text (while it
+/// can still scroll that way; at the ends the keys go back to normal focus movement).
+class PinnedActionsList extends StatefulWidget {
+  const PinnedActionsList({super.key, required this.padding, required this.children, this.actions = const []});
+  final EdgeInsets padding;
+  final List<Widget> children;
+  final List<Widget> actions;
+
+  @override
+  State<PinnedActionsList> createState() => _PinnedActionsListState();
+}
+
+class _PinnedActionsListState extends State<PinnedActionsList> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _keys(FocusNode node, KeyEvent e) {
+    if (e is KeyUpEvent || !_scroll.hasClients) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    final down = k == LogicalKeyboardKey.arrowDown;
+    if (!down && k != LogicalKeyboardKey.arrowUp) return KeyEventResult.ignored;
+    final pos = _scroll.position;
+    if (down ? pos.pixels >= pos.maxScrollExtent - 1 : pos.pixels <= pos.minScrollExtent + 1) return KeyEventResult.ignored;
+    final to = (pos.pixels + (down ? 1 : -1) * 0.6 * pos.viewportDimension).clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    _scroll.animateTo(to, duration: const Duration(milliseconds: 150), curve: Curves.easeOut);
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final pad = widget.padding;
+    final list = ListView(
+      controller: _scroll,
+      padding: widget.actions.isEmpty ? pad : pad.copyWith(bottom: 0.5 * p.rem),
+      children: widget.children,
+    );
+    if (widget.actions.isEmpty) return list;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: _keys,
+      child: Column(children: [
+        Expanded(child: list),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(pad.left, 0.4 * p.rem, pad.right, 0.8 * p.rem),
+            child: Align(alignment: Alignment.centerLeft, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: widget.actions)),
+          ),
+        ),
+      ]),
+    );
   }
 }

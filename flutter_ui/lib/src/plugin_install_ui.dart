@@ -352,6 +352,7 @@ class _GithubFlowState extends State<_GithubFlow> {
   Widget build(BuildContext context) {
     final p = context.pek;
     final children = <Widget>[];
+    final actions = <Widget>[];
     switch (_stage) {
       case _GhStage.warn:
         children.addAll([
@@ -368,12 +369,11 @@ class _GithubFlowState extends State<_GithubFlow> {
                   'PEK TV still runs it in a sandbox and shows you what it asks for before anything is installed, but it cannot check what the plugin really does. Only install plugins from developers you trust.',
                   'Make sure you have the right to use whatever the plugin gives you access to.',
                 ]),
-          SizedBox(height: p.rem),
-          Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
+        ]);
+        actions.add(Wrap(spacing: 0.6 * p.rem, runSpacing: 0.6 * p.rem, children: [
             PekButton(label: 'I understand', primary: true, autofocus: true, onTap: _accept),
             PekButton(label: 'Cancel', onTap: () => Navigator.maybePop(context)),
-          ]),
-        ]);
+          ]));
       case _GhStage.enter:
         children.addAll([
           const Heading('Install from GitHub'),
@@ -404,7 +404,7 @@ class _GithubFlowState extends State<_GithubFlow> {
             ),
         ]);
     }
-    return ListView(padding: widget.padding, children: children);
+    return PinnedActionsList(padding: widget.padding, actions: actions, children: children);
   }
 }
 
