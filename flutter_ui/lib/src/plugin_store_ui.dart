@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show KeyEvent, KeyUpEvent, LogicalKeyboardKey;
 
 import 'art_cache.dart';
 import 'common.dart';
