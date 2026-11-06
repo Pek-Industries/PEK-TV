@@ -23,10 +23,10 @@ class TvMode {
   static const safeKey = 'pek_tv_safe';
   static const safeChoices = <int>[0, 2, 4, 6];
 
-  /// Interface size on a TV, percent of the old size. 85 is the default: the old size (100) was a bit large.
+  /// Interface size on a TV, percent of the original size. 100 (Original) is the default.
   static const sizeKey = 'pek_tv_size';
   static const sizeChoices = <(int, String)>[(65, 'Smallest'), (75, 'Smaller'), (85, 'Small'), (100, 'Original')];
-  static const defaultSize = 85;
+  static const defaultSize = 100;
   static const modes = <(String, String, String)>[
     ('auto', 'Auto', 'On for TV boxes, off on phones'),
     ('on', 'On', 'Always use the TV look'),
