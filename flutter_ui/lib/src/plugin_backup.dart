@@ -69,6 +69,7 @@ class PluginBackup {
   static const _kSeen = 'pek_plugin_backup_seen_v1'; // {email, plugins: {id: {sig, fp, u}}}
   static const _kPending = 'pek_plugin_backup_pending_v1'; // {list: [offer]}
   static const _kSkip = 'pek_plugin_backup_skip_v1'; // {id: cloud "updated" the person said "not now" to}
+  static const _kOff = 'pek_plugin_backup_off_v1'; // {id: true} plugins whose backup the person deleted: not backed up again
 
   static const _chunk = 400000; // characters per upload piece (the worker expects this size or less)
   static const _maxRaw = 8 * 1024 * 1024;
@@ -200,6 +201,63 @@ class PluginBackup {
     return PreparedPlugin.fromFiles(id, files);
   }
 
+  // ---------------------------------------------------------------- viewing and deleting backups (Settings > Downloads and backups)
+
+  /// A plugin whose cloud backup the person deleted while it is still installed here: it stays out of the backup until they ask for one again.
+  static bool excluded(String id) => Store.jsonMap(_kOff, scoped: false)[id] == true;
+
+  static Future<void> _setExcluded(String id, bool on) async {
+    final m = Store.jsonMap(_kOff, scoped: false);
+    if (on) {
+      m[id] = true;
+    } else {
+      m.remove(id);
+    }
+    await Store.setJsonMap(_kOff, m, scoped: false);
+  }
+
+  /// Every plugin the cloud holds a backup of (removed ones left out), or null when the list could not be read.
+  static Future<List<BackupOffer>?> cloudCopies() async {
+    if (!Cloud.linked) return null;
+    try {
+      final r = await Cloud.call('GET', '/v1/plugins');
+      if (!r.ok) return null;
+      final out = <BackupOffer>[];
+      for (final e in ((r.body['plugins'] as List?) ?? const [])) {
+        if (e is! Map || e['id'] is! String || _truthy(e['deleted']) || !validId('${e['id']}')) continue;
+        final m = Map<String, dynamic>.from(e);
+        out.add(BackupOffer(id: '${m['id']}', name: '${m['name'] ?? ''}'.isEmpty ? '${m['id']}' : '${m['name']}', version: '${m['version'] ?? ''}', kind: 'backup', updated: _int(m['updated']), size: _int(m['size'])));
+      }
+      return out;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Deletes the cloud backup of one plugin, which frees its place in the 30 plugin / 60 MB cloud storage. A plugin that is still installed on
+  /// this device is not uploaded again until [backUpAgain]. Nothing is removed from any device. Returns '' or an error code.
+  static Future<String> deleteBackup(String id) async {
+    if (!Cloud.linked || !validId(id)) return 'not_linked';
+    try {
+      final r = await Cloud.call('POST', '/v1/plugins/delete', {'id': id, 'updated': DateTime.now().millisecondsSinceEpoch});
+      if (!r.ok) return r.error;
+      await _setExcluded(id, true);
+      final state = Store.jsonMap(_kSeen, scoped: false);
+      final plugins = (state['plugins'] as Map?)?.cast<String, dynamic>();
+      if (plugins != null && plugins.remove(id) != null) await Store.setJsonMap(_kSeen, {...state, 'plugins': plugins}, scoped: false);
+      await _drop(id);
+      return '';
+    } catch (_) {
+      return 'offline';
+    }
+  }
+
+  /// Takes a plugin back into the backup (after [deleteBackup]) and backs it up now.
+  static Future<void> backUpAgain(String id) async {
+    await _setExcluded(id, false);
+    unawaited(run(force: true));
+  }
+
   // ---------------------------------------------------------------- the backup pass
 
   static Future<BackupRun>? _running;
@@ -252,6 +310,7 @@ class PluginBackup {
       final live = c != null && !_truthy(c['deleted']);
       final seen = (seenMap[id] as Map?)?.cast<String, dynamic>();
 
+      if (ids.contains(id) && excluded(id)) continue; // its backup was deleted on purpose: leave it out
       if (!ids.contains(id)) {
         // Only in the cloud: offer it (unless the person said "not now" to this version).
         if (live && !_skipped(skip, id, _int(c['updated']))) pending.add(offer(id, c, 'new'));
@@ -341,6 +400,7 @@ class PluginBackup {
 
   /// The person removed this plugin here: tell the cloud so their other devices stop offering it.
   static Future<void> forget(String id) async {
+    if (validId(id) && excluded(id)) await _setExcluded(id, false); // removed from this device: a later install is backed up as usual
     if (!enabled || !Cloud.entitled || !validId(id)) return;
     final r = await Cloud.call('POST', '/v1/plugins/delete', {'id': id, 'updated': DateTime.now().millisecondsSinceEpoch});
     if (!r.ok) return;

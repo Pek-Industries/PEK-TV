@@ -6,6 +6,7 @@ import 'account_pages.dart';
 import 'activity.dart';
 import 'all_files_access.dart';
 import 'audio_fx.dart';
+import 'backups_manager.dart';
 import 'layouts.dart';
 import 'api.dart';
 import 'common.dart';
@@ -445,8 +446,8 @@ class SettingsPage extends StatelessWidget {
       else
         row('Playback', 'Sound, subtitles, skip intro and online music', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), SubtitleSection(), SkipSection(), MusicOnlineSection()])),
       if (!music) row('Plugins', 'Installing from GitHub and plugin posters', Icons.extension_outlined, () => const _SettingsList(children: [GithubInstallSection(), PluginPostersSection()])),
-      row('Advanced', music ? 'TV mode and size, audio output, storage, app updates' : 'TV mode and size, video and audio output, storage, app updates', Icons.tune,
-          () => _SettingsList(children: [const TvModeSection(), if (!music) const VideoOutputSection(), const AudioOutputSection(), const StorageSection(), const UpdateSection(), const DevConsoleSection()])),
+      row('Advanced', music ? 'TV mode and size, audio output, storage, app updates' : 'TV mode and size, video and audio output, storage, downloads and backups, app updates', Icons.tune,
+          () => _SettingsList(children: [const TvModeSection(), if (!music) const VideoOutputSection(), const AudioOutputSection(), const StorageSection(), if (!music) const BackupsSection(), const UpdateSection(), const DevConsoleSection()])),
       row('App', 'Exit PEK TV', Icons.power_settings_new, () => const _ExitSettings()),
       row('Open source', 'The libraries PEK TV is built with and their licences', Icons.code, () => const _SettingsList(children: [OpenSourceSection()])),
     ]);
