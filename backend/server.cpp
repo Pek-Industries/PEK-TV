@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <thread>
 #include <map>
+#include <set>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -362,9 +363,9 @@ static std::mutex g_tmdbClientMu;
 static std::atomic<long long> g_tmdbBlockedUntil{0};
 static std::vector<std::unique_ptr<httplib::Client>> g_tmdbClients;           // idle keep-alive connections to the Worker
 
-static bool tmdbSearch(const std::string& path, std::string& body) {
+static bool tmdbSearch(const std::string& path, std::string& body, bool fresh = false) {
     const long long now = nowMs();
-    {
+    if (!fresh) {
         std::lock_guard<std::mutex> lk(g_tmdbMu);
         auto it = g_tmdbCache.find(path);
         if (it != g_tmdbCache.end() && now - it->second.first < 6LL * 3600 * 1000) { body = it->second.second; return true; }
@@ -411,6 +412,103 @@ static bool tmdbSearch(const std::string& path, std::string& body) {
     }
     return false;
 }
+
+
+// ---- TMDb lists for plugins: GET /api/tmdb/<path>?<query> -------------------------------------------------------------------
+// The TMDb Discover plugin runs in a sandbox that can only call https hosts, so it could not use the connection pool, the
+// answer cache and the 429 pause above: every row opened a new TLS connection to the Worker. Plugins with the (official-only)
+// "tmdb" permission now ask this route instead (pek_host.tmdb_json). Same idea as the poster lookups: an answer is kept on
+// disk, shown at once, and refreshed in the background. Younger than 30 minutes: served as is, no network call. Older: served
+// at once and asked again in the background (one refresh per address at a time). Nothing saved yet: fetched now. If the
+// internet is gone the saved copy is served whatever its age. Only read-only list / search / detail paths are allowed, and
+// never an api_key, so this cannot be used as an open proxy.
+namespace tmdbcache {
+struct Entry { long long when = 0; std::string body; };
+static std::mutex mu;
+static std::map<std::string, Entry> mem;
+static std::set<std::string> refreshing;
+static std::string dir;
+
+static std::string fileFor(const std::string& key) {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "%zx", std::hash<std::string>{}(key));
+    return dir + "/" + buf + ".tmdb";
+}
+
+static bool load(const std::string& key, Entry& out) {
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        auto it = mem.find(key);
+        if (it != mem.end()) { out = it->second; return true; }
+    }
+    if (dir.empty()) return false;
+    std::ifstream f(fileFor(key), std::ios::binary);
+    if (!f) return false;
+    std::string when, savedKey;
+    if (!std::getline(f, when) || !std::getline(f, savedKey) || savedKey != key) return false;   // another address with the same hash
+    std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (body.empty()) return false;
+    Entry e; e.when = std::atoll(when.c_str()); e.body = std::move(body);
+    std::lock_guard<std::mutex> lk(mu);
+    if (mem.size() > 200) mem.clear();
+    mem[key] = e;
+    out = std::move(e);
+    return true;
+}
+
+static void store(const std::string& key, const std::string& body) {
+    Entry e; e.when = nowMs(); e.body = body;
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        if (mem.size() > 200) mem.clear();
+        mem[key] = e;
+    }
+    if (dir.empty()) return;
+    const std::string path = fileFor(key), tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f << e.when << "\n" << key << "\n" << body;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+}
+
+// Files not touched for a month go; at most 300 are kept.
+static void prune() {
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::vector<std::pair<std::filesystem::file_time_type, std::filesystem::path>> files;
+    for (const auto& de : std::filesystem::directory_iterator(dir, ec)) {
+        if (de.path().extension() == ".tmdb") files.push_back({de.last_write_time(ec), de.path()});
+        else if (de.path().extension() == ".tmp") std::filesystem::remove(de.path(), ec);
+    }
+    std::sort(files.begin(), files.end());
+    const auto limit = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24 * 30);
+    for (size_t i = 0; i < files.size(); ++i)
+        if (files[i].first < limit || files.size() - i > 300) std::filesystem::remove(files[i].second, ec);
+}
+
+// "/trending/movie/week?language=en-US&page=1": a read-only TMDb path with a plain query and no key.
+static bool allowed(const std::string& t) {
+    if (t.size() < 2 || t.size() > 400 || t[0] != '/') return false;
+    const size_t q = t.find('?');
+    const std::string path = t.substr(0, q);
+    const std::string query = q == std::string::npos ? "" : t.substr(q + 1);
+    if (query.find('?') != std::string::npos) return false;
+    static const char* roots[] = {"/trending/", "/movie/", "/tv/", "/discover/", "/search/", "/watch/", "/person/", "/genre/", "/collection/"};
+    bool rootOk = false;
+    for (const char* r : roots) if (path.rfind(r, 0) == 0) { rootOk = true; break; }
+    if (path == "/configuration") rootOk = true;
+    if (!rootOk) return false;
+    if (path.find("..") != std::string::npos || path.find("//") != std::string::npos) return false;
+    for (unsigned char c : path) if (!(std::isalnum(c) || c == '/' || c == '_' || c == '-' || c == '.')) return false;
+    for (unsigned char c : query) if (!(std::isalnum(c) || std::strchr("_-.,=&%+:|~", c))) return false;
+    std::string low = t;
+    for (auto& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return low.find("api_key") == std::string::npos;
+}
+}  // namespace tmdbcache
 
 
 // ---- Looking a title's poster + synopsis up ONCE, in the background, and keeping it in the library database ----------------
@@ -535,6 +633,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
                            std::function<std::vector<std::string>()> get_plugins,
                            MediaScanner* scanner) {
     httplib::Server svr;
+    ::setenv("PEK_PORT", std::to_string(port).c_str(), 0);   // the plugin sandbox's pek_host.tmdb_json finds this server by it
 
     // ---- Who may talk to this server -------------------------------------
     const char* bindEnv = std::getenv("PEK_BIND");
@@ -1222,6 +1321,51 @@ void PekServer::start(int port, const std::string& plugins_dir,
         }
         json += "], \"wastedTotal\": " + std::to_string(wasted_total) + "}";
         res.set_content(json, "application/json");
+    });
+
+    // 6b. TMDb lists for the official TMDb Discover plugin (see tmdbcache above). Read-only, whitelisted paths.
+    tmdbcache::dir = (std::filesystem::path(plugins_dir).parent_path() / "tmdb_cache").string();
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(tmdbcache::dir, ec);
+        if (ec) tmdbcache::dir.clear();
+        std::thread([] { tmdbcache::prune(); }).detach();
+    }
+    svr.Get(R"(/api/tmdb/.*)", [](const httplib::Request& req, httplib::Response& res) {
+        const std::string path = req.target.substr(std::string("/api/tmdb").size());
+        if (!tmdbcache::allowed(path)) {
+            res.status = 400;
+            res.set_content("{\"error\": \"Not a TMDb list address\"}", "application/json");
+            return;
+        }
+        auto reply = [&](const std::string& body, long long ageSec) {
+            res.set_header("X-Pek-Age", std::to_string(ageSec));
+            res.set_content(body, "application/json");
+        };
+        tmdbcache::Entry e;
+        const bool have = tmdbcache::load(path, e);
+        const long long age = have ? (nowMs() - e.when) / 1000 : 0;
+        if (have && age < 30 * 60) { reply(e.body, age); return; }
+        if (have && age < 14LL * 24 * 3600) {
+            // Saved a while ago: show it at once and ask again in the background (one refresh per address at a time).
+            bool start = false;
+            { std::lock_guard<std::mutex> lk(tmdbcache::mu); start = tmdbcache::refreshing.insert(path).second; }
+            if (start) {
+                std::thread([path] {
+                    std::string body;
+                    try { if (tmdbSearch(path, body, true)) tmdbcache::store(path, body); } catch (...) {}
+                    std::lock_guard<std::mutex> lk(tmdbcache::mu);
+                    tmdbcache::refreshing.erase(path);
+                }).detach();
+            }
+            reply(e.body, age);
+            return;
+        }
+        std::string body;
+        if (tmdbSearch(path, body, true)) { tmdbcache::store(path, body); reply(body, 0); return; }
+        if (have) { reply(e.body, age); return; }   // very old, but better than an empty row (no internet)
+        res.status = 502;
+        res.set_content("{\"error\": \"TMDb lookup failed\"}", "application/json");
     });
 
     // 6. Movie / show / episode detail: poster + synopsis. The poster grid asks these too (one per card), so they

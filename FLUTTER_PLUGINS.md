@@ -369,3 +369,20 @@ What it needed from the host, all in `pek_ui`:
   `pek_ui.play_torrent(..., tmdb=0)`) stays, and only plugins with the `torrent` permission can start it: the server refuses `/api/torrent/allow`, `/fetch`
   and `/start` without a one-time `X-Pek-Grant` pass minted by the app's native side (`mintTorrentGrant`), and a saved stream replays only while the plugin
   that started it is installed and can stream (else **Open in TMDb Discover**). See "The `torrent` permission" in PLUGINS.md.
+
+
+## TMDb lists through PEK TV (`tmdb` permission, official TMDb Discover only)
+
+`"permissions": { "tmdb": true }` lets the plugin call `h.tmdb_json(path, params=None, timeout=10)`. It asks PEK TV's own server
+(`GET /api/tmdb/<path>`), which holds the TMDb access, so the sandbox does not have to open a new TLS connection for every request:
+
+- the server keeps its connections to TMDb open and pauses when TMDb answers "too many requests" (429);
+- every answer is saved on the device. Younger than 30 minutes: used as is. Older: used at once and refreshed in the background.
+  With no internet the saved copy is used whatever its age;
+- only read-only paths are accepted (`/trending/`, `/movie/`, `/tv/`, `/discover/`, `/search/`, `/watch/`, `/person/`, `/genre/`,
+  `/collection/`, `/configuration`) and never an `api_key`.
+
+`path` is a TMDb v3 path such as `"/trending/movie/week"`, `params` a dict. The result is the parsed JSON (a dict) with one extra
+key, `"_pek_age"`: the answer's age in seconds (`0` = fetched just now; over `1800` = a saved copy that the server is refreshing, so
+asking again a few seconds later returns the new one). Only the bundled `tmdb-discover` plugin may use this permission; a plugin
+that lists it in `plugin.json` is refused at install time. The Store text for it: "Can read movie and TV lists from TMDb through PEK TV".

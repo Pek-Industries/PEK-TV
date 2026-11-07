@@ -242,7 +242,7 @@ class PreparedPlugin {
     }
   }
 
-  static const permissionNames = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg', 'device'];
+  static const permissionNames = ['storage', 'library', 'torrent', 'favorites', 'providers', 'plugins', 'watched', 'playback', 'send', 'skins', 'live', 'epg', 'device', 'tmdb'];
   static final _host = RegExp(r'^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$');
   static final _ip = RegExp(r'^[\d.]+$');
 
@@ -332,6 +332,7 @@ class PreparedPlugin {
       if (perms.contains('playback')) 'Is told which movie or episode you start, pause and stop watching, how far you got, and when you mark one watched or unwatched (title, year, season and episode only, never file names). It runs in the background, even when its screen is closed.',
       if (perms.contains('send')) 'Can send information, including a sign-in token, to the sites listed above (not only read from them).',
       if (perms.contains('live')) 'Can play live TV streams in PEK TV\u2019s player, from web addresses it chooses, and can add its channel guide to the player. The servers that send a stream can see your internet address.',
+      if (perms.contains('tmdb')) 'Can read movie and TV lists from TMDb through PEK TV (kept on this device, PEK TV\u2019s own key is never shown to it). Only PEK\u2019s official TMDb Discover may ask for this.',
       if (perms.contains('epg')) 'Can download TV guide files (XMLTV) from the sites listed above.',
       if (perms.contains('skins')) 'Can add, change and delete the skins you made, and switch the skin in use. Only PEK\u2019s official Skin maker may ask for this.',
       if (perms.contains('providers')) 'Can show \u201cWatch on Netflix / Hulu / \u2026\u201d buttons. PEK TV decides what they open: the service\u2019s app on Android, its website elsewhere.',

@@ -187,6 +187,15 @@ inline std::string checkFiles(const std::vector<InFile>& files, size_t& totalByt
                 return std::string(reservedHost()) + " is reserved for PEK's official plugins";
             if (!official && lowerCopy(f.data).find(reservedHost2()) != std::string::npos)
                 return std::string(reservedHost2()) + " is reserved for PEK's official plugins";
+            // The "tmdb" permission (PEK's cached TMDb access) is for official plugins only, like the proxy host above.
+            if (!official) {
+                const std::string low = lowerCopy(f.data);
+                for (size_t k = low.find("\"tmdb\""); k != std::string::npos; k = low.find("\"tmdb\"", k + 1)) {
+                    size_t e = k + 6;
+                    while (e < low.size() && std::isspace(static_cast<unsigned char>(low[e]))) ++e;
+                    if (e < low.size() && low[e] == ':') return "the \"tmdb\" permission is reserved for PEK's official plugins";
+                }
+            }
             hasFlutterEntry = lowerCopy(f.data).find("\"flutter\"") != std::string::npos;
         }
         if (f.path == "screen.py") hasScreen = true;   // the Flutter UI's Python screen

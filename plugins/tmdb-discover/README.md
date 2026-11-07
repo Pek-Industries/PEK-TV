@@ -13,6 +13,12 @@ Optional: under **Settings > TMDb access** you can paste your own free v3 API ke
 It is stored only in this plugin's private storage on this device and is sent only to api.themoviedb.org.
 Remove it to go back to the built-in access.
 
+## Speed
+
+Without a key of your own, TMDb requests go through PEK TV's own server. It keeps its connection to TMDb open, saves every answer on
+the device, shows a saved row at once and refreshes it in the background (the row is swapped when the new answer arrives), and waits
+when TMDb says "too many requests". With your own key the plugin asks TMDb directly, as before.
+
 ## Pages
 
 Every row has a **See all** button (and a last tile) that opens the whole list as numbered pages.

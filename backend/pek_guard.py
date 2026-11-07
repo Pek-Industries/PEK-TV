@@ -53,6 +53,8 @@ except ImportError:
 
 # Plugins that ship with PEK and keep full access (as they always had).
 BUNDLED_TRUSTED = {"weather", "sample_scraper"}
+_TMDB_PLUGINS = {"tmdb-discover"}           # the only plugin that may use the "tmdb" permission
+_TMDB_PATH_RE = re.compile(r"^/[A-Za-z0-9/_.-]{1,160}$")
 
 MANIFEST_NAME = "plugin.json"
 MAX_SOURCE_BYTES = 200 * 1024
@@ -144,7 +146,7 @@ def load_manifest(folder):
             pass
     if not isinstance(perms.get("library", False), bool):
         return None, "'permissions.library' must be true or false"
-    for flag in ("send", "playback", "live", "epg", "torrent"):
+    for flag in ("send", "playback", "live", "epg", "torrent", "tmdb"):
         if not isinstance(perms.get(flag, False), bool):
             return None, "'permissions.%s' must be true or false" % flag
     fl = data.get("flutter")
@@ -336,6 +338,8 @@ def build_host_module(plugin_id, folder, manifest):
     library_ok = bool(perms.get("library", False))
     send_ok = bool(perms.get("send", False))
     epg_ok = bool(perms.get("epg", False))
+    # PEK's cached TMDb access (the app's own server holds the key and the answers): official TMDb Discover only.
+    tmdb_ok = bool(perms.get("tmdb", False)) and plugin_id in _TMDB_PLUGINS
     data_dir = os.path.join(folder, "data")
     mod = types.ModuleType("pek_host")
 
@@ -627,11 +631,53 @@ def build_host_module(plugin_id, folder, manifest):
         out["bytes"] = len(raw)
         return out
 
+    def tmdb_json(path, params=None, timeout=10):
+        """A TMDb list / search / detail answer through PEK TV's own server (the official TMDb Discover plugin only; needs
+        "tmdb": true). The server keeps the connection to TMDb open, remembers answers on the device, shows an old answer at once
+        and refreshes it in the background, and waits when TMDb says "too many requests". path is a TMDb v3 path such as
+        "/trending/movie/week"; params is a dict (no api_key: the server adds it). Returns the parsed JSON (a dict); the key
+        "_pek_age" says how many seconds old the answer is (0 = fetched just now; over 1800 = a saved copy that is being refreshed)."""
+        if not tmdb_ok:
+            raise PermissionError("plugin.json does not request the 'tmdb' permission (or this plugin may not have it)")
+        if not isinstance(path, str) or not _TMDB_PATH_RE.match(path) or ".." in path or "//" in path:
+            raise ValueError("invalid TMDb path")
+        q = []
+        for k in sorted((params or {}).keys()):
+            if str(k).lower() == "api_key":
+                raise ValueError("do not send an api_key: PEK TV adds it")
+            q.append(urllib.parse.quote(str(k), safe="") + "=" + urllib.parse.quote(str(params[k]), safe=""))
+        target = "/api/tmdb" + path + ("?" + "&".join(q) if q else "")
+        with _Privileged():
+            try:
+                port = int(os.environ.get("PEK_PORT") or 8080)
+            except ValueError:
+                port = 8080
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=min(float(timeout), 20.0))
+            try:
+                conn.request("GET", target, headers={"Host": "127.0.0.1:%d" % port, "Accept": "application/json",
+                                                     "User-Agent": "PEK-Plugin/" + plugin_id})
+                resp = conn.getresponse()
+                body = resp.read(4000001)
+                if resp.status != 200:
+                    raise ConnectionError("HTTP %d" % resp.status)
+                if len(body) > 4000000:
+                    raise ValueError("response larger than 4000000 bytes")
+                data = json.loads(body.decode("utf-8", "replace"))
+                age = resp.getheader("X-Pek-Age")
+                if isinstance(data, dict) and age is not None:
+                    try:
+                        data["_pek_age"] = int(age)
+                    except ValueError:
+                        pass
+                return data
+            finally:
+                conn.close()
+
     def log(*parts):
         print("[plugin %s]" % plugin_id, *[str(p)[:500] for p in parts])
 
     for fn in (fetch_text, fetch_json, request_json, write_text, read_text, write_json, read_json, library_titles, log,
-               read_bundled_text, read_bundled_json, epg_norm, fetch_epg):
+               read_bundled_text, read_bundled_json, epg_norm, fetch_epg, tmdb_json):
         setattr(mod, fn.__name__, fn)
     return mod
 

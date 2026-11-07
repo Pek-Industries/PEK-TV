@@ -28,7 +28,7 @@ MAX_PAGES = 500          # TMDb does not serve pages past 500
 SETTINGS = "settings.json"
 ROWS = "rows.json"          # the last browse rows (page 1 of each list), so Discover opens with pictures to show at once
 ROWS_FRESH = 30 * 60        # younger than this: shown as is, no network call
-ROWS_STALE = 7 * 24 * 3600  # younger than this: shown at once, then quietly refreshed; older: loaded like the first time
+ROWS_STALE = 60 * 24 * 3600  # younger than this: shown at once, then quietly refreshed (kept if the refresh fails); older: loaded like the first time
 ROWS_MAX = 16
 LIBRARY = "library.json"
 
@@ -61,6 +61,8 @@ S = {
     "autoplay": True,          # play the trailer when a detail page opens
     "sound": True,             # trailer sound (turn off if the device blocks sound autoplay)
     "rcache": {},              # rows key -> {"t": saved at, "d": the page}, mirrors data/rows.json
+    "reasked": {},             # page key -> True: asked once more after PEK TV served a saved copy
+    "via_app": True,           # TMDb through PEK TV's own server (h.tmdb_json); False = this PEK TV has none, use the proxy
     "seen_over": {},           # tmdb id -> {"value", "base"}: a watched mark that PEK has not reported back yet
 }
 
@@ -165,10 +167,24 @@ def is_auth(msg):
 
 def api(path, params=None):
     """Blocking: only call this from inside ui.background()."""
-    q = ["language=" + quote(lang(), safe="")]
+    p = dict(params or {})
+    p["language"] = lang()
+    # No personal key: PEK TV's own server asks TMDb for us (h.tmdb_json). It keeps the connection to TMDb open, remembers
+    # answers on the device, shows an old answer at once while it refreshes in the background, and waits when TMDb says
+    # "too many requests". An older PEK TV without that route falls back to fetching the proxy directly, below.
+    if not S["key"] and S.get("via_app", True):
+        try:
+            return h.tmdb_json(path, p, timeout=10)
+        except (AttributeError, PermissionError):
+            S["via_app"] = False                   # this PEK TV has no tmdb_json: use the proxy directly from now on
+        except Exception as e:  # noqa: BLE001
+            if re.search(r"HTTP 404", str(e)):
+                S["via_app"] = False               # the server has no /api/tmdb route yet
+            else:
+                raise
+    q = []
     if S["key"]:
-        q.insert(0, "api_key=" + quote(S["key"], safe=""))
-    p = params or {}
+        q.append("api_key=" + quote(S["key"], safe=""))
     for k in sorted(p.keys()):
         q.append(quote(str(k), safe="") + "=" + quote(str(p[k]), safe=""))
     # Personal key: straight to TMDb. No key: PEK TV's built-in access (the proxy adds the key).
@@ -395,6 +411,23 @@ def load_page(src, page):
         if cacheable:
             save_rows(k, data)
         page_arrived(k, page, data)
+        # PEK TV answered with a saved copy and is refreshing it in the background: ask once more shortly after, so the
+        # new answer replaces it without the person having to do anything.
+        if isinstance(j, dict) and j.get("_pek_age", 0) >= 1800 and not S["reasked"].get(k):
+            S["reasked"][k] = True
+
+            def again():
+                time.sleep(8)
+                return api(src["path"], p)
+
+            def again_done(j2):
+                if isinstance(j2, dict) and j2.get("_pek_age", 0) < 1800 and S["pages"].get(k) is not None:
+                    d2 = extract(src, j2)
+                    S["pages"][k] = d2
+                    if cacheable:
+                        save_rows(k, d2)
+
+            ui.background(again, again_done, lambda msg: None)
 
     def fail(msg):
         if is_auth(msg):
