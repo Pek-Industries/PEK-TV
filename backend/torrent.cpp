@@ -157,6 +157,8 @@ struct Entry {
     Clock::time_point last_peer = Clock::now();                 // last time at least one peer was connected
     Clock::time_point last_kick{};                              // last forced re-announce (watchdog)
     int kicks = 0;
+    Clock::time_point last_rx = Clock::now();                   // last time payload was arriving (watchdog)
+    Clock::time_point last_stall_kick{};                        // last re-announce because peers were connected but silent
 };
 
 std::mutex g_mx;
@@ -273,6 +275,22 @@ void peerWatchdog(Entry& e, Clock::time_point now) {
     if (!e.h.is_valid()) return;
     lt::torrent_status st = e.h.status();
     if (st.is_finished) return;
+    if (st.download_payload_rate > 0) e.last_rx = now;
+    // Peers are connected but nothing is arriving (every one is choking us, or only dead ones are left) while the player is
+    // waiting for data: ask the trackers and the DHT again instead of sitting there. (The check below only covers 0 peers.)
+    if (st.num_peers > 0 && now - e.last_rx > std::chrono::seconds(15) && now - e.last_access < std::chrono::seconds(120) &&
+        (e.last_stall_kick == Clock::time_point{} || now - e.last_stall_kick > std::chrono::seconds(15))) {
+        e.last_stall_kick = now;
+        try {
+            for (const char* t : kFallbackTrackers) e.h.add_tracker(lt::announce_entry(t));
+            e.h.force_reannounce();
+            e.h.force_dht_announce();
+            e.h.resume();
+            diagLocked("watchdog: " + std::to_string(st.num_peers) + " peers but no data for " +
+                       std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now - e.last_rx).count()) +
+                       "s, forced tracker + DHT re-announce on " + e.hash.substr(0, 8));
+        } catch (const std::exception&) {}
+    }
     if (st.num_peers > 0) { e.last_peer = now; e.kicks = 0; return; }
     if (now - e.last_peer < std::chrono::seconds(6)) return;
     if (e.last_kick != Clock::time_point{} && now - e.last_kick < std::chrono::seconds(12)) return;
