@@ -4,6 +4,11 @@ project(pek C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Debug (dev) builds used to be compiled with no optimisation at all (-O0): SQLite, TLS, JSON and the picture server then run
+# several times slower than in a release build, which made posters crawl. Keep debuggable symbols off and optimise like release.
+set(CMAKE_C_FLAGS_DEBUG "-O2 -g0")
+set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g0")
+
 # Repo root is five levels up from this folder; backend/ lives there.
 set(BACKEND ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../backend)
 

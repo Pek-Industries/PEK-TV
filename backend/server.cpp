@@ -546,6 +546,13 @@ static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, boo
         overview = local.plot;
         tmdbStamp = MediaScanner::tmdbStamp(local, job.title, 0);
     }
+    // The user's own poster (poster.jpg next to the files) must never wait for TMDb: with a plot missing from the files TMDb is still
+    // asked for the synopsis, and when it is slow, rate-limiting or offline the lookup used to fail and THROW AWAY the local poster
+    // too, so a library on a USB drive stayed blank for minutes. Store it now (marked "changed": TMDb is asked again in 10 minutes
+    // for the synopsis) so it ships with the next /api/movies or /api/shows.
+    if (!art.empty() && !job.aged && !job.refresh) {
+        scanner->artStore(job.movie, job.movie ? job.id : job.title, art, overview, "!");
+    }
     askedTmdb = true;
     std::string body;
     if (!tmdbSearch(path, body)) return -1;

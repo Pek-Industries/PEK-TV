@@ -75,7 +75,9 @@ class _BackupsSectionState extends State<BackupsSection> {
   }
 
   void _reload() {
-    if (mounted) setState(() => _data = _load());
+    if (mounted) setState(() {
+        _data = _load();
+      });
   }
 
   void _say(String text) => ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text)));

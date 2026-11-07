@@ -62,7 +62,9 @@ class _MusicHomePageState extends State<MusicHomePage> {
                 return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   const PekCard(title: 'Could not load your music', subtitle: 'Check that PEK TV is running, then try again.'),
                   SizedBox(height: rem),
-                  PekButton(label: 'Try again', primary: true, onTap: () => setState(() => _lib = Api.musicLibrary())),
+                  PekButton(label: 'Try again', primary: true, onTap: () => setState(() {
+        _lib = Api.musicLibrary();
+      })),
                 ]);
               }
               if (!snap.hasData) {

@@ -55,10 +55,16 @@ class _LibraryPageState extends State<LibraryPage> {
   Timer? _artTimer;
   void _onArtChanged() {
     _artTimer?.cancel();
-    _artTimer = Timer(const Duration(seconds: 2), () {
-      if (!mounted || _refreshing || _scanning) return;
+    _artTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      if (_refreshing || _scanning) {
+        _onArtChanged(); // busy: ask again shortly instead of dropping the news that posters arrived
+        return;
+      }
       Api.forgetLibrary();
-      setState(() => _data = _load());
+      setState(() {
+        _data = _load();
+      });
     });
   }
 
@@ -86,7 +92,9 @@ class _LibraryPageState extends State<LibraryPage> {
       }
       if (sawScan || i >= 2) {
         Api.forgetLibrary();
-        setState(() => _data = _load());
+        setState(() {
+        _data = _load();
+      });
         return;
       }
     }
@@ -109,7 +117,9 @@ class _LibraryPageState extends State<LibraryPage> {
       }
       if (was && !now && !_refreshing) {
         Api.forgetLibrary();
-        setState(() => _data = _load());
+        setState(() {
+        _data = _load();
+      });
       }
     }
   }
@@ -226,7 +236,9 @@ class _LibraryPageState extends State<LibraryPage> {
         FutureBuilder<List<Object>>(
           future: _data,
           builder: (context, snap) {
-            if (snap.connectionState != ConnectionState.done) {
+            // Reloading (a poster arrived, a scan finished) keeps the old grid on screen: replacing it with "Loading..." blanked every poster
+            // and threw the scroll position away each time the server stored one.
+            if (snap.connectionState != ConnectionState.done && !snap.hasData) {
               return SliverPadding(
                 padding: widget.padding.copyWith(top: 0),
                 sliver: SliverToBoxAdapter(child: Padding(padding: EdgeInsets.all(2 * rem), child: Text('Loading your library\u2026', style: TextStyle(color: t.textMuted)))),
@@ -244,7 +256,9 @@ class _LibraryPageState extends State<LibraryPage> {
                     children: [
                       PekCard(title: 'Could not load ${widget.tab == 'movies' ? 'movies' : 'shows'}', subtitle: why),
                       SizedBox(height: 1.25 * rem),
-                      PekButton(label: 'Try again', primary: true, onTap: () => setState(() => _data = _load())),
+                      PekButton(label: 'Try again', primary: true, onTap: () => setState(() {
+        _data = _load();
+      })),
                     ],
                   ),
                 ),

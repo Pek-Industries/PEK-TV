@@ -330,7 +330,9 @@ class _MusicPageState extends State<MusicPage> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               PekCard(title: 'Could not load your music', subtitle: why.length > 160 ? '${why.substring(0, 160)}\u2026' : why),
               SizedBox(height: p.rem),
-              FilledButton(autofocus: true, onPressed: () => setState(() => _lib = Api.musicLibrary(_filters)), child: const Text('Try again')),
+              FilledButton(autofocus: true, onPressed: () => setState(() {
+        _lib = Api.musicLibrary(_filters);
+      }), child: const Text('Try again')),
             ]),
           );
         }

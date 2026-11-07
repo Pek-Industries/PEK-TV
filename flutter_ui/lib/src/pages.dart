@@ -320,7 +320,9 @@ class _PluginsPageState extends State<PluginsPage> {
   }
 
   void _reload() {
-    if (mounted) setState(() => _list = Api.plugins());
+    if (mounted) setState(() {
+        _list = Api.plugins();
+      });
   }
 
   Future<void> _togglePin(PluginInfo pl) async {
@@ -358,7 +360,9 @@ class _PluginsPageState extends State<PluginsPage> {
     }
     if (!mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(ok ? 'Removed ${pl.name}' : 'Could not remove ${pl.name}')));
-    setState(() => _list = Api.plugins());
+    setState(() {
+        _list = Api.plugins();
+      });
   }
 
   @override
@@ -516,19 +520,25 @@ class _LibrarySettingsState extends State<_LibrarySettings> {
     final ok = await Api.addSource(path).catchError((_) => false);
     if (!mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(ok ? 'Added. Scanning in the background\u2026' : 'Could not add that folder.')));
-    setState(() => _sources = Api.sources());
+    setState(() {
+        _sources = Api.sources();
+      });
   }
 
   Future<void> _addNetFolder() async {
     final added = await Navigator.push<bool>(context, MaterialPageRoute<bool>(builder: (_) => const NetFolderPage()));
     if (added != true || !mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Added. The first scan of a network folder takes a little longer\u2026')));
-    setState(() => _sources = Api.sources());
+    setState(() {
+        _sources = Api.sources();
+      });
   }
 
   Future<void> _removeSource(String path) async {
     await Api.removeSource(path).catchError((_) {});
-    if (mounted) setState(() => _sources = Api.sources());
+    if (mounted) setState(() {
+        _sources = Api.sources();
+      });
   }
 
   @override
