@@ -523,8 +523,19 @@ class Api {
 
   /// Installed plugins: the folder list from the server plus each plugin.json (served from /plugins/<folder>/).
   static Future<List<PluginInfo>> plugins() async {
-    final j = await _get('/api/plugins');
+    // The server can still be starting right after launch: ask a few times before giving up.
+    dynamic j;
+    for (var attempt = 0;; attempt++) {
+      try {
+        j = await _get('/api/plugins');
+        break;
+      } catch (_) {
+        if (attempt >= 2) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      }
+    }
     final out = <PluginInfo>[];
+    final unreadable = <String>[];
     for (final e in ((j['plugins'] as List?) ?? const [])) {
       final folder = '${(e as Map)['folder']}';
       var name = folder, desc = '', version = '', navTab = '', icon = '';
@@ -533,7 +544,15 @@ class Api {
       var liveProvider = false;
       var hooks = false;
       try {
-        final m = await _get('/plugins/${Uri.encodeComponent(folder)}/plugin.json');
+        // The list answer carries plugin.json itself (backend/server.cpp); older servers do not, then it is asked for the old way.
+        final embedded = e['manifest'];
+        dynamic m;
+        if (embedded is String && embedded.trim().startsWith('{')) {
+          try {
+            m = jsonDecode(embedded);
+          } catch (_) {}
+        }
+        m ??= await _getManifest(folder);
         name = '${m['name'] ?? folder}';
         desc = '${m['description'] ?? ''}';
         version = '${m['version'] ?? ''}';
@@ -549,10 +568,30 @@ class Api {
         if (ui is Map) navTab = '${ui['navTab'] ?? ''}';
         final ic = '${m['icon'] ?? ''}';
         if (RegExp(r'^[A-Za-z0-9._-]{1,60}\.(png|jpe?g|webp|gif)$', caseSensitive: false).hasMatch(ic)) icon = '$base/plugins/${Uri.encodeComponent(folder)}/$ic';
-      } catch (_) {}
+      } catch (err) {
+        unreadable.add('$folder: $err');
+      }
       out.add(PluginInfo(folder: folder, name: name, description: desc, version: version, hasBackend: e['hasBackend'] == true, flutterScreen: flutterScreen, navTab: navTab, streamer: streamer, liveProvider: liveProvider, hooks: hooks, builtin: e['builtin'] == true, icon: icon));
     }
+    pluginsNote = unreadable.isEmpty ? '' : '${unreadable.length} of ${out.length} plugin.json files could not be read (${unreadable.first}).';
     return out;
+  }
+
+  /// Why the last [plugins] call could not tell what some plugins are (empty = it could); shown by the pin picker.
+  static String pluginsNote = '';
+
+  /// A plugin's plugin.json. A failed read is retried a couple of times: it used to leave flutterScreen false, which hid the
+  /// plugin from the pin list (and the Open / Pin buttons) until the next reload. A 404 (no manifest at all) is not retried.
+  static Future<dynamic> _getManifest(String folder) async {
+    final path = '/plugins/${Uri.encodeComponent(folder)}/plugin.json';
+    for (var attempt = 0;; attempt++) {
+      try {
+        return await _get(path);
+      } catch (e) {
+        if (attempt >= 2 || '$e'.contains('HTTP 404')) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
+      }
+    }
   }
 
   /// Folder names of the installed plugins, or null when the list could not be read.

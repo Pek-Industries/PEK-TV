@@ -153,13 +153,32 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   /// Plugins that have a Python screen: one menu entry each. Reloaded when the store installs or removes one.
   void _loadPluginScreens() {
+    _pluginRetry?.cancel();
+    _fetchPluginScreens(0);
+  }
+
+  Timer? _pluginRetry;
+
+  void _fetchPluginScreens(int attempt) {
     Activity.begin('plugins', 'Loading plugins\u2026', detail: true);
     Api.plugins().then((l) {
-      Activity.end('plugins', 'Loaded ${l.length} plugins');
+      final screens = l.where((e) => e.flutterScreen).toList();
+      Activity.end('plugins', 'Loaded ${l.length} plugins, ${screens.length} with a screen${Api.pluginsNote.isEmpty ? '' : '. ${Api.pluginsNote}'}');
       PluginHost.streamers = [for (final e in l) if (e.flutterScreen && (e.streamer || e.liveProvider)) {'id': e.folder, 'name': e.name, 'stream': e.streamer ? 'true' : 'false', 'live': e.liveProvider ? 'true' : 'false'}];
-      if (mounted) setState(() => _pluginScreens = l.where((e) => e.flutterScreen).toList());
+      if (mounted) setState(() => _pluginScreens = screens);
+      if (screens.isEmpty) _retryPluginScreens(attempt); // nothing came back: the server may not have been ready yet
     }).catchError((_) {
       Activity.end('plugins');
+      _retryPluginScreens(attempt); // a failed load used to leave the pin list empty until a plugin was installed or removed
+    });
+  }
+
+  /// Asks again a few seconds later (2 s, 4 s, 6 s), then stops: someone with no plugin screens at all should not poll forever.
+  void _retryPluginScreens(int attempt) {
+    if (!mounted || attempt >= 3) return;
+    _pluginRetry?.cancel();
+    _pluginRetry = Timer(Duration(seconds: 2 * (attempt + 1)), () {
+      if (mounted) _fetchPluginScreens(attempt + 1);
     });
   }
 
@@ -218,6 +237,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _reminderTimer?.cancel();
+    _pluginRetry?.cancel();
     PluginHost.changed.removeListener(_loadPluginScreens);
     PluginPins.changed.removeListener(_pinsChanged);
     Store.profile.removeListener(_pinsChanged);
@@ -341,6 +361,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ids: _more,
           pinned: _pinnedScreens,
           available: _pluginScreens,
+          onReloadPlugins: _loadPluginScreens,
           titleOf: _title,
           icons: {for (final pl in _pluginScreens) if (pl.icon.isNotEmpty) 'plugin:${pl.folder}': pl.icon},
           hints: {for (final pl in _pluginScreens) 'plugin:${pl.folder}': pl.description},
@@ -507,12 +528,13 @@ class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMix
 
 /// The "More" page: every screen that is not a swipe page, as tiles.
 class _MorePage extends StatelessWidget {
-  const _MorePage({required this.padding, required this.onOpen, required this.ids, required this.titleOf, this.pinned = const [], this.available = const [], this.hints = const {}, this.icons = const {}});
+  const _MorePage({required this.padding, required this.onOpen, required this.ids, required this.titleOf, this.pinned = const [], this.available = const [], this.onReloadPlugins, this.hints = const {}, this.icons = const {}});
   final EdgeInsets padding;
   final void Function(String id) onOpen;
   final List<String> ids;
   final List<PluginInfo> pinned; // plugin screens on the pin board
   final List<PluginInfo> available; // every installed plugin screen (what the board's + slots offer)
+  final VoidCallback? onReloadPlugins; // the pin picker found plugins the menu had missed: reload the menu's list
   final String Function(String id) titleOf;
   final Map<String, String> hints; // plugin screens: their description
   final Map<String, String> icons; // plugin screens: the address of their picture (plugin.json "icon")
@@ -583,7 +605,7 @@ class _MorePage extends StatelessWidget {
                   if (c > 0) Padding(padding: EdgeInsets.symmetric(horizontal: gap / 2), child: SizedBox(width: 1, child: ColoredBox(color: p.tokens.textMuted.withAlpha(60)))),
                   Expanded(
                     child: r * cols + c < list.length && list[r * cols + c].startsWith('pin+:')
-                        ? PinTile(onTap: () => PinActions.pick(context, available))
+                        ? PinTile(onTap: () => PinActions.pick(context, available, onReloaded: onReloadPlugins))
                         : r * cols + c < list.length && pinned.any((e) => 'plugin:${e.folder}' == list[r * cols + c])
                             ? _pinTile(context, list[r * cols + c], rem, p)
                             : r * cols + c < list.length

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'api.dart' show PluginInfo;
+import 'api.dart' show Api, PluginInfo;
 import 'plugin_pins.dart';
 import 'plugin_store_ui.dart' show PluginPicture;
 import 'tokens.dart';
@@ -15,9 +15,29 @@ import 'tokens.dart';
 class PinActions {
   static String name(PluginInfo pl) => pl.navTab.isEmpty ? pl.name : pl.navTab;
 
-  static Future<void> pick(BuildContext context, List<PluginInfo> available) async {
+  static Future<void> pick(BuildContext context, List<PluginInfo> available, {VoidCallback? onReloaded}) async {
+    // The menu's list is empty when its load failed or ran before the server was ready (or a plugin was installed since):
+    // ask again now, so "No plugins installed yet" is only shown when that is true.
+    var list = available;
+    String? emptyNote;
+    if (list.isEmpty) {
+      try {
+        final all = await Api.plugins();
+        list = [for (final pl in all) if (pl.flutterScreen) pl];
+        if (list.isNotEmpty) {
+          onReloaded?.call();
+        } else if (all.isNotEmpty) {
+          emptyNote = Api.pluginsNote.isEmpty
+              ? 'None of your installed plugins has a screen that can be pinned.'
+              : 'Found ${all.length} plugins but could not read their details. ${Api.pluginsNote}';
+        }
+      } catch (_) {
+        emptyNote = 'Could not read your plugins. Try again in a moment.';
+      }
+      if (!context.mounted) return;
+    }
     final p = context.pek;
-    final free = [for (final pl in available) if (!PluginPins.isPinned(pl.folder)) pl];
+    final free = [for (final pl in list) if (!PluginPins.isPinned(pl.folder)) pl];
     final chosen = await showDialog<PluginInfo>(
       context: context,
       barrierColor: p.tokens.overlay,
@@ -29,7 +49,7 @@ class PinActions {
             Padding(
               padding: EdgeInsets.symmetric(horizontal: 1.5 * p.rem, vertical: p.rem),
               child: Text(
-                available.isEmpty ? 'No plugins installed yet. Install one from the Plugins page first.' : 'Every installed plugin is already pinned.',
+                list.isEmpty ? (emptyNote ?? 'No plugins installed yet. Install one from the Plugins page first.') : 'Every installed plugin is already pinned.',
                 style: TextStyle(color: p.tokens.textMuted),
               ),
             ),

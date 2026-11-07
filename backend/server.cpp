@@ -508,6 +508,10 @@ void PekServer::start(int port, const std::string& plugins_dir,
     registerMusicRoutes(svr, scanner, std::filesystem::path(plugins_dir).parent_path().string());   // /api/music/* (music.h)
     // 1. Serve plugin folders (plugin.json, screen.py's data, images; never .js, see the pre-routing handler) at /plugins.
     //    The server is API only: the screens are drawn by the Flutter UI.
+    {   // cpp-httplib registers a mount only when the folder exists at this moment: make sure it does, or every /plugins/<id>/... answers 404
+        std::error_code mkec;
+        fs::create_directories(plugins_dir, mkec);
+    }
     svr.set_mount_point("/plugins", plugins_dir);
 
     // 2. The JSON API endpoint that feeds live data to the Flutter UI
@@ -585,10 +589,24 @@ void PekServer::start(int port, const std::string& plugins_dir,
 
                     bool has_backend = fs::exists(entry.path() / "backend.py");
 
+                    // The plugin's plugin.json, read straight from its folder and sent as one escaped string, so the app learns what a
+                    // plugin is (name, \"flutter\" screen, ...) from this one answer and not from a second request per plugin through
+                    // the /plugins file mount (when that failed, every plugin looked like it had no screen and could not be pinned).
+                    std::string manifest;
+                    {
+                        std::error_code mec;
+                        const fs::path mf = entry.path() / "plugin.json";
+                        if (fs::is_regular_file(mf, mec) && fs::file_size(mf, mec) <= 262144) {
+                            std::ifstream in(mf, std::ios::binary);
+                            if (in) manifest.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+                        }
+                    }
+
                     if (!first) json_response += ",";
                     json_response += "{\"folder\": \"" + jsonEscape(folder_name) + "\", \"hasBackend\": " +
                                       (has_backend ? "true" : "false") +
-                                      ", \"builtin\": " + (pek_plugins::isReservedId(folder_name) ? "true" : "false") + "}";
+                                      ", \"builtin\": " + (pek_plugins::isReservedId(folder_name) ? "true" : "false") +
+                                      ", \"manifest\": \"" + jsonEscape(manifest) + "\"}";
                     first = false;
                 }
             }
