@@ -665,6 +665,33 @@ class Api {
 
   static String streamUrl(String id) => '$base/api/stream/${Uri.encodeComponent(id)}';
 
+  /// GET /api/parts/<id>: for a movie split over several files ("Movie - Disk1.mkv", "Movie - Disk2.mkv") the ids of all its files in
+  /// playing order; an empty list for an ordinary file (or when the lookup fails, so a normal file always just plays).
+  static Future<List<String>> parts(String id) async {
+    try {
+      final j = await _getRaw('/api/parts/${Uri.encodeComponent(id)}', const Duration(seconds: 8));
+      final l = (j is Map) ? j['parts'] : null;
+      return l is List ? l.map((e) => '$e').toList() : const <String>[];
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
+  /// One address that plays several library files as a single film: libmpv's edl:// plays the files one after the other as one
+  /// timeline (one seek bar, one resume point).
+  static String joinedStreamUrl(List<String> ids) => 'edl://${ids.map(streamUrl).join(';')}';
+
+  /// GET /api/dvd/<id>: the disc description (see dvd.dart) when the library item is a DVD (a VIDEO_TS folder or an .iso), else null.
+  /// Any failure also gives null, so a normal file always just plays.
+  static Future<Map<String, dynamic>?> dvdInfo(String id) async {
+    try {
+      final j = await _getRaw('/api/dvd/${Uri.encodeComponent(id)}', const Duration(seconds: 8));
+      return (j is Map && j['dvd'] == true) ? Map<String, dynamic>.from(j) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static String abs(String p) {
     if (p.isEmpty) return '';
     return p.startsWith('http') ? p : '$base$p';

@@ -83,8 +83,9 @@ class PekPlayer {
     return v.whereType<Map>().map((m) => TrackInfo((m['id'] as num).toInt(), '${m['label']}', m['selected'] == true)).toList();
   }
 
-  Future<void> load(String url, {double startSec = 0, String title = ''}) =>
-      _method.invokeMethod('load', {'url': url, 'startSec': startSec, 'title': title});
+  /// [dvdDevice]: for a "dvd://" or "dvd://<title>" url, the folder that holds VIDEO_TS or the .iso file to play it from.
+  Future<void> load(String url, {double startSec = 0, String title = '', String? dvdDevice}) =>
+      _method.invokeMethod('load', {'url': url, 'startSec': startSec, 'title': title, 'dvdDevice': dvdDevice});
   Future<void> play() => _method.invokeMethod('play');
   Future<void> pause() => _method.invokeMethod('pause');
   Future<void> seek(double sec) => _method.invokeMethod('seek', {'sec': sec < 0 ? 0.0 : sec});

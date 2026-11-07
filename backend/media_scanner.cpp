@@ -1,4 +1,6 @@
 #include "media_scanner.h"
+#include "dvd_info.h"
+#include "part_names.h"
 #include "vfs.h"
 #include "nfo.h"
 #include "pekdb.h"
@@ -674,6 +676,38 @@ std::vector<MediaEntry> readLegacyCache(const std::string& path) {
     return loaded;
 }
 
+// A DVD (a folder with VIDEO_TS in it, or a .iso image) is always a film. It carries no tags for ffprobe, so it is named from its
+// folder / file name: "The Matrix (1999)" -> title + year, "THE_MATRIX" (a bare disc label) -> "The Matrix", no year.
+void classifyDisc(MediaEntry& entry) {
+    fs::path p(entry.path);
+    std::error_code ec;
+    std::string raw = fs::is_directory(p, ec) ? p.filename().string() : p.stem().string();
+    if (toLower(raw) == "video_ts") raw = p.parent_path().filename().string();
+    entry.kind = MediaKind::Movie;
+    entry.guessed = true;
+    entry.show_title.clear();
+    entry.season = 0;
+    entry.episode = 0;
+    entry.year = 0;
+    std::string name = cleanSeparators(raw);
+    // Disc labels are usually ALL CAPS ("THE_MATRIX"): lower-case them so prettyTitle() can capitalise the words.
+    bool has_lower = false;
+    for (unsigned char c : name) if (std::islower(c)) { has_lower = true; break; }
+    if (!has_lower) name = toLower(name);
+    static const std::regex year_re(R"((^|[^0-9])((?:19|20)\d{2})(?![0-9]|x\d))");
+    for (auto it = std::sregex_iterator(name.begin(), name.end(), year_re); it != std::sregex_iterator(); ++it) {
+        const std::string title = cleanShowName(name.substr(0, static_cast<size_t>(it->position(2))));
+        if (title.empty()) continue;                       // the year is the first thing in the name: part of the title ("2012")
+        try { entry.year = std::stoi((*it)[2].str()); } catch (...) { continue; }
+        entry.title = prettyTitle(title);
+        return;
+    }
+    std::string title = cleanShowName(name);
+    if (title.empty()) title = name;
+    if (title.empty()) title = raw;
+    entry.title = prettyTitle(title);
+}
+
 } // namespace
 
 MediaScanner::MediaScanner(std::string sources_file_path, std::string cache_file_path)
@@ -873,6 +907,24 @@ void MediaScanner::scanDirectory(const std::string& dir_path, std::vector<MediaE
         return;
     }
 
+    // A DVD-Video disc (this folder holds VIDEO_TS/): one library entry for the whole disc - its .VOB / .IFO files are not
+    // separate movies. The player opens it with libmpv's DVD support (dvd_info.h, MpvController.kt, DVD.md).
+    const bool is_disc = dvd::isDiscFolder(dir_path);
+    if (is_disc) {
+        MediaEntry disc;
+        disc.path = dir_path;
+        while (disc.path.size() > 1 && disc.path.back() == '/') disc.path.pop_back();
+        disc.filename = fs::path(disc.path).filename().string();
+        uint64_t ifo_size = 0;
+        int64_t ifo_mtime = 0;
+        if (dvd::folderStamp(disc.path, ifo_size, ifo_mtime)) {
+            disc.id = makeId(disc.path);
+            disc.size_bytes = ifo_size;
+            disc.mtime = ifo_mtime;
+            found.push_back(std::move(disc));
+        }
+    }
+
     for (fs::directory_iterator end; it != end; it.increment(ec)) {
         if (ec) break;
         const auto& e = *it;
@@ -884,7 +936,28 @@ void MediaScanner::scanDirectory(const std::string& dir_path, std::vector<MediaE
             if (e.is_symlink(entry_ec)) continue;   // avoid symlink loops
             std::string name = e.path().filename().string();
             if (!name.empty() && name[0] == '.') continue;
+            if (is_disc) {                           // the disc's own folders are part of its one entry
+                const std::string lname = toLower(name);
+                if (lname == "video_ts" || lname == "audio_ts") continue;
+            }
             scanDirectory(e.path().string(), found);
+            continue;
+        }
+
+        // A .iso image of a DVD-Video disc (other .iso files - install discs and the like - are left alone).
+        if (dvd::isIsoName(e.path().string())) {
+            if (dvd::isDiscIso(e.path().string())) {
+                MediaEntry disc;
+                disc.path = e.path().string();
+                disc.filename = e.path().filename().string();
+                disc.id = makeId(disc.path);
+                disc.size_bytes = fs::file_size(e.path(), entry_ec);
+                if (entry_ec) continue;
+                auto ftime = fs::last_write_time(e.path(), entry_ec);
+                disc.mtime = entry_ec ? 0 : std::chrono::duration_cast<std::chrono::seconds>(
+                                                ftime.time_since_epoch()).count();
+                found.push_back(std::move(disc));
+            }
             continue;
         }
 
@@ -1021,6 +1094,11 @@ void MediaScanner::scan(bool onlyNewSources) {
                 std::cout << "[MediaScanner] From NFO: " << entry.filename << std::endl;
                 continue;
             }
+            if (dvd::isDiscPath(entry.path)) {   // a DVD folder / .iso: nothing for ffprobe to read, it is named from its folder / file name
+                classifyDisc(entry);
+                std::cout << "[MediaScanner] DVD: " << entry.filename << " -> " << entry.title << std::endl;
+                continue;
+            }
             std::cout << "[MediaScanner] Probing: " << entry.filename << std::endl;
             probeAndClassify(entry);
 
@@ -1067,6 +1145,7 @@ void MediaScanner::scan(bool onlyNewSources) {
     }
 
     size_t indexed = fresh.size();
+    groupParts(fresh);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         entries_ = std::move(fresh);
@@ -1100,10 +1179,51 @@ void MediaScanner::setAfterScan(std::function<void()> callback) {
     after_scan_ = std::move(callback);
 }
 
+void MediaScanner::groupParts(std::vector<MediaEntry>& list) {
+    struct Piece { size_t index; int number; };
+    std::map<std::string, std::vector<Piece>> groups;      // folder + base name -> its files
+    for (size_t i = 0; i < list.size(); ++i) {
+        MediaEntry& e = list[i];
+        e.part = 0;
+        e.part_first.clear();
+        if (e.kind != MediaKind::Movie || dvd::isDiscPath(e.path)) continue;
+        std::string base;
+        int number = 0;
+        if (!partname::split(fs::path(e.filename).stem().string(), base, number)) continue;
+        groups[toLower(fs::path(e.path).parent_path().string()) + "\n" + toLower(base)].push_back({i, number});
+    }
+    for (auto& kv : groups) {
+        auto& pieces = kv.second;
+        if (pieces.size() < 2) continue;                    // a lone "... - Disk1.mkv" is just a movie
+        std::sort(pieces.begin(), pieces.end(), [](const Piece& a, const Piece& b) { return a.number < b.number; });
+        bool ok = pieces.front().number == 1;               // has to start at 1 ...
+        for (size_t k = 1; ok && k < pieces.size(); ++k) ok = pieces[k].number != pieces[k - 1].number;   // ... and no number twice
+        if (!ok) continue;
+        const std::string first = list[pieces.front().index].id;
+        for (size_t k = 0; k < pieces.size(); ++k) {
+            list[pieces[k].index].part = static_cast<int>(k) + 1;
+            list[pieces[k].index].part_first = first;
+        }
+    }
+}
+
+std::vector<std::string> MediaScanner::partsOf(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::string first;
+    for (const auto& e : entries_) if (e.id == id) { first = e.part_first; break; }
+    std::vector<std::string> out;
+    if (first.empty()) return out;
+    std::vector<std::pair<int, std::string>> found;
+    for (const auto& e : entries_) if (e.part > 0 && e.part_first == first) found.push_back({e.part, e.id});
+    std::sort(found.begin(), found.end());
+    for (const auto& f : found) out.push_back(f.second);
+    return out;
+}
+
 std::vector<MediaEntry> MediaScanner::getMovies() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<MediaEntry> out;
-    for (const auto& e : entries_) if (e.kind == MediaKind::Movie) out.push_back(e);
+    for (const auto& e : entries_) if (e.kind == MediaKind::Movie && e.part <= 1) out.push_back(e);   // later parts play through the first
     return out;
 }
 
@@ -1380,10 +1500,23 @@ std::string MediaScanner::searchJson(const SearchQuery& sq) {
     const std::string field = shows ? "shows" : "movies";
     if (!db_) return "{\"total\":0,\"" + field + "\":[]}";
 
-    const std::string from = shows
+    std::string from = shows
         ? " FROM (SELECT norm, MIN(show_title) AS name, MAX(mtime) AS added FROM media WHERE kind=1 GROUP BY norm) m"
           " LEFT JOIN title_meta t ON t.key = 's:' || m.norm WHERE 1=1"
         : " FROM media m LEFT JOIN title_meta t ON t.key = 'm:' || m.id WHERE m.kind=0";
+    if (!shows) {                                   // the 2nd, 3rd ... file of a movie split over several files is not a movie of its own
+        std::string hidden;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto& e : entries_) {
+                if (e.part <= 1) continue;
+                bool safe = !e.id.empty();
+                for (unsigned char c : e.id) if (!std::isalnum(c)) { safe = false; break; }
+                if (safe) hidden += (hidden.empty() ? "'" : ",'") + e.id + "'";
+            }
+        }
+        if (!hidden.empty()) from += " AND m.id NOT IN (" + hidden + ")";
+    }
     const std::string key = shows ? "('s:' || m.norm)" : "('m:' || m.id)";
     const std::string year = shows ? "COALESCE(t.year,0)" : "m.year";
     const std::string added = shows ? "m.added" : "m.mtime";
@@ -1527,6 +1660,7 @@ void MediaScanner::loadFromDisk() {
             loaded.push_back(std::move(e));
         }
     }
+    groupParts(loaded);
     std::lock_guard<std::mutex> lock(mutex_);
     entries_ = std::move(loaded);
     std::cout << "[MediaScanner] Loaded " << entries_.size() << " entries from cache." << std::endl;

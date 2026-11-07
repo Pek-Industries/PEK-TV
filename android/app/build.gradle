@@ -93,6 +93,13 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    // libmpv-release.aar, the Discord SDK and Flutter each bring their own libc++_shared.so; keep one copy instead of failing the merge.
+    packaging {
+        jniLibs {
+            pickFirsts += ['**/libc++_shared.so']
+        }
+    }
 }
 
 // Chaquopy: embedded Python so plugins/<name>/backend.py runs on Android.
@@ -133,8 +140,15 @@ dependencies {
     if (flutterOn) {
         implementation project(':flutter')
     }
-    // mpv engine: the app's only video player (decoding + rendering)
-    implementation 'dev.jdtech.mpv:libmpv:1.0.0'
+    // mpv engine: the app's only video player (decoding + rendering).
+    // android/app/libs/libmpv-release.aar is a libmpv build WITH DVD support (libdvdnav + libdvdread + libdvdcss): it opens
+    // dvd:// discs, VIDEO_TS folders and .iso files (DVD.md). It has the same dev.jdtech.mpv.MPVLib API as the Maven build, so
+    // nothing else changes. Without that file (a checkout that does not have it) the plain Maven build is used - no DVD playback.
+    if (file('libs/libmpv-release.aar').exists()) {
+        implementation files('libs/libmpv-release.aar')
+    } else {
+        implementation 'dev.jdtech.mpv:libmpv:1.0.0'
+    }
     // Discord Rich Presence (DISCORD.md): only when the SDK's .aar was put in android/app/libs/ (it is not in git).
     if (file('libs/discord_partner_sdk.aar').exists()) {
         implementation files('libs/discord_partner_sdk.aar')

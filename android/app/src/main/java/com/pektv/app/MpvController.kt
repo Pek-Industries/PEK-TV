@@ -52,6 +52,12 @@ class MpvController(
     private var mpv: MPVLib? = null
     private var surfaceReady = false
 
+    // DVD: "dvd://" or "dvd://<title>" is played from this folder (the one that holds VIDEO_TS) or .iso file, through libmpv's
+    // DVD support (android/app/libs/libmpv-release.aar). Set by the page / Flutter UI right before load(); null = not a disc.
+    // It stays set while the same disc is reopened by a renderer change (restartEngine) and is replaced by the next load.
+    private var dvdDevice: String? = null
+    private fun isDvd(url: String?) = url != null && url.startsWith("dvd://")
+
     private var pendingUrl: String? = null
     private var currentUrl: String? = null       // the file the running engine is playing (kept so a renderer change can reopen it)
     private var embedActive = false              // true = the running engine draws with mediacodec_embed (smooth mode / direct HDR)
@@ -108,6 +114,9 @@ class MpvController(
     }
 
     // ---------------- calls from the page (already on the UI thread) ----------------
+
+    /** The disc for the next load() of a "dvd://..." url (folder holding VIDEO_TS, or a .iso). Pass null for anything else. */
+    fun setDvdDevice(path: String?) { dvdDevice = if (path.isNullOrBlank()) null else path }
 
     @Suppress("UNUSED_PARAMETER")
     fun load(url: String, startSec: Double, title: String, theme: String) {
@@ -485,6 +494,12 @@ class MpvController(
             m.setOptionString("demuxer-max-back-bytes", "16MiB")
             m.setOptionString("cache-pause-initial", "no")
             m.setOptionString("cache-pause-wait", "4")
+            if (isDvd(u)) {
+                // Where the disc is. Without it mpv looks at /dev/dvd, which an Android device does not have.
+                val dev = dvdDevice
+                if (dev == null) Log.w("PEK", "dvd:// without a disc path")
+                else try { m.setOptionString("dvd-device", dev) } catch (t: Throwable) { Log.w("PEK", "mpv option dvd-device not set", t) }
+            }
             m.init()
             m.addObserver(this)
             m.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
@@ -530,7 +545,10 @@ class MpvController(
             Toast.makeText(activity, "Player has crashed - please restart", Toast.LENGTH_LONG).show()
             emit("ended", JSONObject())          // closes the web player layer
         } else {
-            Toast.makeText(activity, "This file can\u2019t be played (it may be damaged)", Toast.LENGTH_LONG).show()
+            Toast.makeText(activity,
+                if (isDvd(currentUrl)) "This disc can\u2019t be played (damaged, copy-protected or its folder is not readable)"
+                else "This file can\u2019t be played (it may be damaged)",
+                Toast.LENGTH_LONG).show()
             emit("error", JSONObject())
         }
     }

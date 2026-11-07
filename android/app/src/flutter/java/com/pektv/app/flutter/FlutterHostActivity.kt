@@ -358,12 +358,15 @@ class FlutterHostActivity : FlutterActivity() {
             }
             try {
                 when (call.method) {
-                    "load" -> c.load(
-                        call.argument<String>("url") ?: "",
-                        call.argument<Number>("startSec")?.toDouble() ?: 0.0,
-                        call.argument<String>("title") ?: "",
-                        "{}"
-                    )
+                    "load" -> {
+                        c.setDvdDevice(call.argument<String>("dvdDevice"))     // a disc (dvd://...) or null
+                        c.load(
+                            call.argument<String>("url") ?: "",
+                            call.argument<Number>("startSec")?.toDouble() ?: 0.0,
+                            call.argument<String>("title") ?: "",
+                            "{}"
+                        )
+                    }
                     "play" -> c.play()
                     "pause" -> c.pause()
                     "seek" -> c.seek(call.argument<Number>("sec")?.toDouble() ?: 0.0)

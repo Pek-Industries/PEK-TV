@@ -26,7 +26,7 @@ import 'torrent.dart';
 /// Remote / D-pad:  Select = play / pause   Left / Right = -10 s / +10 s   Up = show controls
 ///                  Down = audio and subtitles   Back = close
 class PlayerScreen extends StatefulWidget {
-  const PlayerScreen({super.key, required this.url, required this.title, this.startSec = 0, this.resume, this.nextFor, this.torrentHash, this.onClose, this.live});
+  const PlayerScreen({super.key, required this.url, required this.title, this.startSec = 0, this.resume, this.nextFor, this.torrentHash, this.onClose, this.live, this.dvdDevice});
   final String url;
   final String title;
   final double startSec;
@@ -46,6 +46,9 @@ class PlayerScreen extends StatefulWidget {
   /// A live channel started by a plugin with the "live" permission (pek_ui.live_play). Live has no seek bar and no end; when the
   /// plugin ships a live file the player also gets the channel switcher and the TV guide (the tab on the right edge).
   final LiveSource? live;
+
+  /// A DVD: [url] is "dvd://<title>" and this is the folder holding VIDEO_TS (or the .iso) it is played from (dvd.dart).
+  final String? dvdDevice;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -98,7 +101,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     MusicController.instance.suspend();
     _player.reset();
     _save = Timer.periodic(const Duration(seconds: 10), (_) => _record());
-    _player.load(widget.url, startSec: widget.startSec, title: widget.title);
+    _player.load(widget.url, startSec: widget.startSec, title: widget.title, dvdDevice: widget.dvdDevice);
     final live = widget.live;
     if (live != null) {
       _liveId = live.channelId;

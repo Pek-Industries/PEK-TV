@@ -1,5 +1,6 @@
 #include "playback.h"
 #include "vfs.h"
+#include "dvd_info.h"
 #include <algorithm>
 #include <memory>
 #include <vector>
@@ -85,6 +86,13 @@ void registerPlaybackRoutes(httplib::Server& svr, MediaScanner* scanner) {
             serveRemote(entry, res);
             return;
         }
+        // A DVD (folder or .iso) is not one file to range-read: the player opens it itself through libmpv's DVD support
+        // (see /api/dvd/<id>).
+        if (dvd::isDiscPath(entry.path)) {
+            res.status = 409;
+            res.set_content("{\"error\": \"This is a DVD: open it with the DVD player\", \"dvd\": true}", "application/json");
+            return;
+        }
         std::error_code ec;
         if (!fs::is_regular_file(entry.path, ec)) {
             res.status = 404;
@@ -92,5 +100,31 @@ void registerPlaybackRoutes(httplib::Server& svr, MediaScanner* scanner) {
             return;
         }
         res.set_file_content(entry.path);   // handles Range requests itself
+    });
+
+    // Is this library item a DVD, and what is on it?  {"dvd":false}  for everything that is not.
+    // {"dvd":true,"device":"<path libmpv opens>","hasMenu":..,"hasTitleMenus":..,"main":1,"titles":[{"n","seconds","chapters",..}]}
+    // Only ids the scanner handed out are looked at (same rule as /api/stream); the disc is read on every call, so a disc that was
+    // swapped or ripped again is seen as it is now.
+    svr.Get(R"(/api/dvd/([A-Za-z0-9]+))",
+            [scanner](const httplib::Request& req, httplib::Response& res) {
+        MediaEntry entry;
+        if (!scanner->findById(req.matches[1].str(), entry)) {
+            res.status = 404;
+            res.set_content("{\"error\": \"Unknown media id\"}", "application/json");
+            return;
+        }
+        if (vfs::isRemote(entry.path)) { res.set_content("{\"dvd\":false}", "application/json"); return; }
+        res.set_content(dvd::toJson(dvd::probe(entry.path)), "application/json");
+    });
+
+    // A movie that is split over several files ("Movie - Disk1.mkv", "Movie - Disk2.mkv"): the ids of all its files in playing
+    // order. {"parts":[]} for an ordinary file. The library lists the first part only; the player opens all of them as one.
+    svr.Get(R"(/api/parts/([A-Za-z0-9]+))",
+            [scanner](const httplib::Request& req, httplib::Response& res) {
+        std::string json = "{\"parts\":[";
+        const auto ids = scanner->partsOf(req.matches[1].str());
+        for (size_t i = 0; i < ids.size(); ++i) json += (i ? ",\"" : "\"") + ids[i] + "\"";
+        res.set_content(json + "]}", "application/json");
     });
 }

@@ -39,6 +39,12 @@ struct MediaEntry {
     int season = 0;
     int episode = 0;
 
+    // Runtime only (not persisted): a movie that is split over several files in one folder ("Movie (1999) - Disk1.mkv",
+    // "Movie (1999) - Disk2.mkv"; also CD1 / Part 1 / Pt 1). part = 1, 2, ... for such a file (0 = an ordinary file) and
+    // part_first = the id of its first part. Only the first part is listed as a movie; the player plays them one after the other.
+    int part = 0;
+    std::string part_first;
+
     // Runtime only (not persisted): true when kind/title/show came from
     // the filename/folder fallback rather than embedded tags. Used to
     // decide which entries are worth confirming against TMDb.
@@ -112,6 +118,10 @@ public:
     std::vector<MediaEntry> getEpisodes();          // flat
     std::vector<MediaEntry> getUnclassified();      // the "Unknown" category
     bool findById(const std::string& id, MediaEntry& out);
+
+    // The ids of every file of a movie that is split over several files, in playing order; empty for an ordinary file.
+    // Any one of the ids can be asked about.
+    std::vector<std::string> partsOf(const std::string& id);
 
     // --- What the user's own files say about a title (NFO plot + artwork next to the video) ---
     // Works for local folders and network sources (SMB, NFS, FTP, WebDAV, UPnP) alike. The detail screens and the
@@ -194,6 +204,9 @@ private:
     // parent folders. media_roots are the user's source folders, never
     // treated as a show name. Sets entry.guessed on success.
     static void classifyFromFilename(MediaEntry& entry, const std::vector<std::string>& media_roots);
+
+    // Works out MediaEntry::part / part_first for every movie in the list (run on each new list, before it is stored).
+    static void groupParts(std::vector<MediaEntry>& list);
 
     static std::string makeId(const std::string& path);
     void persistSourcesToDisk();

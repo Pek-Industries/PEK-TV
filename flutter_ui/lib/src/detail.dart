@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'art_cache.dart';
+import 'dvd.dart';
 import 'library_match.dart';
 import 'player.dart';
 import 'recs.dart' show RecFeed;
@@ -23,6 +24,22 @@ Future<void> playMedia(BuildContext context, Progress item, {double startSec = 0
     await playTorrent(context, track: item, startSec: startSec);
     return;
   }
+  // A DVD (folder or .iso in the library) is opened by libmpv's DVD support, not streamed as one file (dvd.dart).
+  if (item.kind == 'movie' && !item.id.startsWith('tor:')) {
+    final raw = await Api.dvdInfo(item.id);
+    if (raw != null) {
+      if (!context.mounted) return;
+      await playDvd(context, item, DvdInfo.fromJson(raw), startSec: startSec);
+      return;
+    }
+  }
+  // A movie split over several files (Disk1 / Disk2, CD1 / CD2, Part 1 / Part 2) plays as one film: the library lists the first file
+  // only, and all of them are opened together.
+  var streamUrl = Api.streamUrl(item.id);
+  if (item.kind == 'movie' && !item.id.startsWith('tor:')) {
+    final ids = await Api.parts(item.id);
+    if (ids.length > 1) streamUrl = Api.joinedStreamUrl(ids);
+  }
   var resolver = nextFor;
   if (resolver == null && item.kind == 'episode' && item.showTitle.isNotEmpty) {
     try {
@@ -34,7 +51,7 @@ Future<void> playMedia(BuildContext context, Progress item, {double startSec = 0
   if (!context.mounted) return;
   await Navigator.push(
     context,
-    MaterialPageRoute<void>(builder: (_) => PlayerScreen(url: Api.streamUrl(item.id), title: item.title, startSec: startSec, resume: item, nextFor: resolver)),
+    MaterialPageRoute<void>(builder: (_) => PlayerScreen(url: streamUrl, title: item.title, startSec: startSec, resume: item, nextFor: resolver)),
   );
 }
 
