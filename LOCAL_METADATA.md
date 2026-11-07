@@ -51,3 +51,19 @@ movies in one folder never shares one poster. Images over 12 MB are ignored.
 ## Not supported (yet)
 
 Season posters, actor photos, clear logos, NFOs that only carry IDs or links, and writing NFO files.
+
+## Sorting and combining filters (Movies, TV Shows, Watch History)
+
+The Movies and TV Shows tabs and Watch History share one filter bar of drop-downs (`library_sort.dart`):
+
+| Drop-down | Choices |
+|---|---|
+| Show | All, Unwatched, Watching, Watched (Watch History has no Unwatched: everything there has been started) |
+| Sort by | Default, Random, Title A–Z, Title Z–A, Year newest / oldest (movies); Recently watched, Oldest watched, Random, A–Z, Z–A (Watch History) |
+| Genre | Any genre, then the genres found in your .nfo files, with counts |
+| Actor | Any actor, then the actors found in your .nfo files, with counts |
+
+They combine: "Unwatched + Action + Random" lists unwatched action movies in a random order. With Random chosen, **Shuffle again**
+reshuffles; the order stays put until then, even when something is marked watched. **Clear filters** puts everything back.
+The Movies and TV Shows tabs remember their choices while the app runs. Genre and actor are answered by the server
+(`/api/library/search`), so they need the .nfo details above; the other filters work on the device.

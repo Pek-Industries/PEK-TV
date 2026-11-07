@@ -7,6 +7,7 @@ import 'common.dart';
 import 'detail.dart';
 import 'fields.dart';
 import 'pages.dart' show ResumeThumb;
+import 'library_sort.dart';
 import 'ratings.dart';
 import 'ratings_export.dart';
 import 'store.dart';
@@ -508,11 +509,22 @@ class HistoryPage extends StatefulWidget {
 
 class _HistoryPageState extends State<HistoryPage> {
   final _q = TextEditingController();
-  WatchFilter _filter = WatchFilter.all; // all | watching (stopped partway) | watched (finished)
+
+  /// Watched state (all | watching = stopped partway | watched = finished), order, genre and actor.
+  final _f = LibraryFilters(sorts: LibrarySort.history);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_f.loadFacets());
+    // Lets a finished movie be matched to the library's genre / actor answers.
+    unawaited(Api.movies().then(_f.bindLibraryMovies).catchError((_) {}));
+  }
 
   @override
   void dispose() {
     _q.dispose();
+    _f.dispose();
     super.dispose();
   }
 
@@ -561,16 +573,23 @@ class _HistoryPageState extends State<HistoryPage> {
   Widget build(BuildContext context) {
     final p = context.pek;
     final rem = p.rem;
-    return ValueListenableBuilder<int>(
+    return ListenableBuilder(
+      listenable: _f,
+      builder: (context, _) => ValueListenableBuilder<int>(
       valueListenable: Store.changed,
       builder: (context, _, __) {
-        final totalDone = Store.history().length;
-        final totalResume = Store.resumeItems().length;
+        // Genre and actor first (the numbers in the Show menu follow them), then the watched state, the search words, the order.
+        final doneAll = [for (final e in Store.history()) if (_f.allowsHistory(e)) e];
+        final resumeAll = [for (final r in Store.resumeItems()) if (_f.allowsProgress(r)) r];
+        final totalDone = doneAll.length;
+        final totalResume = resumeAll.length;
         final query = _q.text;
-        final searching = query.trim().isNotEmpty || _filter != WatchFilter.all;
+        final searching = query.trim().isNotEmpty || _f.active;
         // Watching = still in Continue watching, Watched = finished. The search looks at the title, season and episode, year.
-        final items = _filter == WatchFilter.watching ? <HistoryEntry>[] : [for (final e in Store.history()) if (_matches(query, '${e.label} ${e.year}')) e];
-        final resume = _filter == WatchFilter.watched ? <Progress>[] : [for (final r in Store.resumeItems()) if (_matches(query, '${r.title} ${r.showTitle}')) r];
+        var items = _f.watch == WatchFilter.watching ? <HistoryEntry>[] : [for (final e in doneAll) if (_matches(query, '${e.label} ${e.year}')) e];
+        var resume = _f.watch == WatchFilter.watched ? <Progress>[] : [for (final r in resumeAll) if (_matches(query, '${r.title} ${r.showTitle}')) r];
+        items = sortedBy<HistoryEntry>(items, _f.sort, _f.seed, title: (e) => e.label, year: (e) => e.year);
+        resume = sortedBy<Progress>(resume, _f.sort, _f.seed, title: (r) => r.title, year: (r) => r.year);
         Widget sub(String text) => Padding(padding: EdgeInsets.only(top: 0.25 * rem, bottom: 0.6 * rem), child: Text(text, style: TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2)));
         return ListView(padding: padding, children: [
           const Heading('Watch History', weather: true),
@@ -580,13 +599,14 @@ class _HistoryPageState extends State<HistoryPage> {
           ),
           Padding(
             padding: EdgeInsets.only(bottom: rem),
-            child: WatchFilterBar(
-              value: _filter,
-              options: const [WatchFilter.all, WatchFilter.watching, WatchFilter.watched],
+            child: LibraryFilterBar(
+              filters: _f,
+              watchOptions: const [WatchFilter.all, WatchFilter.watching, WatchFilter.watched],
               counts: {WatchFilter.all: totalDone + totalResume, WatchFilter.watching: totalResume, WatchFilter.watched: totalDone},
-              onChanged: (f) => setState(() => _filter = f),
+              standardLabel: 'Recently watched',
             ),
           ),
+          if (_f.failed) const PekCard(title: 'Could not reach your library', subtitle: 'Genre and actor come from your server. Is it running?'),
           if (resume.isNotEmpty) ...[
             sub('Continue watching'),
             for (final it in resume)
@@ -651,6 +671,7 @@ class _HistoryPageState extends State<HistoryPage> {
           ],
         ]);
       },
+      ),
     );
   }
 }

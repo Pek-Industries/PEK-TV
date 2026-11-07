@@ -410,13 +410,17 @@ class Api {
   // ---------------------------------------------------------------- library search (the NFO database: genre, actor, year ...)
 
   /// {movies: [file ids], shows: [show titles]} or null when the server could not answer.
-  static Future<({List<String> movies, List<String> shows})?> librarySearch(String q, {String genre = '', int decade = 0, int year = 0, String actor = '', String director = ''}) async {
+  /// [only] ('movies' or 'shows') asks for just one of the two; [limit] is how many each (the server allows up to 5000).
+  static Future<({List<String> movies, List<String> shows})?> librarySearch(String q, {String genre = '', int decade = 0, int year = 0, String actor = '', String director = '', int limit = 60, String? only}) async {
     String qs(String type) =>
-        '/api/library/search?type=$type&limit=60&q=${Uri.encodeQueryComponent(q)}${genre.isNotEmpty ? '&genre=${Uri.encodeQueryComponent(genre)}' : ''}'
+        '/api/library/search?type=$type&limit=$limit&q=${Uri.encodeQueryComponent(q)}${genre.isNotEmpty ? '&genre=${Uri.encodeQueryComponent(genre)}' : ''}'
         '${year > 0 ? '&year=$year' : (decade > 0 ? '&decade=$decade' : '')}${actor.isNotEmpty ? '&actor=${Uri.encodeQueryComponent(actor)}' : ''}'
         '${director.isNotEmpty ? '&director=${Uri.encodeQueryComponent(director)}' : ''}';
     try {
-      final r = await Future.wait([_get(qs('movies')), _get(qs('shows'))]);
+      final r = await Future.wait<dynamic>([
+        only == 'shows' ? Future<dynamic>.value(const {}) : _get(qs('movies')),
+        only == 'movies' ? Future<dynamic>.value(const {}) : _get(qs('shows')),
+      ]);
       return (
         movies: ((r[0]['movies'] as List?) ?? const []).map((e) => '$e').toList(),
         shows: ((r[1]['shows'] as List?) ?? const []).map((e) => '$e').toList(),
@@ -426,11 +430,14 @@ class Api {
     }
   }
 
-  /// Genres, decades, years, actors and directors found in the library (movies and shows together).
-  static Future<Facets?> libraryFacets(String actorQ) async {
+  /// Genres, decades, years, actors and directors found in the library (movies and shows together, or just one of them with [only]).
+  static Future<Facets?> libraryFacets(String actorQ, {String? only}) async {
     String u(String type) => '/api/library/facets?type=$type&limit=60&q=${Uri.encodeQueryComponent(actorQ)}';
     try {
-      final r = await Future.wait([_get(u('movies')), _get(u('shows'))]);
+      final r = await Future.wait<dynamic>([
+        only == 'shows' ? Future<dynamic>.value(const {}) : _get(u('movies')),
+        only == 'movies' ? Future<dynamic>.value(const {}) : _get(u('shows')),
+      ]);
       Map<String, int> sum(String key, String nameKey) {
         final out = <String, int>{};
         for (final j in r) {

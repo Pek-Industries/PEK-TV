@@ -9,6 +9,7 @@ import 'common.dart';
 import 'pages.dart';
 import 'store.dart';
 import 'tokens.dart';
+import 'library_sort.dart';
 import 'watch_filter.dart';
 import 'weather.dart' show WeatherBadge;
 import 'widgets.dart';
@@ -35,9 +36,9 @@ class _LibraryPageState extends State<LibraryPage> {
   int _changeTicket = 0; // a newer _followChange() replaces an older one
   int _emptyRetries = 0; // how many times an empty list has been read again by itself
 
-  /// The chosen filter is kept while the app runs, so leaving the tab and coming back does not reset it.
-  static final Map<String, WatchFilter> _remembered = {};
-  late WatchFilter _filter = _remembered[widget.tab] ?? WatchFilter.all;
+  /// The chosen watched state, sort, genre and actor are kept while the app runs, so leaving the tab and coming back does not reset them.
+  static final Map<String, LibraryFilters> _remembered = {};
+  late final LibraryFilters _f = _remembered.putIfAbsent(widget.tab, () => LibraryFilters(only: widget.tab, sorts: widget.tab == 'movies' ? LibrarySort.movies : LibrarySort.shows));
 
   @override
   void initState() {
@@ -45,6 +46,7 @@ class _LibraryPageState extends State<LibraryPage> {
     _watch = Timer.periodic(const Duration(seconds: 3), (_) => _checkScan());
     _checkScan();
     Api.libraryRevision.addListener(_onSourcesChanged);
+    unawaited(_f.loadFacets());
   }
 
   /// A source was added or removed (Settings > Media sources).
@@ -234,59 +236,72 @@ class _LibraryPageState extends State<LibraryPage> {
             }
             final items = snap.data ?? const <Object>[];
             if (items.isEmpty) return _empty(context);
-            // Marking something watched, or finishing it, changes the list and the counts.
-            return ValueListenableBuilder<int>(
-              valueListenable: Store.changed,
-              builder: (context, _, __) {
-                final what = widget.tab == 'movies' ? 'movies' : 'shows';
-                final resuming = resumeIds();
-                final status = [for (final it in items) it is Movie ? movieStatus(it, resuming) : showStatus(it as Show, resuming)];
-                final counts = <WatchFilter, int>{WatchFilter.all: items.length, for (final f in WatchFilter.values) if (f != WatchFilter.all) f: 0};
-                for (final st in status) {
-                  counts[st] = (counts[st] ?? 0) + 1;
-                }
-                final shown = _filter == WatchFilter.all
-                    ? items
-                    : [
-                        for (var i = 0; i < items.length; i++)
-                          if (status[i] == _filter) items[i],
-                      ];
-                final bar = SliverPadding(
-                  padding: EdgeInsets.only(left: widget.padding.left, right: widget.padding.right, bottom: (p.isTv ? 1.25 : 1) * rem),
-                  sliver: SliverToBoxAdapter(
-                    child: WatchFilterBar(
-                      value: _filter,
-                      counts: counts,
-                      onChanged: (f) => setState(() {
-                        _filter = f;
-                        _remembered[widget.tab] = f;
-                      }),
-                    ),
-                  ),
-                );
-                if (shown.isEmpty) {
+            // Marking something watched, or finishing it, changes the list and the counts; a genre / actor / sort pick does too.
+            return ListenableBuilder(
+              listenable: _f,
+              builder: (context, _) => ValueListenableBuilder<int>(
+                valueListenable: Store.changed,
+                builder: (context, _, __) {
+                  final what = widget.tab == 'movies' ? 'movies' : 'shows';
+                  final resuming = resumeIds();
+                  // Genre and actor first, then the watched state (the numbers in the Show menu follow the genre and actor), then the order.
+                  final inScope = [for (final it in items) if (it is Movie ? _f.allowsMovie(it) : _f.allowsShow(it as Show)) it];
+                  final status = [for (final it in inScope) it is Movie ? movieStatus(it, resuming) : showStatus(it as Show, resuming)];
+                  final counts = <WatchFilter, int>{WatchFilter.all: inScope.length, for (final f in WatchFilter.values) if (f != WatchFilter.all) f: 0};
+                  for (final st in status) {
+                    counts[st] = (counts[st] ?? 0) + 1;
+                  }
+                  final byState = _f.watch == WatchFilter.all
+                      ? inScope
+                      : [
+                          for (var i = 0; i < inScope.length; i++)
+                            if (status[i] == _f.watch) inScope[i],
+                        ];
+                  final shown = sortedBy<Object>(
+                    byState,
+                    _f.sort,
+                    _f.seed,
+                    title: (o) => o is Movie ? o.title : (o as Show).title,
+                    year: (o) => o is Movie ? o.year : 0,
+                  );
+                  final bar = SliverPadding(
+                    padding: EdgeInsets.only(left: widget.padding.left, right: widget.padding.right, bottom: (p.isTv ? 1.25 : 1) * rem),
+                    sliver: SliverToBoxAdapter(child: LibraryFilterBar(filters: _f, counts: counts)),
+                  );
+                  if (_f.pending || _f.failed || shown.isEmpty) {
+                    final PekCard card;
+                    if (_f.pending) {
+                      card = const PekCard(title: 'Filtering\u2026', subtitle: 'Asking your library.');
+                    } else if (_f.failed) {
+                      card = const PekCard(title: 'Could not reach your library', subtitle: 'Is the server running? Change the genre or actor above to try again.');
+                    } else if (_f.active) {
+                      card = PekCard(
+                        title: _f.watch == WatchFilter.all ? 'No $what match' : 'No ${_f.watch.label.toLowerCase()} $what match',
+                        subtitle: 'Change a filter above, or tap Clear filters to see all your $what.',
+                      );
+                    } else {
+                      card = PekCard(title: 'No $what', subtitle: 'Nothing to show here yet.');
+                    }
+                    return SliverMainAxisGroup(slivers: [
+                      bar,
+                      SliverPadding(padding: widget.padding.copyWith(top: 0), sliver: SliverToBoxAdapter(child: card)),
+                    ]);
+                  }
                   return SliverMainAxisGroup(slivers: [
                     bar,
                     SliverPadding(
                       padding: widget.padding.copyWith(top: 0),
-                      sliver: SliverToBoxAdapter(child: PekCard(title: 'No ${_filter.label.toLowerCase()} $what', subtitle: 'Pick another filter above to see the rest of your $what.')),
+                      sliver: PekGridSliver(
+                        count: shown.length,
+                        // .sx-poster-grid: minmax(200px, 1fr), gap 1rem (1.25rem on TV); on small screens 110px and 0.6rem.
+                        minWidth: p.compact ? 110 : 200,
+                        gap: p.compact ? 0.6 * rem : (p.isTv ? 1.25 : 1) * rem,
+                        builder: (context, i) => _cell(context, shown[i], i),
+                      ),
                     ),
                   ]);
-                }
-                return SliverMainAxisGroup(slivers: [
-                  bar,
-                  SliverPadding(
-                    padding: widget.padding.copyWith(top: 0),
-                    sliver: PekGridSliver(
-                      count: shown.length,
-                      // .sx-poster-grid: minmax(200px, 1fr), gap 1rem (1.25rem on TV); on small screens 110px and 0.6rem.
-                      minWidth: p.compact ? 110 : 200,
-                      gap: p.compact ? 0.6 * rem : (p.isTv ? 1.25 : 1) * rem,
-                      builder: (context, i) => _cell(context, shown[i], i),
-                    ),
-                  ),
-                ]);
-              },
+                },
+              ),
             );
           },
         ),
