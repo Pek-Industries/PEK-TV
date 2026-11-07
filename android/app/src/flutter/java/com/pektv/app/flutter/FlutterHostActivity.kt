@@ -65,7 +65,7 @@ import java.util.concurrent.Executors
  *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
  *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
  *                                    status {status, message} comes back from the installer
- *   pek/output      (MethodChannel)  Settings > Video / Audio output: video, setMatchRate, setHdr, audio, setPassthrough
+ *   pek/output      (MethodChannel)  Settings > Video / Audio output: video, setMatchRate, setHdr, audio, setPassthrough, audioFx, setAudioFx
  *   pek/music       (MethodChannel)  meta, state, end -> FlutterMusic (background play, lock-screen controls);
  *                                    remote {action} comes back the other way (next, prev, stop)
  *   pek/plugins     (MethodChannel)  call(json) -> json: a plugin's Python screen (plugins/<id>/screen.py, run by
@@ -413,6 +413,8 @@ class FlutterHostActivity : FlutterActivity() {
                             "formats" to toPlain(support.optJSONArray("formats") ?: JSONArray())
                         ))
                     }
+                    "audioFx" -> result.success(c.audioFxJson())
+                    "setAudioFx" -> { c.setAudioFx(call.argument<String>("json") ?: "{}"); result.success(null) }
                     "setPassthrough" -> {
                         c.setPassthrough(call.argument<String>("codec") ?: "", call.argument<Boolean>("on") ?: false)
                         result.success(null)

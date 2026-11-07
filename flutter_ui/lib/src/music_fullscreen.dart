@@ -5,6 +5,7 @@ import 'dart:ui' show FontFeature, ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'audio_fx.dart';
 import 'api.dart';
 import 'common.dart' show formatTime;
 import 'lyrics.dart';
@@ -551,9 +552,9 @@ class _Bottom extends StatelessWidget {
     final gap0 = 2.2 * vw;
 
     return LayoutBuilder(builder: (context, box) {
-      // Five small buttons, the big Play button and six gaps must fit the width: on a narrow phone everything shrinks together
+      // Six small buttons, the big Play button and seven gaps must fit the width: on a narrow phone everything shrinks together
       // instead of the row running off the edge (it used to overflow by a few dozen pixels).
-      final natural = 5 * small0 + main0 + 6 * gap0;
+      final natural = 6 * small0 + main0 + 7 * gap0;
       final avail = box.maxWidth.isFinite ? box.maxWidth : natural;
       final k = natural > avail && natural > 0 ? avail / natural : 1.0;
       final small = small0 * k, main = main0 * k, ic = ic0 * k, gap = gap0 * k;
@@ -590,6 +591,9 @@ class _Bottom extends StatelessWidget {
           toggle('Repeat', Icons.repeat, _mc.repeat, _mc.toggleRepeat),
           SizedBox(width: gap),
           plain('Stop', Icons.stop, _mc.stop),
+          SizedBox(width: gap),
+          // Sound settings (delay, boost, night mode, bass / treble ...): the music keeps playing underneath, so a change is heard at once.
+          plain('Sound', Icons.volume_up_rounded, () => showAudioFxPanel(context)),
         ]),
       ]);
     });

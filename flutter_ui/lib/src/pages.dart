@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'account_pages.dart';
 import 'activity.dart';
 import 'all_files_access.dart';
+import 'audio_fx.dart';
 import 'layouts.dart';
 import 'api.dart';
 import 'common.dart';
@@ -440,9 +441,9 @@ class SettingsPage extends StatelessWidget {
         ),
       row('Appearance', 'Skins, layout and the activity display', Icons.palette_outlined, () => const _SettingsList(children: [AppearanceSection(), LayoutSection(), ActivitySection()])),
       if (music)
-        row('Playback', 'Online art and lyrics', Icons.play_circle_outline, () => const _SettingsList(children: [MusicOnlineSection()]))
+        row('Playback', 'Sound, online art and lyrics', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), MusicOnlineSection()]))
       else
-        row('Playback', 'Subtitles, skip intro and online music', Icons.play_circle_outline, () => const _SettingsList(children: [SubtitleSection(), SkipSection(), MusicOnlineSection()])),
+        row('Playback', 'Sound, subtitles, skip intro and online music', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), SubtitleSection(), SkipSection(), MusicOnlineSection()])),
       if (!music) row('Plugins', 'Installing from GitHub and plugin posters', Icons.extension_outlined, () => const _SettingsList(children: [GithubInstallSection(), PluginPostersSection()])),
       row('Advanced', music ? 'TV mode and size, audio output, storage, app updates' : 'TV mode and size, video and audio output, storage, app updates', Icons.tune,
           () => _SettingsList(children: [const TvModeSection(), if (!music) const VideoOutputSection(), const AudioOutputSection(), const StorageSection(), const UpdateSection(), const DevConsoleSection()])),

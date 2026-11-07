@@ -318,6 +318,91 @@ class MpvController(
     /** The codecs switched on, as a JSON array like ["ac3","truehd"]. */
     fun passthroughJson(): String = JSONArray(passthrough.toList()).toString()
 
+    // ---------------- sound settings (Settings > Playback > Sound, and the Sound button in the player) ----------------
+    // Audio delay, volume boost, night mode, dialogue boost, bass / treble and a stereo downmix. Saved here, applied when a video
+    // starts and again at once whenever they change while it plays. mpv's audio filters (the "af" list, built from lavfi filters)
+    // do the work; each property is set on its own, so one this libmpv build does not know cannot stop the others.
+    // Note: a format sent untouched to a receiver (audio passthrough) is not decoded here, so none of this touches that sound.
+    private fun fxClamp(v: Int, lo: Int, hi: Int) = if (v < lo) lo else if (v > hi) hi else v
+
+    private fun fxRead(src: JSONObject?): JSONObject {
+        val o = src ?: JSONObject()
+        return JSONObject()
+            .put("delayMs", fxClamp(o.optInt("delayMs", 0), -3000, 3000))
+            .put("boost", fxClamp(o.optInt("boost", 100), 100, 200))
+            .put("night", fxClamp(o.optInt("night", 0), 0, 2))
+            .put("dialogue", fxClamp(o.optInt("dialogue", 0), 0, 2))
+            .put("bass", fxClamp(o.optInt("bass", 0), -10, 10))
+            .put("treble", fxClamp(o.optInt("treble", 0), -10, 10))
+            .put("downmix", o.optBoolean("downmix", false))
+            .put("eq", JSONArray().also { a ->
+                val src = o.optJSONArray("eq")
+                for (i in 0 until eqFreqs.size) a.put(fxClamp(src?.optInt(i, 0) ?: 0, -12, 12))
+            })
+    }
+
+    // The ten equalizer bands (Hz), one octave wide each; the gains (-12..12 dB) are audioFx["eq"].
+    private val eqFreqs = intArrayOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
+
+    private var audioFx: JSONObject = try { fxRead(JSONObject(prefs.getString("audio_fx", "{}") ?: "{}")) } catch (t: Throwable) { fxRead(null) }
+
+    /** The saved sound settings as JSON (every field present). */
+    fun audioFxJson(): String = audioFx.toString()
+
+    /** Save new sound settings and apply them to the video playing now (if any). */
+    fun setAudioFx(json: String) {
+        audioFx = try { fxRead(JSONObject(json)) } catch (t: Throwable) { fxRead(null) }
+        prefs.edit().putString("audio_fx", audioFx.toString()).apply()
+        mpv?.let { applyAudioFx(it, false) }
+    }
+
+    /** The mpv "af" value for the current settings; "" when no filter is needed. */
+    private fun fxFilterChain(): String {
+        val f = ArrayList<String>()
+        when (audioFx.optInt("dialogue")) {
+            1 -> { f.add("equalizer=f=1000:t=q:w=1:g=2"); f.add("equalizer=f=2500:t=q:w=1:g=3") }
+            2 -> { f.add("equalizer=f=1000:t=q:w=1:g=4"); f.add("equalizer=f=2500:t=q:w=1:g=6") }
+        }
+        val eq = audioFx.optJSONArray("eq")
+        var eqMax = 0
+        if (eq != null) {
+            for (i in 0 until eqFreqs.size) {
+                val g = eq.optInt(i, 0)
+                if (g != 0) f.add("equalizer=f=${eqFreqs[i]}:t=o:w=1:g=$g")
+                if (g > eqMax) eqMax = g
+            }
+        }
+        // Boosted bands would clip the loudest parts: turn everything down by the biggest boost (use Volume boost to get it back).
+        if (eqMax > 0) f.add("volume=volume=-${eqMax}dB")
+        val bass = audioFx.optInt("bass")
+        val treble = audioFx.optInt("treble")
+        if (bass != 0) f.add("bass=g=$bass")
+        if (treble != 0) f.add("treble=g=$treble")
+        // Night mode last: it evens out what the other filters did.
+        when (audioFx.optInt("night")) {
+            1 -> f.add("acompressor=threshold=0.125:ratio=4:attack=20:release=300:makeup=2")
+            2 -> f.add("acompressor=threshold=0.063:ratio=9:attack=10:release=250:makeup=4")
+        }
+        return if (f.isEmpty()) "" else "lavfi=[" + f.joinToString(",") + "]"
+    }
+
+    /** [asOption] true before mpv starts (setOptionString), false while it plays (setPropertyString). */
+    private fun applyAudioFx(m: MPVLib, asOption: Boolean) {
+        val delay = String.format(java.util.Locale.US, "%.3f", audioFx.optInt("delayMs") / 1000.0)
+        for ((key, value) in arrayOf(
+            "volume-max" to "200",
+            "volume" to audioFx.optInt("boost").toString(),
+            "audio-delay" to delay,
+            "audio-channels" to (if (audioFx.optBoolean("downmix")) "stereo" else "auto-safe"),
+            "audio-normalize-downmix" to (if (audioFx.optBoolean("downmix")) "yes" else "no"),
+            "af" to fxFilterChain()
+        )) {
+            try {
+                if (asOption) m.setOptionString(key, value) else m.setPropertyString(key, value)
+            } catch (t: Throwable) { Log.w("PEK", "mpv audio setting $key not set", t) }
+        }
+    }
+
     /**
      * What the connected TV / receiver says it can take untouched: {"known": true, "formats": ["ac3", ...]}.
      * Android 10+ is asked directly (AudioTrack.isDirectPlaybackSupported); older versions read the HDMI output's
@@ -485,6 +570,7 @@ class MpvController(
                 val spdif = passthroughFormats.keys.filter { passthrough.contains(it) }.joinToString(",")
                 try { m.setOptionString("audio-spdif", spdif) } catch (t: Throwable) { Log.w("PEK", "mpv option audio-spdif not set", t) }
             }
+            applyAudioFx(m, true)   // saved sound settings (delay, boost, night mode ...)
             // Streaming from a torrent: keep a good stretch decoded-ahead AND behind, so scrubbing back and
             // forth inside it needs no new download, and wait for a few seconds after a stall before resuming
             // (resuming at once just stutters again).
@@ -494,12 +580,6 @@ class MpvController(
             m.setOptionString("demuxer-max-back-bytes", "16MiB")
             m.setOptionString("cache-pause-initial", "no")
             m.setOptionString("cache-pause-wait", "4")
-            // If the torrent stream drops the connection (no data for a while, a peer swarm that went quiet), reconnect and carry
-            // on from the same spot instead of sitting on "loading" for good.
-            try {
-                m.setOptionString("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=10")
-                m.setOptionString("network-timeout", "90")
-            } catch (t: Throwable) { Log.w("PEK", "mpv reconnect options not set", t) }
             if (isDvd(u)) {
                 // Where the disc is. Without it mpv looks at /dev/dvd, which an Android device does not have.
                 val dev = dvdDevice

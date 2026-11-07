@@ -169,4 +169,8 @@ class PekOutput {
   }
 
   static Future<void> setPassthrough(String codec, bool on) => _c.invokeMethod('setPassthrough', {'codec': codec, 'on': on});
+
+  /// The saved sound settings (audio_fx.dart) as JSON, and saving new ones (applied at once to a video that is playing).
+  static Future<String> audioFxJson() async => (await _c.invokeMethod<String>('audioFx')) ?? '{}';
+  static Future<void> setAudioFx(String json) => _c.invokeMethod('setAudioFx', {'json': json});
 }

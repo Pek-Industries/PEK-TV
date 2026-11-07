@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'activity.dart';
 import 'api.dart';
+import 'audio_fx.dart';
 import 'cloud.dart';
 import 'live_tv.dart';
 import 'mpv.dart';
@@ -78,6 +79,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _handedOff = false; // the next episode is a plugin's: its screen takes over and the shared player is torn down as usual
   bool _hookStarted = false; // plugins with the "playback" permission were told playback began
   bool _hookPaused = false;
+  bool _phone = false; // a phone: the picture follows the way it is held, the rotate button locks it sideways / back to automatic
+  bool _sideways = false;
+  bool _orientationSet = false;
   bool _pipOk = false; // this device can shrink the app into a floating window (the button in the top bar)
   VoidCallback? _afterPip; // the film ended / the file failed while the small window was up: handled once the person is back
 
@@ -137,7 +141,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_orientationSet) return;
+    _orientationSet = true;
+    // A phone turns with the device (portrait, either landscape); a TV already is landscape.
+    _phone = !context.pek.tvDevice;
+    if (_phone) SystemChrome.setPreferredOrientations(_autoOrientations);
+  }
+
+  static const _autoOrientations = [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown, DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight];
+
+  /// Top bar button: forces the picture sideways (for a phone whose rotation lock is on, or held flat), and back to turning automatically.
+  void _rotate() {
+    setState(() => _sideways = !_sideways);
+    SystemChrome.setPreferredOrientations(_sideways ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight] : _autoOrientations);
+    _poke();
+  }
+
+  @override
   void dispose() {
+    if (_phone) SystemChrome.setPreferredOrientations(const []);
     _rootNode.dispose();
     _playNode.dispose();
     Activity.playerLeave();
@@ -574,6 +598,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _toast(lines.join('\n'));
   }
 
+  /// The Sound panel: the picture and the sound carry on underneath, so a change is heard as it is made.
+  Future<void> _sound() async {
+    _hide?.cancel();
+    setState(() => _controls = true);
+    await showAudioFxPanel(context);
+    if (mounted) _poke();
+  }
+
   Future<void> _tracks() async {
     _hide?.cancel();
     setState(() => _controls = true);
@@ -858,6 +890,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _glassBtn(Icons.arrow_back, () => unawaited(_confirmExit())),
               const SizedBox(width: 12),
               Expanded(child: Text(_title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17.5, fontWeight: FontWeight.w600, letterSpacing: 0.2, color: _fg))),
+              const SizedBox(width: 12),
+              _glassBtn(Icons.volume_up_rounded, _sound),
+              if (_phone) ...[
+                const SizedBox(width: 12),
+                _glassBtn(_sideways ? Icons.screen_lock_landscape_rounded : Icons.screen_rotation_rounded, _rotate),
+              ],
               if (_pipOk && !_live) ...[
                 const SizedBox(width: 12),
                 _glassBtn(Icons.picture_in_picture_alt_rounded, () {
