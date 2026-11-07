@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,7 @@ import 'activity.dart';
 import 'device_info.dart';
 
 import 'api.dart';
+import 'cold_history.dart';
 import 'profiles.dart';
 import 'store.dart';
 import 'layouts.dart' show Layouts;
@@ -69,7 +71,8 @@ class Cloud {
   static String prefillName = '';
 
   static const _chunk = 800;
-  static const _maxRounds = 20;
+  // Rounds per sync: a pull page is 2000 items (800 pushed), so 60 rounds reach a 100,000-item profile that is not archived yet in one go.
+  static const _maxRounds = 60;
   static const _dataBudget = 1900;
   static const _torMaxSource = 900;
 
@@ -556,7 +559,9 @@ class Cloud {
       for (var n = 1; n <= _maxRounds; n++) {
         final chunk = all.take(_chunk);
         final cursor = int.tryParse(Store.strGet('pek_sync_cursor') ?? '') ?? 0;
-        final r = await _request('POST', '/v1/sync', body: {'profile': pid, 'since': cursor, 'history': chunk.history, 'progress': chunk.progress, 'favorites': chunk.favorites, 'settings': chunk.settings, 'skins': chunk.skins, 'ratings': chunk.ratings}, withToken: true);
+        final archCursor = int.tryParse(Store.strGet('pek_sync_arch') ?? '') ?? 0;
+        // "archive": 1 tells the cloud this app can read cold-history chunks (older history packed into gzip), so it may archive this account.
+        final r = await _request('POST', '/v1/sync', body: {'profile': pid, 'since': cursor, if (ColdHistory.available) 'archive': 1, if (ColdHistory.available) 'archSince': archCursor, 'history': chunk.history, 'progress': chunk.progress, 'favorites': chunk.favorites, 'settings': chunk.settings, 'skins': chunk.skins, 'ratings': chunk.ratings}, withToken: true);
         if (r.status == 404 && r.body['error'] == 'unknown_profile') {
           fail = const CloudResult(ok: false, error: 'unknown_profile');
           break;
@@ -572,13 +577,18 @@ class Cloud {
         }
         _markPushed(chunk, settingsStored: r.body['settings'] is List, skinsStored: r.body['skins'] is List, ratingsStored: r.body['ratings'] is List); // an older cloud ignores settings, skins and ratings: keep them for later
         if (await _applyRemote(r.body)) anyChange = true;
+        final arch = await _applyArchives(r.body);
+        if (arch.changed) anyChange = true;
         await Store.strSet('pek_sync_cursor', '${r.body['cursor'] ?? cursor}');
-        final more = r.body['more'] == true || all.isNotEmpty;
+        final more = r.body['more'] == true || all.isNotEmpty || arch.more;
         if (more && n < _maxRounds) continue;
         await Store.strSet('pek_sync_last', '${DateTime.now().millisecondsSinceEpoch}');
         break;
       }
-      if (fail == null) return CloudResult(ok: true, pushed: pushed, changed: anyChange);
+      if (fail == null) {
+        if (!light) await _archiveLocal(); // history the cloud has and nobody touched for a while moves to cold files
+        return CloudResult(ok: true, pushed: pushed, changed: anyChange);
+      }
       if (fail.error == 'unknown_profile' && !retried) {
         // Removed on another device, but in use here: keep it (the newer change wins) and try once more.
         retried = true;
@@ -1044,6 +1054,65 @@ class Cloud {
     }
   }
 
+  /// A history entry as the app stores it, made from what the cloud keeps ({kind, title, year, showTitle, season, episode, watchedAt, count}).
+  static Map<String, dynamic> _histFromRemote(String key, int ru, Map<String, dynamic> d) {
+    final kind = '${d['kind'] ?? (key.startsWith('e|') ? 'episode' : 'movie')}';
+    final watched = _int(d['watchedAt']);
+    return {
+      'key': key,
+      'kind': kind,
+      'title': kind == 'episode' ? '${d['showTitle'] ?? ''}' : '${d['title'] ?? ''}',
+      'year': _int(d['year']),
+      'season': _int(d['season']),
+      'episode': _int(d['episode']),
+      'at': watched > 0 ? watched : ru,
+      'count': math.max(1, _int(d['count'])),
+      'updated': ru,
+    };
+  }
+
+  /// Cold history from the cloud: gzip chunks of older history ([[key, updated, deleted, data], ...] as base64). They go straight to cold files
+  /// (Store.applyColdEntries); the newer copy wins. A chunk that cannot be read leaves the cursor where it was, so the next sync asks again.
+  static Future<({bool changed, bool more})> _applyArchives(Map<String, dynamic> resp) async {
+    final list = resp['archives'];
+    if (list is! List || list.isEmpty) return (changed: false, more: false);
+    final incoming = <String, Map<String, dynamic>>{};
+    try {
+      for (final c in list.whereType<Map>()) {
+        final arr = jsonDecode(utf8.decode(gzip.decode(base64Decode('${c['data']}'))));
+        if (arr is! List) throw const FormatException('bad archive chunk');
+        for (final e in arr) {
+          if (e is! List || e.length < 4) continue;
+          final key = '${e[0]}';
+          final ru = _int(e[1]);
+          if (key.isEmpty || ru <= 0) continue;
+          final prev = incoming[key];
+          if (prev != null && _int(prev['updated']) >= ru) continue;
+          incoming[key] = _truthy(e[2]) ? {'deleted': 1, 'updated': ru} : _histFromRemote(key, ru, e[3] is Map ? Map<String, dynamic>.from(e[3] as Map) : <String, dynamic>{});
+        }
+      }
+    } catch (_) {
+      return (changed: false, more: false);
+    }
+    final changed = await Store.applyColdEntries(incoming);
+    await Store.strSet('pek_sync_arch', '${_int(resp['archCursor'])}');
+    return (changed: changed, more: resp['archMore'] == true);
+  }
+
+  /// After a sync: entries the cloud already has (same "updated" as when they were pushed or pulled) and that nobody touched for 90 days move to cold files.
+  static Future<void> _archiveLocal() async {
+    try {
+      final seen = _seen();
+      final sh = seen['h'] as Map<String, dynamic>;
+      final moved = await Store.archiveHistory(isSynced: (k, u) => _int(sh[k]) == u);
+      if (moved.isEmpty) return;
+      for (final k in moved) {
+        sh.remove(k);
+      }
+      await Store.setJsonMap('pek_sync_seen', seen);
+    } catch (_) {}
+  }
+
   static Future<bool> _applyRemote(Map<String, dynamic> resp) async {
     final pending = Store.jsonMap('pek_sync_pending');
     List<Map<String, dynamic>> listOf(dynamic v) => v is List ? v.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() : <Map<String, dynamic>>[];
@@ -1096,9 +1165,15 @@ class Cloud {
     for (final r in remoteH) {
       final key = '${r['key']}';
       final ru = _int(r['updated']);
-      final local = hmap[key];
+      final hot = hmap[key];
+      final cold = hot == null ? ColdHistory.get(Store.profileId, key) : null; // old history lives in cold files
+      final local = hot ?? cold;
       final lu = local is Map ? _int(local['updated'] ?? local['at']) : 0;
-      if (local != null && lu > ru) continue; // ours is newer; it gets pushed
+      if (local != null && lu > ru) {
+        if (cold != null) hmap[key] = Map<String, dynamic>.from(cold); // ours is newer and only in a cold file: bring it back so it gets pushed
+        continue; // ours is newer; it gets pushed
+      }
+      if (cold != null && lu >= ru) continue; // the cold copy is the same: nothing to do
       if (local == null || lu < ru) {
         if (_truthy(r['deleted'])) {
           hmap[key] = {'deleted': 1, 'updated': ru};

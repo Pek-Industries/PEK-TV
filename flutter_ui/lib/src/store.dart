@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'cold_history.dart';
 import 'plugin_hooks.dart' show PluginHooks;
 
 /// On-device state for the Flutter UI (the web UI kept the same things in localStorage, which Flutter cannot read):
@@ -19,7 +21,9 @@ class Store {
 
   static Future<void> init() async {
     _p = await SharedPreferences.getInstance();
+    await ColdHistory.init();
     musicModeN.value = _p.getBool('pek_music_mode') ?? false;
+    _archiveLocalIfSignedOut();
   }
 
   /// Music mode: the whole app shows only music (a Spotify-style shell, music-only settings). Device-wide, not per profile.
@@ -47,6 +51,7 @@ class Store {
     _pid = id.isEmpty ? 'p1' : id;
     profile.value = _pid;
     _bump();
+    _archiveLocalIfSignedOut();
   }
 
   static String _sc(String key) => _pid == 'p1' ? key : 'p/$_pid/$key';
@@ -62,8 +67,9 @@ class Store {
   /// Removes everything one profile owns (the removal reached us from the cloud, or the person deleted it).
   /// Favorites stay unless [keepFavorites] is false: they only exist on this device (the cloud keeps no library favorites).
   static Future<void> removeProfileData(String id, {bool keepFavorites = false}) async {
+    ColdHistory.wipe(id);
     if (id == 'p1') {
-      for (final k in const ['pek_history_v1', 'pek_progress_v1', 'pek_favorites_v1', 'pek_dashboard_v1', 'pek_dashboard_v3', 'pek_dash_v2', 'pek_skip_auto', 'pek_skip_online', 'pek_skin', 'pek_custom_skins', 'pek_skin_tombs', 'pek_layout', 'pek_poster', 'pek_sync_cursor', 'pek_sync_last', 'pek_sync_seen', 'pek_sync_pending', 'pek_sync_pendingf', 'pek_sync_setmeta', 'pek_fav_tombs', 'pek_plugin_favs_v1', 'pek_ratings_v1']) {
+      for (final k in const ['pek_history_v1', 'pek_progress_v1', 'pek_favorites_v1', 'pek_dashboard_v1', 'pek_dashboard_v3', 'pek_dash_v2', 'pek_skip_auto', 'pek_skip_online', 'pek_skin', 'pek_custom_skins', 'pek_skin_tombs', 'pek_layout', 'pek_poster', 'pek_sync_cursor', 'pek_sync_arch', 'pek_sync_last', 'pek_sync_seen', 'pek_sync_pending', 'pek_sync_pendingf', 'pek_sync_setmeta', 'pek_fav_tombs', 'pek_plugin_favs_v1', 'pek_ratings_v1']) {
         if (keepFavorites && (k == 'pek_favorites_v1' || k == 'pek_fav_tombs' || k == 'pek_plugin_favs_v1')) continue;
         await _p.remove(k);
       }
@@ -78,6 +84,7 @@ class Store {
 
   /// Signing out of the account: every profile's data, the profile list and the sign-in leave this device (the cloud keeps them).
   static Future<void> wipeAccountData() async {
+    ColdHistory.wipeAll();
     for (final k in _p.getKeys().toList()) {
       if (k.startsWith('pek_sync_') || k.startsWith('pek_profiles')) {
         await _p.remove(k);
@@ -93,7 +100,7 @@ class Store {
   /// Forgets what the cloud already has, for every profile (a new sign-in gets a full two-way merge).
   static Future<void> clearSyncState(Iterable<String> profileIds) async {
     for (final id in profileIds) {
-      for (final k in const ['pek_sync_cursor', 'pek_sync_last', 'pek_sync_seen', 'pek_sync_pending']) {
+      for (final k in const ['pek_sync_cursor', 'pek_sync_arch', 'pek_sync_last', 'pek_sync_seen', 'pek_sync_pending']) {
         await _p.remove(id == 'p1' ? k : 'p/$id/$k');
       }
     }
@@ -172,11 +179,32 @@ class Store {
     return keyFor(kind: p.kind, title: p.title, showTitle: p.showTitle, year: p.year, season: p.season, episode: p.episode);
   }
 
-  /// Most recently watched first.
+  static String? _histRaw;
+  static String _histPid = '';
+  static int _histCold = -1;
+  static List<HistoryEntry> _histCache = const [];
+
+  static int _hnum(dynamic v) => v is num ? v.toInt() : 0;
+
+  /// Most recently watched first. Hot and cold history together (cold = older history kept in files, see cold_history.dart).
+  /// Rebuilt only when something changed, because a long history is big.
   static List<HistoryEntry> history() {
-    final out = _map(_historyKey).values.whereType<Map>().map((e) => HistoryEntry.fromJson(Map<String, dynamic>.from(e))).where((e) => e.key.isNotEmpty).toList();
-    out.sort((a, b) => b.at.compareTo(a.at));
-    return out;
+    final raw = _p.getString(_historyKey) ?? '{}';
+    if (_histRaw != raw || _histPid != _pid || _histCold != ColdHistory.version) {
+      final hot = _map(_historyKey);
+      final out = hot.values.whereType<Map>().map((e) => HistoryEntry.fromJson(Map<String, dynamic>.from(e))).where((e) => e.key.isNotEmpty).toList();
+      for (final c in ColdHistory.entries(_pid)) {
+        if (hot.containsKey(c.key) || c.value['deleted'] != null) continue; // a hot entry is always the newer copy
+        final e = HistoryEntry.fromJson(Map<String, dynamic>.from(c.value));
+        if (e.key.isNotEmpty) out.add(e);
+      }
+      out.sort((a, b) => b.at.compareTo(a.at));
+      _histCache = out;
+      _histRaw = raw;
+      _histPid = _pid;
+      _histCold = ColdHistory.version;
+    }
+    return List<HistoryEntry>.of(_histCache);
   }
 
   static Future<void> recordWatched(Progress p) async {
@@ -184,7 +212,7 @@ class Store {
     if (key == null) return;
     final map = _map(_historyKey);
     final now = DateTime.now().millisecondsSinceEpoch;
-    final old = map[key];
+    final old = map[key] ?? ColdHistory.get(_pid, key); // an old title watched again comes back from cold history
     if (old is Map && old['deleted'] == null) {
       final e = HistoryEntry.fromJson(Map<String, dynamic>.from(old));
       if (now - e.at < rewatchWindowMs) {
@@ -202,7 +230,8 @@ class Store {
   /// A removed item stays as `{deleted, updated}` so the removal syncs too.
   static Future<void> removeHistory(String key) async {
     final map = _map(_historyKey);
-    if (map[key] is! Map || (map[key] as Map)['deleted'] != null) return;
+    final cur = map[key] ?? ColdHistory.get(_pid, key);
+    if (cur is! Map || cur['deleted'] != null) return;
     map[key] = {'deleted': 1, 'updated': DateTime.now().millisecondsSinceEpoch};
     await _p.setString(_historyKey, jsonEncode(map));
     _bump();
@@ -215,30 +244,46 @@ class Store {
       final v = map[k];
       if (v is Map && v['deleted'] == null) map[k] = {'deleted': 1, 'updated': now};
     }
+    for (final c in ColdHistory.entries(_pid)) {
+      if (!map.containsKey(c.key) && c.value['deleted'] == null) map[c.key] = {'deleted': 1, 'updated': now};
+    }
     await _p.setString(_historyKey, jsonEncode(map));
     _bump();
   }
 
   static String? _watchedRaw;
+  static String _watchedPid = '';
+  static int _watchedCold = -1;
   static Set<String> _watchedSet = const {};
   static Set<String> _watchedTitleSet = const {};
 
-  /// Keys (`m|title|year`, `e|show|season|episode`) of everything currently in Watch History; removed items are left out.
+  /// Keys (`m|title|year`, `e|show|season|episode`) of everything currently in Watch History (hot and cold); removed items are left out.
   /// Cached until the history changes, so a grid of posters can ask once per card.
   static Set<String> watchedKeys() {
     final raw = _p.getString(_historyKey) ?? '{}';
-    if (_watchedRaw == raw) return _watchedSet;
+    if (_watchedRaw == raw && _watchedPid == _pid && _watchedCold == ColdHistory.version) return _watchedSet;
     final out = <String>{};
     final titles = <String>{};
-    _map(_historyKey).forEach((k, v) {
-      if (v is! Map || v['deleted'] != null) return;
+    void add(String k) {
       out.add(k);
       if (k.startsWith('m|')) {
         final parts = k.split('|');
         if (parts.length >= 3) titles.add(parts.sublist(1, parts.length - 1).join('|'));
       }
+    }
+
+    final hot = _map(_historyKey);
+    hot.forEach((k, v) {
+      if (v is! Map || v['deleted'] != null) return;
+      add(k);
     });
+    for (final c in ColdHistory.entries(_pid)) {
+      if (hot.containsKey(c.key) || c.value['deleted'] != null) continue;
+      add(c.key);
+    }
     _watchedRaw = raw;
+    _watchedPid = _pid;
+    _watchedCold = ColdHistory.version;
     _watchedSet = out;
     _watchedTitleSet = titles;
     return out;
@@ -283,7 +328,7 @@ class Store {
     for (final p in items) {
       final key = historyKey(p);
       if (key == null) continue;
-      final old = map[key];
+      final old = map[key] ?? ColdHistory.get(_pid, key);
       final alive = old is Map && old['deleted'] == null;
       if (on) {
         if (alive) continue;
@@ -308,6 +353,66 @@ class Store {
   static Future<void> writeHistoryRaw(Map<String, dynamic> m) => _p.setString(_historyKey, jsonEncode(m));
   static Future<void> writeProgressRaw(Map<String, dynamic> m) => _p.setString(_progressKey, jsonEncode(m));
   static void notifyChanged() => _bump();
+
+  // ---------------------------------------------------------------- cold history (older entries live in files, see cold_history.dart)
+
+  /// Moves history that has not changed for [afterDays] days out of the hot map into cold files, so the hot map (rewritten on every watch)
+  /// stays small. [isSynced] says whether the cloud already has an entry (key, updated): only those may leave, because only hot entries
+  /// are ever pushed. Returns the keys that moved (nothing happens below [minCount], a small batch is not worth a file write).
+  static Future<List<String>> archiveHistory({int afterDays = 90, int minCount = 200, bool Function(String key, int updated)? isSynced}) async {
+    if (!ColdHistory.available) return const [];
+    final map = _map(_historyKey);
+    final cutoff = DateTime.now().millisecondsSinceEpoch - afterDays * 86400000;
+    final move = <String, Map<String, dynamic>>{};
+    map.forEach((k, v) {
+      if (v is! Map) return;
+      final u = _hnum(v['updated'] ?? v['at']);
+      if (u <= 0 || u >= cutoff) return;
+      if (isSynced != null && !isSynced(k, u)) return;
+      move[k] = Map<String, dynamic>.from(v);
+    });
+    if (move.length < minCount) return const [];
+    ColdHistory.putAll(_pid, move); // the files are written first: a crash in between leaves the entry in both, which is harmless
+    for (final k in move.keys) {
+      map.remove(k);
+    }
+    await _p.setString(_historyKey, jsonEncode(map));
+    _bump();
+    return move.keys.toList();
+  }
+
+  /// Cold history that came from the cloud (key -> entry in the same shape as hot ones). A newer copy wins; when it beats a hot
+  /// entry the hot one is dropped, so a key is never newer in cold than in hot. Returns true when something changed.
+  static Future<bool> applyColdEntries(Map<String, Map<String, dynamic>> incoming) async {
+    if (incoming.isEmpty || !ColdHistory.available) return false;
+    final hot = _map(_historyKey);
+    var hotChanged = false;
+    final toCold = <String, Map<String, dynamic>>{};
+    incoming.forEach((k, e) {
+      final eu = _hnum(e['updated'] ?? e['at']);
+      final h = hot[k];
+      if (h is Map && _hnum(h['updated'] ?? h['at']) >= eu) return; // our live copy is as new or newer
+      toCold[k] = e;
+      if (h is Map) {
+        hot.remove(k);
+        hotChanged = true;
+      }
+    });
+    final stored = ColdHistory.putAll(_pid, toCold);
+    if (hotChanged) await _p.setString(_historyKey, jsonEncode(hot));
+    if (stored > 0 || hotChanged) {
+      _bump();
+      return true;
+    }
+    return false;
+  }
+
+  /// Signed out (or never signed in): nothing is waiting to be pushed, so old history can move to cold files by itself.
+  /// Signed in: Cloud does it after a sync, once the cloud has the entries.
+  static void _archiveLocalIfSignedOut() {
+    if ((_p.getString('pek_account_token') ?? '').isNotEmpty) return;
+    unawaited(archiveHistory().catchError((Object _) => const <String>[]));
+  }
 
   // ---------------------------------------------------------------- movie ratings (see ratings.dart)
 
