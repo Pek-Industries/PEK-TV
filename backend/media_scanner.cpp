@@ -1464,7 +1464,7 @@ std::string MediaScanner::localStamp(const Local& local) {
         const auto size = fs::file_size(local.art, ec);
         if (!ec) {
             const auto when = fs::last_write_time(local.art, ec);
-            if (!ec) out += "|" + std::to_string(static_cast<unsigned long long>(size)) + "|" + std::to_string(when.time_since_epoch().count());
+            if (!ec) out += "|" + std::to_string(static_cast<unsigned long long>(size)) + "|" + std::to_string(static_cast<long long>(when.time_since_epoch().count()));
         }
     }
     return out;
