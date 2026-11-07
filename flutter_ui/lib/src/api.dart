@@ -74,6 +74,12 @@ class Api {
   static Future<bool> scanning() async {
     try {
       final j = await _get('/api/scan-status');
+      // The server counts every poster / synopsis that really changed. A new number = read the lists again (not on the first look).
+      final art = (j['art'] as num?)?.toInt();
+      if (art != null) {
+        if (_artSeen != null && art != _artSeen) artRevision.value++;
+        _artSeen = art;
+      }
       return j['scanning'] == true;
     } catch (_) {
       return false;
@@ -81,7 +87,69 @@ class Api {
   }
 
   /// A rescan changes what the library holds, so cached lookups and lists are dropped.
-  static void forgetLibrary() => _details.clear();
+  static void forgetLibrary() {
+    _details.clear();
+    _warmQueue.clear();
+    _warmLanes = 0; // lanes of the old generation stop and do not count any more
+    _warmGen++;
+  }
+
+  // ---- posters come with the list ----------------------------------------------------------------------------------------
+  // The server looks every title's poster + synopsis up ONCE in the background and keeps them in its library database, then
+  // sends them along with /api/movies and /api/shows. [_seed] puts those into the look-up cache, so a card finds its poster
+  // address at once and never asks the server (or TMDb) for it. A title the server has not got to yet has no poster in the
+  // list: its card asks for it the old way (lazily), and the next time the list is read it comes with the list.
+  //
+  // The pictures themselves are then downloaded to the device in list order, 3 at a time, in the background, so cards that
+  // scroll into view find them on disk. (Same cache as the cards use; on-screen cards are served first.)
+  static void _seed(String key, dynamic poster, dynamic overview) {
+    final p = '${poster ?? ''}';
+    if (p.isEmpty) return;
+    if (_details.containsKey(key) && !_noArt.contains(key)) return; // already known (a card asked first); one that found no poster is replaced
+    _noArt.remove(key);
+    final d = Details(overview: '${overview ?? ''}', poster: abs(p));
+    _details[key] = Future<Details>.value(d);
+    _warmQueue.add(d.poster);
+  }
+
+  static void _seedMovies(dynamic j) {
+    for (final e in ((j as Map)['movies'] as List?) ?? const []) {
+      if (e is Map) _seed('m:${e['id']}', e['poster'], e['overview']);
+    }
+    _startWarm();
+  }
+
+  static void _seedShows(dynamic j) {
+    for (final e in ((j as Map)['shows'] as List?) ?? const []) {
+      if (e is Map) _seed('s:${e['showTitle']}', e['poster'], e['overview']);
+    }
+    _startWarm();
+  }
+
+  static final List<String> _warmQueue = [];
+  static int _warmLanes = 0;
+  static int _warmGen = 0;
+  static const _warmMax = 3;
+
+  static void _startWarm() {
+    while (_warmLanes < _warmMax && _warmQueue.isNotEmpty) {
+      _warmLanes++;
+      unawaited(_warmLane(_warmGen));
+    }
+  }
+
+  static Future<void> _warmLane(int gen) async {
+    try {
+      while (gen == _warmGen && _warmQueue.isNotEmpty) {
+        final url = _warmQueue.removeAt(0);
+        try {
+          await ArtCache.file(url).timeout(const Duration(seconds: 25), onTimeout: () => null);
+        } catch (_) {}
+      }
+    } finally {
+      if (gen == _warmGen) _warmLanes--;
+    }
+  }
 
   /// Bumped whenever the set of media sources changes (a folder or network location added or removed). The Movies / TV Shows
   /// pages listen and read the library again as soon as the scan the server starts has finished. Watching the scan status
@@ -127,12 +195,15 @@ class Api {
       final j = await _get('/api/movies');
       final list = _movieList(j);
       unawaited(ArtCache.writeText('movies.json', jsonEncode(j)));
+      _seedMovies(j);
       return list;
     } catch (_) {
       final t = await ArtCache.readText('movies.json');
       if (t != null) {
         try {
-          return _movieList(jsonDecode(t));
+          final o = jsonDecode(t);
+          _seedMovies(o);
+          return _movieList(o);
         } catch (_) {}
       }
       rethrow;
@@ -144,12 +215,15 @@ class Api {
       final j = await _get('/api/shows');
       final list = _showList(j);
       unawaited(ArtCache.writeText('shows.json', jsonEncode(j)));
+      _seedShows(j);
       return list;
     } catch (_) {
       final t = await ArtCache.readText('shows.json');
       if (t != null) {
         try {
-          return _showList(jsonDecode(t));
+          final o = jsonDecode(t);
+          _seedShows(o);
+          return _showList(o);
         } catch (_) {}
       }
       rethrow;
@@ -162,15 +236,19 @@ class Api {
   /// Poster + synopsis for a movie. Cached, and at most 10 lookups run at once so a big grid does not flood the box.
   /// Waiting lookups run newest first: the cards on screen now were built last, so they are served before the ones that were
   /// scrolled past.
-  static Future<Details> movieDetails(String id) => _cachedDetails('m:$id', () async {
-        final j = await _get('/api/movie-details?id=${Uri.encodeQueryComponent(id)}');
-        return Details(overview: (j['overview'] ?? '') as String, poster: abs((j['poster'] ?? '') as String));
-      });
+  static Future<Details> movieDetails(String id) => _cachedDetails('m:$id', () => _loadMovieDetails(id));
 
-  static Future<Details> showDetails(String title) => _cachedDetails('s:$title', () async {
-        final j = await _get('/api/show-details?title=${Uri.encodeQueryComponent(title)}');
-        return Details(overview: (j['overview'] ?? '') as String, poster: abs((j['poster'] ?? '') as String));
-      });
+  static Future<Details> showDetails(String title) => _cachedDetails('s:$title', () => _loadShowDetails(title));
+
+  static Future<Details> _loadMovieDetails(String id) async {
+    final j = await _get('/api/movie-details?id=${Uri.encodeQueryComponent(id)}');
+    return Details(overview: (j['overview'] ?? '') as String, poster: abs((j['poster'] ?? '') as String));
+  }
+
+  static Future<Details> _loadShowDetails(String title) async {
+    final j = await _get('/api/show-details?title=${Uri.encodeQueryComponent(title)}');
+    return Details(overview: (j['overview'] ?? '') as String, poster: abs((j['poster'] ?? '') as String));
+  }
 
   /// The plain video stream of a YouTube trailer (the server looks it up and proxies it: backend/trailer.h). null = not
   /// available for this one, and the caller falls back to the YouTube frame. Quiet: no loading ring.
@@ -270,8 +348,8 @@ class Api {
   }
 
   // ---- details kept on disk: synopsis + poster address per title. Pictures from the internet are kept, and so are the
-  // library's own posters (local folders and network shares: reading those can be slow, so they are kept too, and dropped
-  // by the Refresh button, see [forgetLocalArt]).
+  // library's own posters (local folders and network shares: reading those can be slow, so they are kept too; Refresh only
+  // replaces the ones whose files changed: the server notices that, see [artRevision]).
   static const _detailsTtl = Duration(days: 30);
   static const _detailsMax = 6000;
   static Future<Map<String, dynamic>>? _diskLoad;
@@ -323,8 +401,14 @@ class Api {
     _diskSave = Timer(const Duration(seconds: 3), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
   }
 
-  /// The Refresh button: the saved poster addresses and picture copies that came from the user's own files (local folders and
-  /// network shares) are dropped, so changed posters / .nfo files are read again. Pictures from the internet stay saved.
+  /// Bumped when the server says a stored poster or synopsis really changed (a replaced poster.jpg, an edited .nfo, a TMDb
+  /// poster that is now different). The Movies / TV Shows pages then read their lists again; the unchanged posters come from
+  /// their saved copies, and only a changed one has a new address and is downloaded.
+  static final ValueNotifier<int> artRevision = ValueNotifier<int>(0);
+  static int? _artSeen; // the server's change counter at the last look; null until the first answer
+
+  /// Wipes every saved poster address and picture copy that came from the user's own files, so ALL of them are read again.
+  /// No longer used by Refresh (the server compares the files itself, see startArtWorker); kept for a full reset.
   static Future<void> forgetLocalArt() async {
     try {
       final m = await _disk();

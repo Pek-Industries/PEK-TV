@@ -146,6 +146,39 @@ public:
     // Reads the image named by Local::art (local or network). False = too big / unreadable.
     static bool readArtwork(const std::string& art, std::string& bytes, std::string& mime);
 
+    // --- Posters and synopses, looked up once and kept in the library database (table title_art) ---
+    // The poster grid used to ask for every title's poster separately while the person scrolled (600 titles = 600 requests,
+    // each reading the disk and/or asking TMDb). Now a background worker (server.cpp) looks every title up ONCE, in the
+    // background, and stores the poster address + synopsis here; /api/movies and /api/shows send them along with the list, so
+    // the grid needs no further requests and every later start is instant.
+    struct Art { std::string poster, overview; };
+    struct ArtJob { bool movie = true; std::string id; std::string title; int year = 0; bool refresh = false; bool aged = false; };   // aged: a TMDb poster that is simply old; it is checked again and only replaced when TMDb now says something different   // movie: id + title + year; show: title; refresh: already has a poster, its files changed
+    static std::string artKey(bool movie, const std::string& idOrTitle);
+    // key -> art, only titles that have a poster
+    std::unordered_map<std::string, Art> artKnown();
+    // Titles still to look up: never tried, tried without finding a poster more than a day ago, or already stored but marked
+    // changed by artRecheck() (retried after 10 minutes when a try failed, e.g. offline). At most `limit`.
+    std::vector<ArtJob> artPending(size_t limit);
+    // Remembers a finished look-up (an empty poster = "tried, found nothing": asked again after a day).
+    // `stamp` = localStamp() of the user's own files at that moment (what the poster / plot were taken from).
+    void artStore(bool movie, const std::string& idOrTitle, const std::string& poster, const std::string& overview, const std::string& stamp);
+    // A try that failed (offline ...) for a title that already has a poster: keeps the poster, asks again in 10 minutes.
+    void artRetryLater(bool movie, const std::string& idOrTitle);
+    // A re-check of an old TMDb poster found nothing different (or nothing at all): the stored poster stays, the next re-check is in 30 days.
+    void artTouch(bool movie, const std::string& idOrTitle);
+    // Like localStamp(), plus the title and year TMDb was asked about ("|t:" marks a title that was looked up on TMDb). A renamed
+    // title, or a changed year, changes this stamp, so only that title is looked up again. Titles stored before this existed have no "|t:" and are left alone.
+    static std::string tmdbStamp(const Local& local, const std::string& title, int year);
+    // +1 whenever a stored poster or synopsis really changed (new, replaced or removed). The app watches it (/api/scan-status) and reads the lists again.
+    int artChanges() const { return art_changes_.load(); }
+    // What the user's own files say right now, as one short text: the artwork file (path, size, date) and a fingerprint of the
+    // plot. A title whose stamp differs from the stored one has changed files (new poster.jpg, edited .nfo ...).
+    static std::string localStamp(const Local& local);
+    // Compares every stored title's current files with its stored stamp and marks the changed ones for a fresh look-up. Reads
+    // the user's folders (not the internet); meant for the background worker, once after each scan.
+    void artRecheck();
+    int scanGeneration() const { return scan_generation_.load(); }   // +1 each time a scan finishes
+
     // --- Searching and browsing the library (SQLite) ---
     // What the NFO files say (genre, actors, directors, studio, collection, rating) is read after every scan and kept in
     // the database, so a search by actor, genre, year ... is one indexed query instead of a pass over every title.
@@ -179,6 +212,8 @@ private:
     std::map<std::string, std::pair<std::chrono::steady_clock::time_point, Local>> local_cache_;   // "m:<id>" / "e:<show>|s|e" / "s:<show>"
     Local cachedLocal(const std::string& key, const std::function<Local()>& make);
     std::atomic<int> active_scans_{0};
+    std::atomic<int> scan_generation_{0};
+    std::atomic<int> art_changes_{0};
     std::mutex scan_mutex_;   // serializes scan() so overlapping scans (startup + POST /api/sources + /api/rescan) can't race on the cache file
 
     bool dirHasNomedia(const std::string& dir_path);

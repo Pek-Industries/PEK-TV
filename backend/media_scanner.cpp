@@ -585,6 +585,9 @@ const int kDbVersion = 1;
 //   title_meta   one row per movie ('m:<media id>') and per show ('s:<folded show title>') whose NFO was looked at;
 //                `stamp` says what it was read from, so only new or edited NFOs are read again
 //   title_genre / title_person   genres, and actors (kind 0) / directors (kind 1) of those titles
+//   title_art    poster address + synopsis per movie ('m:<media id>') and show ('s:<folded title>'), looked up once in the
+//                background; `tried` = when (unix seconds), so a title with no poster is only asked again after a day;
+//                `stamp` = what the user's own files looked like then (artwork file + plot), so a changed poster.jpg / .nfo is noticed
 const char* const kSchema = R"SQL(
 CREATE TABLE IF NOT EXISTS media(
   id TEXT PRIMARY KEY, path TEXT NOT NULL, filename TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL,
@@ -603,6 +606,8 @@ CREATE TABLE IF NOT EXISTS title_person(
   key TEXT NOT NULL, kind INTEGER NOT NULL, norm TEXT NOT NULL, name TEXT NOT NULL, role TEXT NOT NULL, ord INTEGER NOT NULL,
   PRIMARY KEY(key, kind, norm)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS person_idx ON title_person(kind, norm);
+CREATE TABLE IF NOT EXISTS title_art(
+  key TEXT PRIMARY KEY, poster TEXT NOT NULL, overview TEXT NOT NULL, tried INTEGER NOT NULL, stamp TEXT NOT NULL DEFAULT '');
 )SQL";
 
 std::string normOf(const MediaEntry& e) {
@@ -1172,6 +1177,7 @@ void MediaScanner::scan(bool onlyNewSources) {
         std::lock_guard<std::mutex> lock(local_mutex_);
         local_cache_.clear();
     }
+    ++scan_generation_;      // the background poster worker re-checks the stored posters against the files after each scan
 }
 
 void MediaScanner::setAfterScan(std::function<void()> callback) {
@@ -1335,6 +1341,8 @@ void MediaScanner::openDb() {
         return;
     }
     // Future schema changes: add `if (v < 2) { ALTER ...; }` steps here, then raise kDbVersion.
+    if (db->scalar("SELECT count(*) FROM pragma_table_info('title_art') WHERE name='stamp'") == 0)
+        db->exec("ALTER TABLE title_art ADD COLUMN stamp TEXT NOT NULL DEFAULT ''");        // a table made before stamps existed
     if (db->userVersion() < kDbVersion) db->setUserVersion(kDbVersion);
     db_ = std::move(db);
 }
@@ -1347,6 +1355,155 @@ void MediaScanner::persistToDb() {
         snapshot = entries_;
     }
     if (!writeEntries(*db_, snapshot)) std::cout << "[MediaScanner] Could not save the library: " << db_->lastError() << std::endl;
+}
+
+// ---- posters and synopses kept in the database ---------------------------------------------------------------------------
+std::string MediaScanner::artKey(bool movie, const std::string& idOrTitle) {
+    return movie ? "m:" + idOrTitle : "s:" + pekdb::fold(idOrTitle);
+}
+
+std::unordered_map<std::string, MediaScanner::Art> MediaScanner::artKnown() {
+    std::unordered_map<std::string, Art> out;
+    if (!db_) return out;
+    pekdb::Stmt st(*db_, "SELECT key, poster, overview FROM title_art WHERE poster <> ''");
+    while (st.step()) out[st.str(0)] = Art{st.str(1), st.str(2)};
+    return out;
+}
+
+namespace { constexpr long long kTmdbRecheckSecs = 30LL * 24 * 3600; }   // an old TMDb poster is asked about again after this long
+
+std::vector<MediaScanner::ArtJob> MediaScanner::artPending(size_t limit) {
+    std::vector<ArtJob> out;
+    if (!db_ || limit == 0) return out;
+    const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    struct Row { bool poster; long long tried; bool changed; bool tmdb; };
+    std::unordered_map<std::string, Row> have;
+    {
+        pekdb::Stmt st(*db_, "SELECT key, poster <> '', tried, stamp = '!', instr(stamp, '|t:') > 0 FROM title_art");
+        while (st.step()) have[st.str(0)] = Row{st.num(1) != 0, st.num(2), st.num(3) != 0, st.num(4) != 0};
+    }
+    // 0 = leave alone, 1 = look up, 2 = look up again (it has a poster, but its files changed),
+    // 3 = a poster that came from TMDb is old: ask TMDb again, and only replace it if the answer is different
+    auto wanted = [&](const std::string& key) {
+        auto it = have.find(key);
+        if (it == have.end()) return 1;
+        if (it->second.changed) return now - it->second.tried > 600 ? 2 : 0;
+        if (!it->second.poster) return now - it->second.tried > 24 * 3600 ? 1 : 0;
+        return (it->second.tmdb && now - it->second.tried > kTmdbRecheckSecs) ? 3 : 0;
+    };
+    for (const auto& m : getMovies()) {
+        if (out.size() >= limit) return out;
+        const int w = wanted(artKey(true, m.id));
+        if (!w) continue;
+        ArtJob j; j.movie = true; j.id = m.id; j.title = m.title; j.year = m.year; j.refresh = (w >= 2); j.aged = (w == 3);
+        out.push_back(std::move(j));
+    }
+    std::set<std::string> seen;
+    for (const auto& e : getEpisodes()) {
+        if (out.size() >= limit) return out;
+        const std::string key = artKey(false, e.show_title);
+        if (!seen.insert(key).second) continue;
+        const int w = wanted(key);
+        if (!w) continue;
+        ArtJob j; j.movie = false; j.title = e.show_title; j.refresh = (w >= 2); j.aged = (w == 3);
+        out.push_back(std::move(j));
+    }
+    return out;
+}
+
+void MediaScanner::artStore(bool movie, const std::string& idOrTitle, const std::string& poster, const std::string& overview, const std::string& stamp) {
+    if (!db_) return;
+    const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string key = artKey(movie, idOrTitle);
+    // Did the poster or synopsis really change? Only then does the app need to read its lists again.
+    bool same = false;
+    {
+        pekdb::Stmt old(*db_, "SELECT poster, overview FROM title_art WHERE key=?");
+        old.text(1, key);
+        if (old.step()) same = (old.str(0) == poster && old.str(1) == overview);
+    }
+    pekdb::Stmt up(*db_, "INSERT OR REPLACE INTO title_art(key,poster,overview,tried,stamp) VALUES(?,?,?,?,?)");
+    up.text(1, key).text(2, poster).text(3, overview).i64(4, now).text(5, stamp);
+    up.run();
+    if (!same && !poster.empty()) ++art_changes_;
+}
+
+void MediaScanner::artRetryLater(bool movie, const std::string& idOrTitle) {
+    if (!db_) return;
+    const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string key = artKey(movie, idOrTitle);
+    // A title never stored gets an empty row that is due again in 10 minutes (the "no poster" wait is a day, minus 10 minutes).
+    pekdb::Stmt add(*db_, "INSERT OR IGNORE INTO title_art(key,poster,overview,tried,stamp) VALUES(?,'','',?,'')");
+    add.text(1, key).i64(2, now - 24 * 3600 + 600);
+    add.run();
+    // A stored poster (marked changed) is kept and asked for again in 10 minutes; an empty row is due again in 10 minutes too.
+    // An old TMDb poster (not marked changed) that could not be re-checked is due again in 10 minutes as well.
+    pekdb::Stmt up(*db_, "UPDATE title_art SET tried = CASE WHEN poster <> '' THEN (CASE WHEN stamp = '!' THEN ? ELSE ? END) ELSE ? END WHERE key=?");
+    up.i64(1, now).i64(2, now - kTmdbRecheckSecs + 600).i64(3, now - 24 * 3600 + 600).text(4, key);
+    up.run();
+}
+
+void MediaScanner::artTouch(bool movie, const std::string& idOrTitle) {
+    if (!db_) return;
+    const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    pekdb::Stmt up(*db_, "UPDATE title_art SET tried=? WHERE key=?");
+    up.i64(1, now).text(2, artKey(movie, idOrTitle));
+    up.run();
+}
+
+std::string MediaScanner::tmdbStamp(const Local& local, const std::string& title, int year) {
+    return localStamp(local) + "|t:" + title + "|" + std::to_string(year);
+}
+
+std::string MediaScanner::localStamp(const Local& local) {
+    std::string out = local.art + "|" + std::to_string(std::hash<std::string>{}(local.plot));
+    // A picture file on this device: its size and date too, so a replaced poster.jpg (same name) is noticed. A network
+    // source is compared by name only (reading its dates would mean another round trip per title).
+    if (!local.art.empty() && local.art.find("://") == std::string::npos) {
+        std::error_code ec;
+        const auto size = fs::file_size(local.art, ec);
+        if (!ec) {
+            const auto when = fs::last_write_time(local.art, ec);
+            if (!ec) out += "|" + std::to_string(static_cast<unsigned long long>(size)) + "|" + std::to_string(when.time_since_epoch().count());
+        }
+    }
+    return out;
+}
+
+void MediaScanner::artRecheck() {
+    if (!db_) return;
+    std::unordered_map<std::string, std::string> stamps;            // key -> stored stamp, only titles that have a stored poster
+    {
+        pekdb::Stmt st(*db_, "SELECT key, stamp FROM title_art WHERE poster <> ''");
+        while (st.step()) stamps[st.str(0)] = st.str(1);
+    }
+    if (stamps.empty()) return;
+    auto mark = [&](const std::string& key) {
+        pekdb::Stmt up(*db_, "UPDATE title_art SET stamp='!', tried=0 WHERE key=?");
+        up.text(1, key);
+        up.run();
+    };
+    auto pause = [] { std::this_thread::sleep_for(std::chrono::milliseconds(10)); };   // gentle on a USB drive / network share
+    for (const auto& m : getMovies()) {
+        if (isScanning()) return;
+        const std::string key = artKey(true, m.id);
+        auto it = stamps.find(key);
+        if (it == stamps.end() || it->second == "!") continue;
+        const std::string now = it->second.find("|t:") != std::string::npos ? tmdbStamp(localMovie(m), m.title, m.year) : localStamp(localMovie(m));
+        if (now != it->second) mark(key);   // a new / replaced poster, an edited .nfo, or (TMDb titles) a renamed title / changed year
+        pause();
+    }
+    std::set<std::string> seen;
+    for (const auto& e : getEpisodes()) {
+        if (isScanning()) return;
+        const std::string key = artKey(false, e.show_title);
+        if (!seen.insert(key).second) continue;
+        auto it = stamps.find(key);
+        if (it == stamps.end() || it->second == "!") continue;
+        const std::string now = it->second.find("|t:") != std::string::npos ? tmdbStamp(localShow(e.show_title), e.show_title, 0) : localStamp(localShow(e.show_title));
+        if (now != it->second) mark(key);
+        pause();
+    }
 }
 
 void MediaScanner::yieldToInteractive() {

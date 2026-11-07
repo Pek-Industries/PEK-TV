@@ -67,3 +67,29 @@ They combine: "Unwatched + Action + Random" lists unwatched action movies in a r
 reshuffles; the order stays put until then, even when something is marked watched. **Clear filters** puts everything back.
 The Movies and TV Shows tabs remember their choices while the app runs. Genre and actor are answered by the server
 (`/api/library/search`), so they need the .nfo details above; the other filters work on the device.
+
+## Posters and synopses are looked up once
+
+PEK TV does not ask for a poster each time a card scrolls into view. A background worker in the server (`startArtWorker` in
+`backend/server.cpp`) looks every movie and show up once, in this order: the poster and plot next to your files first, then TMDb
+(through the Worker) for whatever is missing. The result is kept in `library.db` (table `title_art`) and sent with
+`/api/movies` and `/api/shows` (`poster`, `overview`), so the grid needs no per-card requests and every later start is
+instant. A title with no poster found is tried again after a day. The worker waits while a scan runs, goes at no more than
+about 4 TMDb requests per second, and pauses when the Worker answers 429 (too many requests).
+
+After every scan the worker also compares each stored title with its files (the poster file's name, size and date, and the
+plot text). Only a title whose files changed (a new or replaced `poster.jpg`, an edited `.nfo`) is looked up again; the rest are
+left alone. If that look-up cannot be done (no internet) the old poster stays and it is retried 10 minutes later. The poster's
+address carries a `v=` version, so the app fetches a fresh copy of a changed picture.
+
+### TMDb posters follow the same rule
+
+A poster or synopsis that came from TMDb is also looked up once and then left alone. It is looked up again only when:
+
+- the title's files change (you add a `poster.jpg` or `.nfo`, which then wins over TMDb),
+- the title or year PEK TV asked TMDb about changes (a renamed file or a corrected year), or
+- it is 30 days old: TMDb is asked again in the background, and the stored poster is replaced only if TMDb now answers with
+  something different. If TMDb has nothing, or there is no internet, the old poster stays and the check is retried 10 minutes later.
+
+Whenever a stored poster or synopsis really changes, the server's change counter (`art` in `/api/scan-status`) goes up and the
+Movies / TV Shows pages read their lists again. Unchanged posters are not downloaded again; Refresh no longer wipes them.

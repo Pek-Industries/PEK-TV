@@ -46,7 +46,20 @@ class _LibraryPageState extends State<LibraryPage> {
     _watch = Timer.periodic(const Duration(seconds: 3), (_) => _checkScan());
     _checkScan();
     Api.libraryRevision.addListener(_onSourcesChanged);
+    Api.artRevision.addListener(_onArtChanged);
     unawaited(_f.loadFacets());
+  }
+
+  /// The server says some titles got a new poster / synopsis: read the lists again. Unchanged posters come from their saved
+  /// copies; a changed one has a new address and is downloaded. A burst of changes is read once.
+  Timer? _artTimer;
+  void _onArtChanged() {
+    _artTimer?.cancel();
+    _artTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted || _refreshing || _scanning) return;
+      Api.forgetLibrary();
+      setState(() => _data = _load());
+    });
   }
 
   /// A source was added or removed (Settings > Media sources).
@@ -127,6 +140,8 @@ class _LibraryPageState extends State<LibraryPage> {
     _timer?.cancel();
     _watch?.cancel();
     Api.libraryRevision.removeListener(_onSourcesChanged);
+    Api.artRevision.removeListener(_onArtChanged);
+    _artTimer?.cancel();
     super.dispose();
   }
 
@@ -159,7 +174,8 @@ class _LibraryPageState extends State<LibraryPage> {
       }
     } catch (_) {}
     Activity.end('scan', 'Scan finished');
-    await Api.forgetLocalArt(); // Refresh = read the posters / .nfo files again (the next ones are saved again)
+    // Refresh no longer wipes the saved posters. The server compares each title's files with what it stored and looks up only the
+    // changed ones again (offline: it keeps the old poster and tries again later); the page hears about them through Api.artRevision.
     if (!mounted) return;
     Api.forgetLibrary();
     setState(() {

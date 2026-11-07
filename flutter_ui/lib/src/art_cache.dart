@@ -18,8 +18,9 @@ import 'package:flutter/services.dart';
 /// Pictures served by the app's own server (127.0.0.1) are not copied, with ONE exception: the library's artwork
 /// (/api/artwork: the poster.jpg / folder.jpg next to a movie or show, local or on a network share). Reading those can be slow
 /// (a network share, a sleeping disk, the server busy scanning), so a copy is kept in the app's files folder (not the cache
-/// folder, which Android may empty) and used on every later start. The Refresh button on Movies / TV Shows drops these copies
-/// ([clearLocal]) so changed files are read again.
+/// folder, which Android may empty) and used on every later start. Refresh on Movies / TV Shows does not drop them: a changed
+/// poster has a new address (&v=<file stamp>), so only that title's picture is downloaded again and its old copy is deleted
+/// (the server notices changed files, see Api.artRevision). [clearLocal] is still there for a full reset.
 class ArtCache {
   static const _host = MethodChannel('pek/host');
   static const _maxBytes = 300 * 1024 * 1024;

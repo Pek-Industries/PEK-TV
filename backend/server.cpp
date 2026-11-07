@@ -351,10 +351,16 @@ static void applyTls(httplib::Client&) {}
 // ---- TMDb search for the poster / synopsis lookups --------------------------------------------------------------------
 // Every poster on screen asks for one of these. Before, each request built a brand-new HTTPS client (a full TLS handshake to the
 // Worker, 5 s timeouts) and nothing was remembered, so a screenful of posters waited on dozens of handshakes and the same title
-// was looked up again every time the app restarted. Now: answers are kept for a few hours, and each server thread keeps its
-// connection to the Worker open between requests.
+// was looked up again every time the app restarted. Now: answers are kept for a few hours, and the connections to the Worker are
+// kept open in a shared pool between requests.
 static std::mutex g_tmdbMu;
 static std::map<std::string, std::pair<long long, std::string>> g_tmdbCache;   // path -> (when, body)
+static std::mutex g_tmdbClientMu;
+// The Worker limits each IP address (429 + Retry-After). While that is in force every further request would only be refused
+// again AND count against the limit, which kept a busy start-up stuck for minutes. After a 429 nothing is sent to the Worker
+// until the time it named has passed; the lookups fail fast (the app asks again later) and the limit can recover.
+static std::atomic<long long> g_tmdbBlockedUntil{0};
+static std::vector<std::unique_ptr<httplib::Client>> g_tmdbClients;           // idle keep-alive connections to the Worker
 
 static bool tmdbSearch(const std::string& path, std::string& body) {
     const long long now = nowMs();
@@ -363,8 +369,16 @@ static bool tmdbSearch(const std::string& path, std::string& body) {
         auto it = g_tmdbCache.find(path);
         if (it != g_tmdbCache.end() && now - it->second.first < 6LL * 3600 * 1000) { body = it->second.second; return true; }
     }
-    thread_local std::unique_ptr<httplib::Client> client;
+    if (now < g_tmdbBlockedUntil.load()) return false;   // the Worker said "too many requests": wait it out
+    // Connections to the Worker are kept in one shared pool, not per thread: the server's worker threads are dropped after 3 s
+    // idle, and a thread_local connection died with its thread, so the next look-up paid a full TLS handshake again (the
+    // slow first posters after the app had been quiet for a moment).
     for (int attempt = 0; attempt < 2; attempt++) {
+        std::unique_ptr<httplib::Client> client;
+        if (attempt == 0) {
+            std::lock_guard<std::mutex> lk(g_tmdbClientMu);
+            if (!g_tmdbClients.empty()) { client = std::move(g_tmdbClients.back()); g_tmdbClients.pop_back(); }
+        }
         if (!client) {
             client = std::make_unique<httplib::Client>(tmdbProxyUrl());
             applyTls(*client);
@@ -375,15 +389,119 @@ static bool tmdbSearch(const std::string& path, std::string& body) {
         auto r = client->Get(path.c_str());
         if (r && r->status == 200) {
             body = r->body;
-            std::lock_guard<std::mutex> lk(g_tmdbMu);
-            if (g_tmdbCache.size() > 3000) g_tmdbCache.clear();
-            g_tmdbCache[path] = {now, body};
+            {
+                std::lock_guard<std::mutex> lk(g_tmdbMu);
+                if (g_tmdbCache.size() > 3000) g_tmdbCache.clear();
+                g_tmdbCache[path] = {now, body};
+            }
+            std::lock_guard<std::mutex> lk(g_tmdbClientMu);
+            if (g_tmdbClients.size() < 8) g_tmdbClients.push_back(std::move(client));   // still open: the next look-up reuses it
             return true;
         }
-        client.reset();   // a dropped keep-alive connection looks like a failure: build a fresh one and try once more
+        if (r && r->status == 429) {
+            int wait = std::atoi(r->get_header_value("Retry-After").c_str());
+            if (wait < 5) wait = 5;
+            if (wait > 60) wait = 60;
+            g_tmdbBlockedUntil = nowMs() + wait * 1000LL;
+            std::cout << "[PEK Server] TMDb Worker rate limit (429): pausing look-ups for " << wait << " s" << std::endl;
+            return false;
+        }
+        // a dropped keep-alive connection looks like a failure: the client is discarded, and the retry builds a fresh one
         if (r) return false;   // the Worker answered with an error: not a connection problem
     }
     return false;
+}
+
+
+// ---- Looking a title's poster + synopsis up ONCE, in the background, and keeping it in the library database ----------------
+// (MediaScanner::artStore). Same order as the /api/movie-details and /api/show-details routes: the user's own files first
+// (NFO plot + poster next to the video), TMDb through the Worker only for whatever is missing.
+// Returns 1 = stored with a poster, 0 = nothing found (stored as "tried"), -1 = could not be looked up (nothing stored).
+// A changed poster file keeps its address (/api/artwork?kind=movie&id=...), and the app keeps a copy of every address, so the
+// copy would stay old. The stamp of the files goes into the address (&v=...): a changed file is a new address, a new copy.
+static std::string artVersion(const MediaScanner::Local& local) {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "%zx", std::hash<std::string>{}(MediaScanner::localStamp(local)));
+    return std::string("&v=") + buf;
+}
+
+static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, bool& askedTmdb) {
+    askedTmdb = false;
+    std::string overview, art, path, stamp, tmdbStamp;
+    if (job.movie) {
+        MediaEntry entry;
+        if (!scanner->findById(job.id, entry) || entry.kind != MediaKind::Movie) return 0;
+        const MediaScanner::Local local = scanner->localMovie(entry);
+        art = local.art.empty() ? "" : "/api/artwork?kind=movie&id=" + entry.id + artVersion(local);
+        stamp = MediaScanner::localStamp(local);
+        if (!local.plot.empty() && !art.empty()) { scanner->artStore(true, job.id, art, local.plot, stamp); return 1; }
+        path = "/search/movie?query=" + httplib::encode_uri(job.title);
+        if (job.year > 0) path += "&year=" + std::to_string(job.year);
+        overview = local.plot;
+        tmdbStamp = MediaScanner::tmdbStamp(local, job.title, job.year);
+    } else {
+        const MediaScanner::Local local = scanner->localShow(job.title);
+        art = local.art.empty() ? "" : "/api/artwork?kind=show&title=" + httplib::encode_uri_component(job.title) + artVersion(local);
+        stamp = MediaScanner::localStamp(local);
+        if (!local.plot.empty() && !art.empty()) { scanner->artStore(false, job.title, art, local.plot, stamp); return 1; }
+        path = "/search/tv?query=" + httplib::encode_uri(job.title);
+        overview = local.plot;
+        tmdbStamp = MediaScanner::tmdbStamp(local, job.title, 0);
+    }
+    askedTmdb = true;
+    std::string body;
+    if (!tmdbSearch(path, body)) return -1;
+    const size_t results_pos = body.find("\"results\"");
+    const std::string first = results_pos != std::string::npos ? body.substr(results_pos) : body;
+    const std::string tmdb_overview = extractJsonString(first, "overview");
+    const std::string poster_path = extractJsonString(first, "poster_path");
+    const std::string poster = art.empty() ? (poster_path.empty() ? "" : "https://image.tmdb.org/t/p/w342" + poster_path) : art;
+    const std::string key = job.movie ? job.id : job.title;
+    // An old TMDb poster that TMDb no longer has anything for stays as it is (only the next check moves to 30 days from now).
+    if (job.aged && poster.empty()) { scanner->artTouch(job.movie, key); return 1; }
+    // The stamp now says TMDb was asked about this title and year: a rename or a changed year looks it up again, nothing else does.
+    scanner->artStore(job.movie, key, poster, overview.empty() ? tmdb_overview : overview, tmdbStamp);
+    return poster.empty() ? 0 : 1;
+}
+
+// One long-lived thread. While no scan is running it looks up the titles that have no stored poster yet (a few per second at
+// most, well under the Worker's per-IP limit), and checks again every 20 s for titles a later scan found. Fails quietly: no
+// internet or a busy Worker only means it tries again a little later.
+static void startArtWorker(MediaScanner* scanner) {
+    std::thread([scanner]() {
+        auto pause = [](int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); };
+        pause(6000);                                   // let the first scan and the first screen go first
+        int fails = 0;
+        int checkedGeneration = -1;
+        for (;;) {
+            try {
+                if (scanner->isScanning()) { pause(3000); continue; }
+                // After every scan (and once at start-up): compare the stored posters with the user's files. A changed
+                // poster.jpg / .nfo marks just that title, which is then looked up again below; the rest are left alone.
+                const int generation = scanner->scanGeneration();
+                if (generation != checkedGeneration) {
+                    checkedGeneration = generation;
+                    scanner->artRecheck();
+                }
+                const auto jobs = scanner->artPending(100);
+                if (jobs.empty()) { pause(20000); continue; }
+                bool stop = false;
+                for (const auto& job : jobs) {
+                    if (scanner->isScanning()) break;
+                    bool asked = false;
+                    const int r = lookupArt(scanner, job, asked);
+                    if (r >= 0) { fails = 0; pause(asked ? 250 : 5); continue; }
+                    const long long blocked = g_tmdbBlockedUntil.load();
+                    if (nowMs() < blocked) { pause(static_cast<int>(blocked - nowMs()) + 500); stop = true; break; }   // rate limit: wait it out
+                    scanner->artRetryLater(job.movie, job.movie ? job.id : job.title);   // keeps any stored poster; asks again in 10 min
+                    if (++fails >= 3) { pause(60000); stop = true; break; }   // three in a row: the internet or the Worker is down
+                }
+                if (!stop) pause(200);
+            } catch (...) {
+                pause(30000);
+            }
+        }
+    }).detach();
 }
 
 std::string PekServer::resolveShowName(const std::string& guess) {
@@ -893,13 +1011,17 @@ void PekServer::start(int port, const std::string& plugins_dir,
     //    first, then the filename/folder fallback (see MediaScanner).
     svr.Get("/api/movies", [scanner](const httplib::Request& req, httplib::Response& res) {
         auto movies = scanner->getMovies();
+        const auto art = scanner->artKnown();      // poster + synopsis already looked up (see startArtWorker)
         std::string json = "{\"movies\": [";
         for (size_t i = 0; i < movies.size(); ++i) {
             const auto& m = movies[i];
             json += "{\"id\": \"" + m.id + "\", \"title\": \"" + jsonEscape(m.title) +
                     "\", \"year\": " + std::to_string(m.year) +
                     ", \"filename\": \"" + jsonEscape(m.filename) +
-                    "\", \"added\": " + std::to_string(m.mtime) + "}";
+                    "\", \"added\": " + std::to_string(m.mtime);
+            auto a = art.find(MediaScanner::artKey(true, m.id));
+            if (a != art.end()) json += ", \"poster\": \"" + jsonEscape(a->second.poster) + "\", \"overview\": \"" + jsonEscape(a->second.overview) + "\"";
+            json += "}";
             if (i + 1 < movies.size()) json += ",";
         }
         json += "]}";
@@ -912,6 +1034,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
     //    this as show folder -> season folder -> episode list.
     svr.Get("/api/shows", [scanner](const httplib::Request& req, httplib::Response& res) {
         auto episodes = scanner->getEpisodes();
+        const auto art = scanner->artKnown();      // poster + synopsis already looked up (see startArtWorker)
 
         struct ShowGroup {
             std::string title;                                   // display spelling (first one seen)
@@ -952,7 +1075,10 @@ void PekServer::start(int port, const std::string& plugins_dir,
                 }
                 json += "]}";
             }
-            json += "]}";
+            json += "]";
+            auto a = art.find(MediaScanner::artKey(false, g.title));
+            if (a != art.end()) json += ", \"poster\": \"" + jsonEscape(a->second.poster) + "\", \"overview\": \"" + jsonEscape(a->second.overview) + "\"";
+            json += "}";
         }
         json += "]}";
         res.set_content(json, "application/json");
@@ -1116,7 +1242,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         }
 
         const MediaScanner::Local local = scanner->localMovie(entry);
-        const std::string art = local.art.empty() ? "" : "/api/artwork?kind=movie&id=" + entry.id;
+        const std::string art = local.art.empty() ? "" : "/api/artwork?kind=movie&id=" + entry.id + artVersion(local);
         auto reply = [&](const std::string& overview, const std::string& poster) {
             std::string json = "{\"id\": \"" + entry.id + "\", \"title\": \"" + jsonEscape(entry.title) +
                                 "\", \"year\": " + std::to_string(entry.year) +
@@ -1124,7 +1250,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
                                 "\", \"poster\": \"" + jsonEscape(poster) + "\"}";
             res.set_content(json, "application/json");
         };
-        if (!local.plot.empty() && !art.empty()) { reply(local.plot, art); return; }
+        if (!local.plot.empty() && !art.empty()) { scanner->artStore(true, entry.id, art, local.plot, MediaScanner::localStamp(local)); reply(local.plot, art); return; }
 
         std::string query = "/search/movie?query=" + httplib::encode_uri(entry.title);
         if (entry.year > 0) query += "&year=" + std::to_string(entry.year);
@@ -1148,6 +1274,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::string poster_path = extractJsonString(first_result, "poster_path");
         std::string poster_url = poster_path.empty() ? "" : ("https://image.tmdb.org/t/p/w342" + poster_path);
 
+        scanner->artStore(true, entry.id, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, entry.title, entry.year));   // kept for the list
         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
     });
 
@@ -1161,12 +1288,12 @@ void PekServer::start(int port, const std::string& plugins_dir,
             return;
         }
         const MediaScanner::Local local = scanner->localShow(title);      // tvshow.nfo + poster.jpg in the show folder
-        const std::string art = local.art.empty() ? "" : "/api/artwork?kind=show&title=" + httplib::encode_uri_component(title);
+        const std::string art = local.art.empty() ? "" : "/api/artwork?kind=show&title=" + httplib::encode_uri_component(title) + artVersion(local);
         auto reply = [&](const std::string& overview, const std::string& poster) {
             res.set_content("{\"title\": \"" + jsonEscape(title) + "\", \"overview\": \"" + jsonEscape(overview) +
                             "\", \"poster\": \"" + jsonEscape(poster) + "\"}", "application/json");
         };
-        if (!local.plot.empty() && !art.empty()) { reply(local.plot, art); return; }
+        if (!local.plot.empty() && !art.empty()) { scanner->artStore(false, title, art, local.plot, MediaScanner::localStamp(local)); reply(local.plot, art); return; }
 
         std::string tmdb_body;
         if (!tmdbSearch("/search/tv?query=" + httplib::encode_uri(title), tmdb_body)) {
@@ -1181,6 +1308,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::string overview = extractJsonString(first_result, "overview");
         std::string poster_path = extractJsonString(first_result, "poster_path");
         std::string poster_url = poster_path.empty() ? "" : ("https://image.tmdb.org/t/p/w342" + poster_path);
+        scanner->artStore(false, title, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, title, 0));   // kept for the list
         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
     });
 
@@ -1352,7 +1480,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
     // 7b. Lets the UI wait for a manual rescan to finish before reloading.
     svr.Get("/api/scan-status", [scanner](const httplib::Request& req, httplib::Response& res) {
         bool busy = g_rescan_running.load() || scanner->isScanning();
-        res.set_content(std::string("{\"scanning\": ") + (busy ? "true" : "false") + "}", "application/json");
+        res.set_content(std::string("{\"scanning\": ") + (busy ? "true" : "false") + ", \"art\": " + std::to_string(scanner->artChanges()) + "}", "application/json");
     });
 
     // 8. Directory picker: lists subfolders of ?path=..., or a default
@@ -1569,5 +1697,6 @@ void PekServer::start(int port, const std::string& plugins_dir,
     });
 
     std::cout << "[PEK Server] API online at http://" << (remoteOpen ? bindAddr : std::string("127.0.0.1")) << ":" << port << std::endl;
+    startArtWorker(scanner);        // looks every title's poster up once, in the background (stored in library.db)
     svr.listen(bindAddr, port);
 }
