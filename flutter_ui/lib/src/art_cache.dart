@@ -8,6 +8,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'recs.dart' show RecFeed;
+
 /// Keeps what was looked up online on the device, so posters, titles and synopses show at once after a restart and still
 /// show when the internet is gone.
 ///
@@ -48,11 +50,22 @@ class ArtCache {
     ..maxConnectionsPerHost = 8
     ..idleTimeout = const Duration(seconds: 1);
 
-  /// Opens a few connections to the TMDb picture server up front (DNS + TLS), so the first posters do not wait for that.
+  /// TMDb pictures are fetched through our own worker (edge-cached), not from image.tmdb.org. An address saved earlier with
+  /// the old host is still the cache key, only the download goes to the worker. The last try goes to TMDb directly, so
+  /// posters still arrive when the worker is down.
+  static const _tmdbDirect = 'https://image.tmdb.org/t/p/';
+  static String _address(String url, {required bool direct}) {
+    final via = '${RecFeed.imageBase}/';
+    if (!direct && url.startsWith(_tmdbDirect)) return via + url.substring(_tmdbDirect.length);
+    if (direct && url.startsWith(via)) return _tmdbDirect + url.substring(via.length);
+    return url;
+  }
+
+  /// Opens a few connections to the picture server up front (DNS + TLS), so the first posters do not wait for that.
   static Future<void> _warm() async {
     Future<void> one() async {
       try {
-        final r = await _http.getUrl(Uri.parse('https://image.tmdb.org/')).timeout(const Duration(seconds: 6));
+        final r = await _http.getUrl(Uri.parse(RecFeed.imageBase)).timeout(const Duration(seconds: 6));
         final resp = await r.close().timeout(const Duration(seconds: 6));
         await resp.drain<void>().timeout(const Duration(seconds: 6));
       } catch (_) {}
@@ -226,7 +239,7 @@ class ArtCache {
   static Future<File?> _withRetry(String url) async {
     for (var i = 0; i < _tryTimeouts.length; i++) {
       if (_gone.contains(url)) return null;
-      final f = await _limited(() => _dropped.contains(url) ? Future<File?>.value(null) : _fetch(url, _tryTimeouts[i]), key: url);
+      final f = await _limited(() => _dropped.contains(url) ? Future<File?>.value(null) : _fetch(url, _tryTimeouts[i], direct: i == _tryTimeouts.length - 1), key: url);
       if (f != null) return f;
       if (_dropped.contains(url)) return null; // nobody is waiting for it any more
       if (i < _tryTimeouts.length - 1) await Future<void>.delayed(Duration(milliseconds: 500 * (i + 1)));
@@ -260,7 +273,7 @@ class ArtCache {
     }
   }
 
-  static Future<File?> _fetch(String url, Duration timeout) async {
+  static Future<File?> _fetch(String url, Duration timeout, {bool direct = false}) async {
     await init();
     final d = _dirFor(url);
     if (d == null) return null;
@@ -273,7 +286,7 @@ class ArtCache {
     } catch (_) {}
     try {
       final sw = Stopwatch()..start();
-      final r = await _get(url, timeout);
+      final r = await _get(_address(url, direct: direct), timeout);
       if (sw.elapsedMilliseconds > 2000) debugPrint('[art] slow picture: ${sw.elapsedMilliseconds} ms (${r == null ? 'failed' : 'ok'}) $url');
       if (r == null) return null;
       // Only "it is not there" is final. 403 / 429 / 5xx mean a busy or rate-limiting server: ask again later.

@@ -623,12 +623,15 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
     }
   }
 
-  /// A TMDb picture for Continue Watching: a poster / still path ("/abc.jpg") or an image.tmdb.org address. Anything else is dropped.
+  /// A TMDb picture for Continue Watching: a poster / still path ("/abc.jpg"), an image.tmdb.org address or one on our TMDb
+  /// worker. Anything else is dropped. An image.tmdb.org address is moved to the worker.
   static String _artwork(String v) {
     final x = v.trim();
-    if (RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(x)) return 'https://image.tmdb.org/t/p/w342$x';
+    if (RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(x)) return '${RecFeed.imageBase}/w342$x';
     final u = Uri.tryParse(x);
-    return (u != null && u.scheme == 'https' && u.host == 'image.tmdb.org') ? x : '';
+    if (u == null || u.scheme != 'https') return '';
+    if (u.host == 'image.tmdb.org') return x.replaceFirst('https://image.tmdb.org/t/p/', '${RecFeed.imageBase}/');
+    return x.startsWith('${RecFeed.imageBase}/') ? x : '';
   }
 
   void _toast(String text) {
@@ -1299,7 +1302,7 @@ class _PluginPoster extends StatelessWidget {
 class PluginFavoritesSection extends StatelessWidget {
   const PluginFavoritesSection({super.key});
 
-  static const _imgBase = 'https://image.tmdb.org/t/p/w342';
+  static const _imgBase = '${RecFeed.imageBase}/w342';
   static final _posterPath = RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$');
   static final Map<String, Future<Details>> _art = {};
 

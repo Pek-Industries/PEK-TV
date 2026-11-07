@@ -332,6 +332,11 @@ static std::string tmdbProxyUrl() {
     return "https://tmdb.pekindustries.com";
 }
 
+// Posters and stills come from the same worker (it caches them at the edge): /t/p/<size>/<file> like image.tmdb.org.
+static std::string tmdbImageUrl(const char* size, const std::string& path) {
+    return tmdbProxyUrl() + "/t/p/" + size + path;
+}
+
 } // namespace
 
 // Android: use the CA bundle shipped inside the app (SSL_CERT_FILE) for
@@ -560,7 +565,7 @@ static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, boo
     const std::string first = results_pos != std::string::npos ? body.substr(results_pos) : body;
     const std::string tmdb_overview = extractJsonString(first, "overview");
     const std::string poster_path = extractJsonString(first, "poster_path");
-    const std::string poster = art.empty() ? (poster_path.empty() ? "" : "https://image.tmdb.org/t/p/w342" + poster_path) : art;
+    const std::string poster = art.empty() ? (poster_path.empty() ? "" : tmdbImageUrl("w342", poster_path)) : art;
     const std::string key = job.movie ? job.id : job.title;
     // An old TMDb poster that TMDb no longer has anything for stays as it is (only the next check moves to 30 days from now).
     if (job.aged && poster.empty()) { scanner->artTouch(job.movie, key); return 1; }
@@ -1423,7 +1428,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
 
         std::string overview = extractJsonString(first_result, "overview");
         std::string poster_path = extractJsonString(first_result, "poster_path");
-        std::string poster_url = poster_path.empty() ? "" : ("https://image.tmdb.org/t/p/w342" + poster_path);
+        std::string poster_url = poster_path.empty() ? "" : (tmdbImageUrl("w342", poster_path));
 
         scanner->artStore(true, entry.id, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, entry.title, entry.year));   // kept for the list
         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
@@ -1458,7 +1463,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::string first_result = results_pos != std::string::npos ? body.substr(results_pos) : body;
         std::string overview = extractJsonString(first_result, "overview");
         std::string poster_path = extractJsonString(first_result, "poster_path");
-        std::string poster_url = poster_path.empty() ? "" : ("https://image.tmdb.org/t/p/w342" + poster_path);
+        std::string poster_url = poster_path.empty() ? "" : (tmdbImageUrl("w342", poster_path));
         scanner->artStore(false, title, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, title, 0));   // kept for the list
         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
     });
@@ -1501,7 +1506,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::string name = extractJsonString(body, "name");
         std::string overview = extractJsonString(body, "overview");
         std::string still = extractJsonString(body, "still_path");
-        std::string still_url = still.empty() ? "" : ("https://image.tmdb.org/t/p/w300" + still);
+        std::string still_url = still.empty() ? "" : tmdbImageUrl("w300", still);
         reply(local.title.empty() ? name : local.title, local.plot.empty() ? overview : local.plot, art.empty() ? still_url : art);
     });
 

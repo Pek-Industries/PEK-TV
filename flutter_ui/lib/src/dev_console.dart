@@ -163,7 +163,7 @@ class DevConsole {
   cache size | clear   the saved pictures and synopses
   wipe YES             delete ALL app data (settings, library, caches) and close the app
 Anything else runs in the Android shell (sh), for example:
-  ls -la files/hesper    cat files/hesper/backend.log    ps -A    df -h    ping -c 3 image.tmdb.org
+  ls -la files/hesper    cat files/hesper/backend.log    ps -A    df -h    ping -c 3 tmdb.pekindustries.com
   logcat -d -t 200       (this app's own system log)
 Commands run as the app's user, with no root. They can break the app. Stop kills a running command.''';
 

@@ -178,7 +178,7 @@ class RecItem {
 
   /// The "not interested" key: `m603` for a movie, `t1396` for a show.
   String get key => '${tv ? 't' : 'm'}$id';
-  String get image => 'https://image.tmdb.org/t/p/w342$poster';
+  String get image => '${RecFeed.imageBase}/w342$poster';
 }
 
 class RecRow {
@@ -210,6 +210,8 @@ class _Acc {
 
 class RecFeed {
   static const _base = 'https://tmdb.pekindustries.com'; // the proxy that holds the TMDb key
+  /// TMDb pictures go through the same worker (it keeps them at Cloudflare's edge); /t/p/<size>/<file> like image.tmdb.org.
+  static const imageBase = '$_base/t/p';
   static const _ttlMs = 6 * 3600 * 1000;
   static final _c = http.Client();
   /// The TMDb id of the movie called [name] (an exact title match first, else the top result), or 0 when none is found.
@@ -278,7 +280,7 @@ class RecFeed {
     pick ??= res.first is Map ? res.first as Map : null;
     if (pick == null) return null;
     final poster = '${pick['poster_path'] ?? ''}';
-    return Details(overview: '${pick['overview'] ?? ''}', poster: poster.isEmpty ? '' : 'https://image.tmdb.org/t/p/w342$poster');
+    return Details(overview: '${pick['overview'] ?? ''}', poster: poster.isEmpty ? '' : '${RecFeed.imageBase}/w342$poster');
   }
 
   /// The TMDb id of the show called [name] (an exact name match first, else the top result), or 0 when none is found.
@@ -313,7 +315,7 @@ class RecFeed {
     final j = await _get('/episode?query=${Uri.encodeQueryComponent(show.trim())}&season=$season&episode=$episode');
     if (j == null) return null;
     final still = '${j['still_path'] ?? ''}';
-    return EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: still.isEmpty ? '' : 'https://image.tmdb.org/t/p/w300$still');
+    return EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: still.isEmpty ? '' : '${RecFeed.imageBase}/w300$still');
   }
 
   /// The titles in a TMDb list answer. Anything without an id, a title or a poster is dropped. Pure, so it can be tested.

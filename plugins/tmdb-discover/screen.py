@@ -19,10 +19,10 @@ import pek_ui as ui
 
 API = "https://api.themoviedb.org/3"                           # only used with a personal key
 PROXY = "https://tmdb.pekindustries.com"       # PEK TV's built-in access (it adds the key)
-IMG = "https://image.tmdb.org/t/p/w342"
-IMG_WIDE = "https://image.tmdb.org/t/p/w780"          # backdrops (16:9) for landscape cards on a TV
-IMG_PERSON = "https://image.tmdb.org/t/p/w185"
-IMG_LOGO = "https://image.tmdb.org/t/p/w92"
+IMG = PROXY + "/t/p/w342"                      # pictures come through the same worker (edge-cached)
+IMG_WIDE = PROXY + "/t/p/w780"          # backdrops (16:9) for landscape cards on a TV
+IMG_PERSON = PROXY + "/t/p/w185"
+IMG_LOGO = PROXY + "/t/p/w92"
 PER_ROW = 18
 MAX_PAGES = 500          # TMDb does not serve pages past 500
 SETTINGS = "settings.json"

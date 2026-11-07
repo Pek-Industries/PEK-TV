@@ -46,7 +46,7 @@ void main() {
     expect(items.first.key, 'm1');
     final tv = RecFeed.parseResults({'results': [{'id': 9, 'name': 'Show', 'poster_path': '/s.png', 'first_air_date': '2011-04-17'}]}, true);
     expect(tv.first.key, 't9');
-    expect(tv.first.image, 'https://image.tmdb.org/t/p/w342/s.png');
+    expect(tv.first.image, 'https://tmdb.pekindustries.com/t/p/w342/s.png');
     expect(RecFeed.parseResults(null, true), isEmpty);
   });
 
