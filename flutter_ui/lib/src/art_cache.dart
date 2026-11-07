@@ -64,13 +64,28 @@ class ArtCache {
   static final Map<String, File> _known = HashMap();
   static final Map<String, Future<File?>> _inflight = {};
   static int _running = 0;
-  static final List<Completer<void>> _waiting = []; // newest last: the newest request (what is on screen now) goes first
+  static final List<(String?, Completer<void>)> _waiting = []; // newest last: the newest request (what is on screen now) goes first
   static const _parallel = 12;
 
   /// Pictures that no widget wants any more (it was scrolled away / closed) are not downloaded while they wait in the queue.
   static final Set<String> _dropped = HashSet();
-  static void want(String url) => _dropped.remove(url);
-  static void unwant(String url) => _dropped.add(url);
+  // Counted: the same picture can be on two cards at once (a row on the dashboard and the grid); scrolling one away must not
+  // cancel the download the other one is still waiting for.
+  static final Map<String, int> _wanted = HashMap();
+  static void want(String url) {
+    _wanted[url] = (_wanted[url] ?? 0) + 1;
+    _dropped.remove(url);
+  }
+
+  static void unwant(String url) {
+    final n = (_wanted[url] ?? 1) - 1;
+    if (n <= 0) {
+      _wanted.remove(url);
+      _dropped.add(url);
+    } else {
+      _wanted[url] = n;
+    }
+  }
 
   /// Downloads pictures nobody is looking at yet (the rest of a sideways row, the next rows down), so by the time they scroll
   /// into view they come straight from disk. Only [_prefetchLanes] downloads run at once for this, which leaves the other
@@ -190,6 +205,12 @@ class ArtCache {
     if (!_cacheable(url)) return Future.value(null);
     final k = _known[url];
     if (k != null) return Future.value(k);
+    if (_inflight.containsKey(url)) {
+      // Asked again while it waits in line (scrolled back into view): move it up, and it is wanted again.
+      _dropped.remove(url);
+      final i = _waiting.indexWhere((w) => w.$1 == url);
+      if (i >= 0 && i != _waiting.length - 1) _waiting.add(_waiting.removeAt(i));
+    }
     return _inflight.putIfAbsent(url, () => _withRetry(url).whenComplete(() => _inflight.remove(url)));
   }
 
@@ -204,7 +225,7 @@ class ArtCache {
   static Future<File?> _withRetry(String url) async {
     for (var i = 0; i < _tryTimeouts.length; i++) {
       if (_gone.contains(url)) return null;
-      final f = await _limited(() => _dropped.contains(url) ? Future<File?>.value(null) : _fetch(url, _tryTimeouts[i]));
+      final f = await _limited(() => _dropped.contains(url) ? Future<File?>.value(null) : _fetch(url, _tryTimeouts[i]), key: url);
       if (f != null) return f;
       if (_dropped.contains(url)) return null; // nobody is waiting for it any more
       if (i < _tryTimeouts.length - 1) await Future<void>.delayed(Duration(milliseconds: 500 * (i + 1)));
@@ -219,18 +240,22 @@ class ArtCache {
   /// Whether a failed picture is worth asking for again later (false after a 404 and the like).
   static bool retryable(String url) => !_gone.contains(url);
 
-  static Future<T> _limited<T>(Future<T> Function() job) async {
+  static Future<T> _limited<T>(Future<T> Function() job, {String? key}) async {
     if (_running >= _parallel) {
       final c = Completer<void>();
-      _waiting.add(c);
-      await c.future;
+      _waiting.add((key, c));
+      await c.future; // the finishing download hands its place over, so _running already counts this one
+    } else {
+      _running++;
     }
-    _running++;
     try {
       return await job();
     } finally {
-      _running--;
-      if (_waiting.isNotEmpty) _waiting.removeLast().complete(); // newest first
+      if (_waiting.isNotEmpty) {
+        _waiting.removeLast().$2.complete(); // newest first
+      } else {
+        _running--;
+      }
     }
   }
 

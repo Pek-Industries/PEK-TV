@@ -235,7 +235,9 @@ class Api {
   static Future<Details>? retryDetails(Future<Details> old) => _reload[old]?.call();
 
   static Future<Details> _cachedDetails(String key, Future<Details> Function() load) {
-    final f = _details.putIfAbsent(key, () => _lookupDetails(key, load));
+    final existing = _details[key];
+    if (existing != null) _pool.bump(key); // asked for again (scrolled back into view): serve it before older waiting ones
+    final f = existing ?? (_details[key] = _lookupDetails(key, load));
     _reload[f] ??= () {
       _details.remove(key);
       _noArt.remove(key);
@@ -250,7 +252,7 @@ class Api {
         Object? lastError;
         for (var attempt = 0; attempt <= _detailRetryWaits.length; attempt++) {
           try {
-            final d = await _pool.run(load);
+            final d = await _pool.run(load, key: key);
             if (d.poster.isEmpty) {
               _forgetDetailSoon(key, const Duration(seconds: 8)); // no picture (yet): ask again soon
             } else {
@@ -748,21 +750,33 @@ class _Pool {
   _Pool(this.limit);
   final int limit;
   int _running = 0;
-  final Queue<Completer<void>> _waiting = Queue();
+  // Waiting jobs, newest last. A job that is asked for again while it waits (its card was scrolled back into view) moves
+  // to the end, so what is on screen now is served first instead of staying behind lookups for rows long scrolled past.
+  final List<(Object?, Completer<void>)> _waiting = [];
 
-  Future<T> run<T>(Future<T> Function() job) async {
+  Future<T> run<T>(Future<T> Function() job, {Object? key}) async {
     if (_running >= limit) {
       final c = Completer<void>();
-      _waiting.add(c);
-      await c.future;
+      _waiting.add((key, c));
+      await c.future; // the finishing job hands its place over, so _running already counts this one
+    } else {
+      _running++;
     }
-    _running++;
     try {
       return await job();
     } finally {
-      _running--;
-      if (_waiting.isNotEmpty) _waiting.removeLast().complete(); // newest first: what is on screen now
+      if (_waiting.isNotEmpty) {
+        _waiting.removeLast().$2.complete(); // newest first: what is on screen now
+      } else {
+        _running--;
+      }
     }
+  }
+
+  /// Moves the waiting job with [key] (if it is still waiting) to the front of the line.
+  void bump(Object key) {
+    final i = _waiting.indexWhere((w) => w.$1 == key);
+    if (i >= 0 && i != _waiting.length - 1) _waiting.add(_waiting.removeAt(i));
   }
 }
 
