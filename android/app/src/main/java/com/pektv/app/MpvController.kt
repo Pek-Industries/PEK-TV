@@ -580,6 +580,12 @@ class MpvController(
             m.setOptionString("demuxer-max-back-bytes", "16MiB")
             m.setOptionString("cache-pause-initial", "no")
             m.setOptionString("cache-pause-wait", "4")
+            // If the torrent stream drops the connection (no data for a while, a peer swarm that went quiet), reconnect and carry
+            // on from the same spot instead of sitting on "loading" for good.
+            try {
+                m.setOptionString("stream-lavf-o", "reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=10")
+                m.setOptionString("network-timeout", "90")
+            } catch (t: Throwable) { Log.w("PEK", "mpv reconnect options not set", t) }
             if (isDvd(u)) {
                 // Where the disc is. Without it mpv looks at /dev/dvd, which an Android device does not have.
                 val dev = dvdDevice

@@ -98,6 +98,22 @@ jobs:
           grep -rl "flutter.compileSdkVersion" "$PUB_CACHE/hosted" --include=build.gradle.kts --include=build.gradle 2>/dev/null \
             | xargs -r sed -i 's/flutter\.compileSdkVersion/36/g'
 
+      # The libmpv .aar (DVD support + the audio filters: volume, equalizer, bass, treble, compressor) is stored zipped in git
+      # (android/app/libs/libmpv-release.aar.zip), but Gradle only looks for the plain libs/libmpv-release.aar. Without this step
+      # the build silently fell back to the stock Maven libmpv: no DVD playback and none of the audio filters.
+      - name: Unpack the libmpv .aar
+        run: |
+          Z=android/app/libs/libmpv-release.aar.zip
+          if [ -f "$Z" ]; then
+            unzip -o -q "$Z" -d android/app/libs
+          fi
+          if [ -f android/app/libs/libmpv-release.aar ]; then
+            unzip -l android/app/libs/libmpv-release.aar | grep -q 'jni/arm64-v8a/libmpv.so' || { echo "::error::libmpv-release.aar has no libmpv.so"; exit 1; }
+            echo "Using the bundled libmpv-release.aar"
+          else
+            echo "::warning::No libmpv-release.aar found: building with the stock Maven libmpv (no DVD, no audio filters)"
+          fi
+
       # ---- Bundle the plugins and skins into the apk -------------
       - name: Stage app assets
         run: |
