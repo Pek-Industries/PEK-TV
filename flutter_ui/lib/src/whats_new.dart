@@ -33,11 +33,14 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
-    ReleaseNotes('2.2.3', 'Sorting, Shield fixes and refresh fixes', [
-      'Sort by watched: you can now sort your library by what you have watched.',
-      'NVIDIA Shield: fixed the navigation problems some people had when moving around with the remote.',
-      'Refresh: titles that were shown as unknown, and duplicate titles, now refresh properly.',
-      'Skin Maker: the plugin is now turned off on TV devices.',
+    ReleaseNotes('2.2.4', 'DVD support, audio controls and smarter filters', [
+      'DVDs: DVD images (.iso files) and ripped DVD folders now play from your library as a single movie. Physical discs are not supported yet.',
+      'Multi-part movies: films split across several files now appear as a single title.',
+      'Filters: Movies and TV Shows have new drop-downs to sort randomly, pick by genre or actor, and mix them with watched and unwatched.',
+      'Equalizer: new audio settings let you shape the sound of your music.',
+      'Video audio: the video player has its own new audio options.',
+      'Playback errors: fixed a cause of the libmpv playback error, so videos that failed to start now play.',
+      'Skin backups: skins are now saved to your account properly.',
     ]),
   ];
 
