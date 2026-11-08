@@ -518,6 +518,8 @@ class _ArtImageState extends State<ArtImage> {
   Future<File?>? _pending;
   bool _fileBroken = false;
   bool _paintLogged = false;
+  DateTime? _diskBuiltAt;
+  int _wdTries = 0;
   int _retries = 0;
   int _gen = 0;
   Timer? _retryTimer;
@@ -550,6 +552,9 @@ class _ArtImageState extends State<ArtImage> {
       ArtCache.unwant(old.url);
       ArtCache.want(widget.url);
       _retryTimer?.cancel();
+      _paintLogged = false;
+      _diskBuiltAt = null;
+      _wdTries = 0;
       _retries = 0;
       _gaveUp = false;
       _fileBroken = false;
@@ -571,12 +576,14 @@ class _ArtImageState extends State<ArtImage> {
   void _resolve() {
     _file = ArtCache.knownFile(widget.url);
     _pending = _file == null ? ArtCache.file(widget.url) : null;
-    // A picture still not there after 20 s is started over, so a stuck download never leaves a tile on its title card until
-    // the person scrolls it away and back.
+    // A picture that is still not drawn after 3 s is started over (a few times), so a stuck tile never waits for the person to
+    // scroll it away and back. (It used to wait 20 s, and only when the file was not known yet: a poster that was on disk but
+    // not decoded stayed blank until something else woke it up.)
     _watchdog?.cancel();
-    if (_file == null) {
-      _watchdog = Timer(const Duration(seconds: 20), () {
-        if (!mounted || ArtCache.knownFile(widget.url) != null && _file != null) return;
+    if (_wdTries < 6 && !_paintLogged) {
+      _watchdog = Timer(const Duration(seconds: 3), () {
+        if (!mounted || _paintLogged) return;
+        _wdTries++;
         setState(() {
           _gen++;
           _fileBroken = false;
@@ -620,12 +627,22 @@ class _ArtImageState extends State<ArtImage> {
         errorBuilder: _failed,
       );
 
-  Widget _disk(File f) => Image.file(
+  Widget _disk(File f) {
+    if (_diskBuiltAt == null) {
+      _diskBuiltAt = DateTime.now();
+      debugPrint('[art-ui] poster file given to the image widget (tickers on: ${TickerMode.of(context)}): ${widget.url.split('/').last}');
+    }
+    return _diskImage(f);
+  }
+
+  Widget _diskImage(File f) => Image.file(
         f,
+        key: ValueKey('file$_gen'),
         frameBuilder: (context, child, frame, sync) {
           if (frame != null && !_paintLogged) {
             _paintLogged = true;
-            debugPrint('[art-ui] poster decoded, drawing now: ${widget.url.split('/').last}');
+            final ms = _diskBuiltAt == null ? -1 : DateTime.now().difference(_diskBuiltAt!).inMilliseconds;
+            debugPrint('[art-ui] poster decoded, drawing now ($ms ms after it was given to the image widget): ${widget.url.split('/').last}');
           }
           return child;
         },
