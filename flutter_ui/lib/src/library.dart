@@ -61,6 +61,7 @@ class _LibraryPageState extends State<LibraryPage> {
     _artTimer?.cancel();
     _artTimer = Timer(quiet ? const Duration(milliseconds: 300) : const Duration(seconds: 2), () {
       _lastArtRead = DateTime.now();
+      debugPrint('[art-ui] server has new posters: reading the list again');
       if (!mounted) return;
       if (_refreshing || _scanning) {
         _onArtChanged(); // busy: ask again shortly instead of dropping the news that posters arrived

@@ -3,7 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart' show ValueNotifier, debugPrint;
 import 'package:http/http.dart' as http;
 
 import 'activity.dart' show Busy;
@@ -77,7 +77,10 @@ class Api {
       // The server counts every poster / synopsis that really changed. A new number = read the lists again (not on the first look).
       final art = (j['art'] as num?)?.toInt();
       if (art != null) {
-        if (_artSeen != null && art != _artSeen) artRevision.value++;
+        if (_artSeen != null && art != _artSeen) {
+          debugPrint('[art-ui] scan-status says posters changed ($_artSeen -> $art)');
+          artRevision.value++;
+        }
         _artSeen = art;
       }
       return j['scanning'] == true;
@@ -105,7 +108,10 @@ class Api {
   static void _seed(String key, dynamic poster, dynamic overview) {
     final p = '${poster ?? ''}';
     if (p.isEmpty) return;
-    if (_details.containsKey(key) && !_noArt.contains(key)) return; // already known (a card asked first); one that found no poster is replaced
+    if (_details.containsKey(key) && !_noArt.contains(key)) {
+      debugPrint('[art-ui] list has a poster for $key but a card already asked: seed skipped');
+      return; // already known (a card asked first); one that found no poster is replaced
+    }
     _noArt.remove(key);
     final d = Details(overview: '${overview ?? ''}', poster: abs(p));
     _details[key] = Future<Details>.value(d);

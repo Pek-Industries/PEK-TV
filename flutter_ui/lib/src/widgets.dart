@@ -419,7 +419,7 @@ class _PosterCardState extends State<PosterCard> {
   // The look-up (poster address + synopsis) can fail or come back with no picture while the server is busy, the TMDb proxy
   // is slow or the internet is flaky. The card used to keep that answer until the screen was rebuilt (a manual Refresh);
   // now it asks again by itself, after 2, 6, 15, 30, 60 and 60 seconds, and at once when the internet comes back.
-  static const _lookupWaits = [2, 6, 15, 30, 60, 60, 60, 60, 60, 60, 60, 60];
+  static const _lookupWaits = [500, 1000, 2000, 4000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000]; // milliseconds
   late Future<Details> _poster = widget.poster;
   int _lookups = 0;
   Timer? _lookupTimer;
@@ -471,8 +471,9 @@ class _PosterCardState extends State<PosterCard> {
 
   void _scheduleLookup() {
     if ((_lookupTimer?.isActive ?? false) || _lookups >= _lookupWaits.length) return;
-    _lookupTimer = Timer(Duration(seconds: _lookupWaits[_lookups]), () {
+    _lookupTimer = Timer(Duration(milliseconds: _lookupWaits[_lookups]), () {
       if (!mounted) return;
+      debugPrint('[art-ui] ${widget.title}: no poster yet, asking again (try ${_lookups + 1})');
       final next = Api.retryDetails(_poster);
       if (next == null) {
         _lookups = _lookupWaits.length; // not a library look-up (nothing to ask again)
@@ -599,7 +600,7 @@ class PosterImage extends StatefulWidget {
 }
 
 class _PosterImageState extends State<PosterImage> {
-  static const _lookupWaits = [2, 6, 15, 30, 60, 60, 60, 60, 60, 60, 60, 60];
+  static const _lookupWaits = [500, 1000, 2000, 4000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000]; // milliseconds
   late Future<Details> _poster = widget.poster;
   int _lookups = 0;
   Timer? _timer;
@@ -637,7 +638,7 @@ class _PosterImageState extends State<PosterImage> {
 
   void _scheduleLookup() {
     if ((_timer?.isActive ?? false) || _lookups >= _lookupWaits.length) return;
-    _timer = Timer(Duration(seconds: _lookupWaits[_lookups]), () {
+    _timer = Timer(Duration(milliseconds: _lookupWaits[_lookups]), () {
       if (!mounted) return;
       final next = Api.retryDetails(_poster);
       if (next == null) {
