@@ -43,7 +43,7 @@ class _LibraryPageState extends State<LibraryPage> {
   @override
   void initState() {
     super.initState();
-    _watch = Timer.periodic(const Duration(seconds: 1), (_) => _checkScan());
+    _watch = Timer.periodic(const Duration(milliseconds: 500), (_) => _checkScan());
     _checkScan();
     Api.libraryRevision.addListener(_onSourcesChanged);
     Api.artRevision.addListener(_onArtChanged);
@@ -53,9 +53,14 @@ class _LibraryPageState extends State<LibraryPage> {
   /// The server says some titles got a new poster / synopsis: read the lists again. Unchanged posters come from their saved
   /// copies; a changed one has a new address and is downloaded. A burst of changes is read once (the wait restarts with every change, so it is read 2 s after the last one).
   Timer? _artTimer;
+  DateTime _lastArtRead = DateTime.fromMillisecondsSinceEpoch(0);
   void _onArtChanged() {
+    // First change after a quiet spell: read the list almost at once (one new movie should not wait 2 s for its poster).
+    // Changes arriving in a burst are still batched with the 2 s wait.
+    final quiet = DateTime.now().difference(_lastArtRead) > const Duration(seconds: 4) && !(_artTimer?.isActive ?? false);
     _artTimer?.cancel();
-    _artTimer = Timer(const Duration(seconds: 2), () {
+    _artTimer = Timer(quiet ? const Duration(milliseconds: 300) : const Duration(seconds: 2), () {
+      _lastArtRead = DateTime.now();
       if (!mounted) return;
       if (_refreshing || _scanning) {
         _onArtChanged(); // busy: ask again shortly instead of dropping the news that posters arrived

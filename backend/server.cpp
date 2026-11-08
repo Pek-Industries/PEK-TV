@@ -604,7 +604,10 @@ static void startArtWorker(MediaScanner* scanner) {
                 for (const auto& job : jobs) {
                     if (scanner->isScanning()) break;
                     bool asked = false;
+                    const long long t0 = nowMs();
                     const int r = lookupArt(scanner, job, asked);
+                    std::cout << "[PEK Server] Poster look-up '" << job.title << "': " << (r > 0 ? "found" : r == 0 ? "nothing" : "FAILED")
+                              << " in " << (nowMs() - t0) << " ms" << (asked ? " (asked TMDb)" : " (local files)") << std::endl;
                     if (r >= 0) { fails = 0; pause(asked ? 250 : 5); continue; }
                     const long long blocked = g_tmdbBlockedUntil.load();
                     if (nowMs() < blocked) { pause(static_cast<int>(blocked - nowMs()) + 500); stop = true; break; }   // rate limit: wait it out
