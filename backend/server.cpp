@@ -585,7 +585,7 @@ static void startArtWorker(MediaScanner* scanner) {
         int checkedGeneration = -1;
         for (;;) {
             try {
-                if (scanner->isScanning()) { pause(3000); continue; }
+                if (scanner->isScanning()) { pause(500); continue; }   // short: the moment the scan ends, the new titles are looked up
                 // After every scan (and once at start-up): compare the stored posters with the user's files. A changed
                 // poster.jpg / .nfo marks just that title, which is then looked up again below; the rest are left alone.
                 const int generation = scanner->scanGeneration();
@@ -594,7 +594,12 @@ static void startArtWorker(MediaScanner* scanner) {
                     scanner->artRecheck();
                 }
                 const auto jobs = scanner->artPending(100);
-                if (jobs.empty()) { pause(20000); continue; }
+                if (jobs.empty()) {
+                    // Nothing to do: look again in 20 s (titles that failed earlier), but at once when a scan starts or finishes.
+                    // (A plain 20 s sleep made a movie that was just added wait up to 20 s for its poster.)
+                    for (int w = 0; w < 80 && scanner->scanGeneration() == checkedGeneration && !scanner->isScanning(); ++w) pause(250);
+                    continue;
+                }
                 bool stop = false;
                 for (const auto& job : jobs) {
                     if (scanner->isScanning()) break;

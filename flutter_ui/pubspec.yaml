@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
+  http2: ^2.2.0                     # HTTP/2 for the poster downloads: one connection carries every picture (h2_fetch.dart)
   shared_preferences: ^2.2.3
   crypto: ^3.0.3
   share_plus: ^10.1.4               # sharing the history / ratings export file

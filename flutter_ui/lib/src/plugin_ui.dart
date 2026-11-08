@@ -984,6 +984,7 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
         height: minW / (2 / 3) + (0.45 + 0.85 * 1.2 + 0.1 + 0.75 * 1.4 + 0.6) * rem * math.max(1.0, textScale) + 2 * vPad + 6,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
+          cacheExtent: 800, // the next few cards of a row are built ahead, so they are already drawn when the row is scrolled
           padding: EdgeInsets.symmetric(vertical: vPad, horizontal: hPad),
           itemCount: kids.length,
           separatorBuilder: (_, __) => SizedBox(width: gap),

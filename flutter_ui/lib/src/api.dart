@@ -100,7 +100,7 @@ class Api {
   // address at once and never asks the server (or TMDb) for it. A title the server has not got to yet has no poster in the
   // list: its card asks for it the old way (lazily), and the next time the list is read it comes with the list.
   //
-  // The pictures themselves are then downloaded to the device in list order, 3 at a time, in the background, so cards that
+  // The pictures themselves are then downloaded to the device in list order, 5 at a time, in the background, so cards that
   // scroll into view find them on disk. (Same cache as the cards use; on-screen cards are served first.)
   static void _seed(String key, dynamic poster, dynamic overview) {
     final p = '${poster ?? ''}';
@@ -129,7 +129,7 @@ class Api {
   static final List<String> _warmQueue = [];
   static int _warmLanes = 0;
   static int _warmGen = 0;
-  static const _warmMax = 3;
+  static const _warmMax = 5;
 
   static void _startWarm() {
     while (_warmLanes < _warmMax && _warmQueue.isNotEmpty) {

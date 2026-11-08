@@ -1,0 +1,621 @@
+diff -ruN orig/backend/server.cpp pek2/backend/server.cpp
+--- orig/backend/server.cpp	2026-11-07 21:29:57.000000000 +0000
++++ pek2/backend/server.cpp	2026-11-07 23:28:14.255282997 +0000
+@@ -332,6 +332,11 @@
+     return "https://tmdb.pekindustries.com";
+ }
+ 
++// Posters and stills come from the same worker (it caches them at the edge): /t/p/<size>/<file> like image.tmdb.org.
++static std::string tmdbImageUrl(const char* size, const std::string& path) {
++    return tmdbProxyUrl() + "/t/p/" + size + path;
++}
++
+ } // namespace
+ 
+ // Android: use the CA bundle shipped inside the app (SSL_CERT_FILE) for
+@@ -560,7 +565,7 @@
+     const std::string first = results_pos != std::string::npos ? body.substr(results_pos) : body;
+     const std::string tmdb_overview = extractJsonString(first, "overview");
+     const std::string poster_path = extractJsonString(first, "poster_path");
+-    const std::string poster = art.empty() ? (poster_path.empty() ? "" : "https://image.tmdb.org/t/p/w342" + poster_path) : art;
++    const std::string poster = art.empty() ? (poster_path.empty() ? "" : tmdbImageUrl("w342", poster_path)) : art;
+     const std::string key = job.movie ? job.id : job.title;
+     // An old TMDb poster that TMDb no longer has anything for stays as it is (only the next check moves to 30 days from now).
+     if (job.aged && poster.empty()) { scanner->artTouch(job.movie, key); return 1; }
+@@ -580,7 +585,7 @@
+         int checkedGeneration = -1;
+         for (;;) {
+             try {
+-                if (scanner->isScanning()) { pause(3000); continue; }
++                if (scanner->isScanning()) { pause(500); continue; }   // short: the moment the scan ends, the new titles are looked up
+                 // After every scan (and once at start-up): compare the stored posters with the user's files. A changed
+                 // poster.jpg / .nfo marks just that title, which is then looked up again below; the rest are left alone.
+                 const int generation = scanner->scanGeneration();
+@@ -589,7 +594,12 @@
+                     scanner->artRecheck();
+                 }
+                 const auto jobs = scanner->artPending(100);
+-                if (jobs.empty()) { pause(20000); continue; }
++                if (jobs.empty()) {
++                    // Nothing to do: look again in 20 s (titles that failed earlier), but at once when a scan starts or finishes.
++                    // (A plain 20 s sleep made a movie that was just added wait up to 20 s for its poster.)
++                    for (int w = 0; w < 80 && scanner->scanGeneration() == checkedGeneration && !scanner->isScanning(); ++w) pause(250);
++                    continue;
++                }
+                 bool stop = false;
+                 for (const auto& job : jobs) {
+                     if (scanner->isScanning()) break;
+@@ -1423,7 +1433,7 @@
+ 
+         std::string overview = extractJsonString(first_result, "overview");
+         std::string poster_path = extractJsonString(first_result, "poster_path");
+-        std::string poster_url = poster_path.empty() ? "" : ("https://image.tmdb.org/t/p/w342" + poster_path);
++        std::string poster_url = poster_path.empty() ? "" : (tmdbImageUrl("w342", poster_path));
+ 
+         scanner->artStore(true, entry.id, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, entry.title, entry.year));   // kept for the list
+         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
+@@ -1458,7 +1468,7 @@
+         std::string first_result = results_pos != std::string::npos ? body.substr(results_pos) : body;
+         std::string overview = extractJsonString(first_result, "overview");
+         std::string poster_path = extractJsonString(first_result, "poster_path");
+-        std::string poster_url = poster_path.empty() ? "" : ("https://image.tmdb.org/t/p/w342" + poster_path);
++        std::string poster_url = poster_path.empty() ? "" : (tmdbImageUrl("w342", poster_path));
+         scanner->artStore(false, title, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, title, 0));   // kept for the list
+         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
+     });
+@@ -1501,7 +1511,7 @@
+         std::string name = extractJsonString(body, "name");
+         std::string overview = extractJsonString(body, "overview");
+         std::string still = extractJsonString(body, "still_path");
+-        std::string still_url = still.empty() ? "" : ("https://image.tmdb.org/t/p/w300" + still);
++        std::string still_url = still.empty() ? "" : tmdbImageUrl("w300", still);
+         reply(local.title.empty() ? name : local.title, local.plot.empty() ? overview : local.plot, art.empty() ? still_url : art);
+     });
+ 
+diff -ruN orig/flutter_ui/lib/src/api.dart pek2/flutter_ui/lib/src/api.dart
+--- orig/flutter_ui/lib/src/api.dart	2026-11-07 19:47:26.000000000 +0000
++++ pek2/flutter_ui/lib/src/api.dart	2026-11-07 23:34:54.805126672 +0000
+@@ -100,7 +100,7 @@
+   // address at once and never asks the server (or TMDb) for it. A title the server has not got to yet has no poster in the
+   // list: its card asks for it the old way (lazily), and the next time the list is read it comes with the list.
+   //
+-  // The pictures themselves are then downloaded to the device in list order, 3 at a time, in the background, so cards that
++  // The pictures themselves are then downloaded to the device in list order, 5 at a time, in the background, so cards that
+   // scroll into view find them on disk. (Same cache as the cards use; on-screen cards are served first.)
+   static void _seed(String key, dynamic poster, dynamic overview) {
+     final p = '${poster ?? ''}';
+@@ -129,7 +129,7 @@
+   static final List<String> _warmQueue = [];
+   static int _warmLanes = 0;
+   static int _warmGen = 0;
+-  static const _warmMax = 3;
++  static const _warmMax = 5;
+ 
+   static void _startWarm() {
+     while (_warmLanes < _warmMax && _warmQueue.isNotEmpty) {
+diff -ruN orig/flutter_ui/lib/src/art_cache.dart pek2/flutter_ui/lib/src/art_cache.dart
+--- orig/flutter_ui/lib/src/art_cache.dart	2026-11-07 19:47:34.000000000 +0000
++++ pek2/flutter_ui/lib/src/art_cache.dart	2026-11-07 23:49:17.289821272 +0000
+@@ -8,6 +8,9 @@
+ import 'package:flutter/material.dart';
+ import 'package:flutter/services.dart';
+ 
++import 'h2_fetch.dart';
++import 'recs.dart' show RecFeed;
++
+ /// Keeps what was looked up online on the device, so posters, titles and synopses show at once after a restart and still
+ /// show when the internet is gone.
+ ///
+@@ -39,7 +42,7 @@
+   // (10 s+), which is what made a single poster take about 15 s. A short idle time means a pooled connection is almost always alive.
+   static final HttpClient _http = HttpClient()
+     ..connectionTimeout = const Duration(seconds: 5)
+-    ..maxConnectionsPerHost = 16
++    ..maxConnectionsPerHost = 24
+     ..idleTimeout = const Duration(seconds: 5);
+   // The second ("hedge") request of a slow download uses its own client, so it never lands on the same pooled connection that
+   // made the first one slow (one HttpClient always hands out its idle pooled connections first). Its connections are not kept.
+@@ -48,11 +51,24 @@
+     ..maxConnectionsPerHost = 8
+     ..idleTimeout = const Duration(seconds: 1);
+ 
+-  /// Opens a few connections to the TMDb picture server up front (DNS + TLS), so the first posters do not wait for that.
++  /// TMDb pictures are fetched through our own worker (edge-cached), not from image.tmdb.org. An address saved earlier with
++  /// the old host is still the cache key, only the download goes to the worker. The last try goes to TMDb directly, so
++  /// posters still arrive when the worker is down.
++  static const _tmdbDirect = 'https://image.tmdb.org/t/p/';
++  static String _address(String url, {required bool direct}) {
++    final via = '${RecFeed.imageBase}/';
++    if (!direct && url.startsWith(_tmdbDirect)) return via + url.substring(_tmdbDirect.length);
++    if (direct && url.startsWith(via)) return _tmdbDirect + url.substring(via.length);
++    return url;
++  }
++
++  /// Opens the connection(s) to the picture server up front (DNS + TLS), so the first posters do not wait for that. One HTTP/2
++  /// connection is enough for all of them; when the server does not do HTTP/2 a few HTTP/1.1 connections are opened instead.
+   static Future<void> _warm() async {
++    if (await H2Fetch.warm(Uri.parse(RecFeed.imageBase), const Duration(seconds: 6))) return;
+     Future<void> one() async {
+       try {
+-        final r = await _http.getUrl(Uri.parse('https://image.tmdb.org/')).timeout(const Duration(seconds: 6));
++        final r = await _http.getUrl(Uri.parse(RecFeed.imageBase)).timeout(const Duration(seconds: 6));
+         final resp = await r.close().timeout(const Duration(seconds: 6));
+         await resp.drain<void>().timeout(const Duration(seconds: 6));
+       } catch (_) {}
+@@ -66,7 +82,10 @@
+   static final Map<String, Future<File?>> _inflight = {};
+   static int _running = 0;
+   static final List<(String?, Completer<void>)> _waiting = []; // newest last: the newest request (what is on screen now) goes first
+-  static const _parallel = 12;
++  // Posters are all downloaded from one host now (the worker), over plain HTTP/1.1: one connection each. 20 at a time (the client
++  // may open 24) keeps a screenful from waiting for a second wave; the background lanes below use at most 13 of them, so
++  // pictures on screen always have free places.
++  static const _parallel = 20;
+ 
+   /// Pictures that no widget wants any more (it was scrolled away / closed) are not downloaded while they wait in the queue.
+   static final Set<String> _dropped = HashSet();
+@@ -92,7 +111,7 @@
+   /// into view they come straight from disk. Only [_prefetchLanes] downloads run at once for this, which leaves the other
+   /// slots free for pictures that are on screen right now, and a picture that is already known or already downloading is
+   /// skipped. Safe to call again and again with the same list (the screen is redrawn often).
+-  static const _prefetchLanes = 5;
++  static const _prefetchLanes = 8;
+   static final List<String> _prefetchQueue = [];
+   static final Set<String> _prefetchQueued = HashSet();
+   static int _prefetchRunning = 0;
+@@ -226,7 +245,7 @@
+   static Future<File?> _withRetry(String url) async {
+     for (var i = 0; i < _tryTimeouts.length; i++) {
+       if (_gone.contains(url)) return null;
+-      final f = await _limited(() => _dropped.contains(url) ? Future<File?>.value(null) : _fetch(url, _tryTimeouts[i]), key: url);
++      final f = await _limited(() => _dropped.contains(url) ? Future<File?>.value(null) : _fetch(url, _tryTimeouts[i], direct: i == _tryTimeouts.length - 1), key: url);
+       if (f != null) return f;
+       if (_dropped.contains(url)) return null; // nobody is waiting for it any more
+       if (i < _tryTimeouts.length - 1) await Future<void>.delayed(Duration(milliseconds: 500 * (i + 1)));
+@@ -260,7 +279,7 @@
+     }
+   }
+ 
+-  static Future<File?> _fetch(String url, Duration timeout) async {
++  static Future<File?> _fetch(String url, Duration timeout, {bool direct = false}) async {
+     await init();
+     final d = _dirFor(url);
+     if (d == null) return null;
+@@ -273,7 +292,7 @@
+     } catch (_) {}
+     try {
+       final sw = Stopwatch()..start();
+-      final r = await _get(url, timeout);
++      final r = await _getVia(_address(url, direct: direct), timeout);
+       if (sw.elapsedMilliseconds > 2000) debugPrint('[art] slow picture: ${sw.elapsedMilliseconds} ms (${r == null ? 'failed' : 'ok'}) $url');
+       if (r == null) return null;
+       // Only "it is not there" is final. 403 / 429 / 5xx mean a busy or rate-limiting server: ask again later.
+@@ -294,6 +313,23 @@
+   /// hold the picture for the whole 10 s before the retry even started.
+   static const _hedgeAfter = Duration(milliseconds: 2000);
+ 
++  /// Our own worker (the picture host) is asked over HTTP/2; any other host, or a failure to get HTTP/2 at all, goes the
++  /// HTTP/1.1 way below. A request that merely timed out or failed on HTTP/2 is NOT repeated on HTTP/1.1 here: [_withRetry] asks
++  /// again, and its last try goes to image.tmdb.org directly.
++  static final String _h2Host = Uri.parse(RecFeed.imageBase).host;
++
++  static Future<({int status, Uint8List bytes})?> _getVia(String address, Duration timeout) async {
++    final u = Uri.tryParse(address);
++    if (u != null && u.scheme == 'https' && u.host == _h2Host && !H2Fetch.broken) {
++      try {
++        return await H2Fetch.get(u, timeout);
++      } on H2Unavailable {
++        // fall through: HTTP/1.1
++      }
++    }
++    return _get(address, timeout);
++  }
++
+   /// One download that is cut off for real when [timeout] passes. null = it failed or timed out.
+   static Future<({int status, Uint8List bytes})?> _get(String url, Duration timeout) {
+     final done = Completer<({int status, Uint8List bytes})?>();
+diff -ruN orig/flutter_ui/lib/src/dev_console.dart pek2/flutter_ui/lib/src/dev_console.dart
+--- orig/flutter_ui/lib/src/dev_console.dart	2026-11-04 02:25:36.000000000 +0000
++++ pek2/flutter_ui/lib/src/dev_console.dart	2026-11-07 22:43:15.206534410 +0000
+@@ -163,7 +163,7 @@
+   cache size | clear   the saved pictures and synopses
+   wipe YES             delete ALL app data (settings, library, caches) and close the app
+ Anything else runs in the Android shell (sh), for example:
+-  ls -la files/hesper    cat files/hesper/backend.log    ps -A    df -h    ping -c 3 image.tmdb.org
++  ls -la files/hesper    cat files/hesper/backend.log    ps -A    df -h    ping -c 3 tmdb.pekindustries.com
+   logcat -d -t 200       (this app's own system log)
+ Commands run as the app's user, with no root. They can break the app. Stop kills a running command.''';
+ 
+diff -ruN orig/flutter_ui/lib/src/h2_fetch.dart pek2/flutter_ui/lib/src/h2_fetch.dart
+--- orig/flutter_ui/lib/src/h2_fetch.dart	1970-01-01 00:00:00.000000000 +0000
++++ pek2/flutter_ui/lib/src/h2_fetch.dart	2026-11-07 23:49:31.036708488 +0000
+@@ -0,0 +1,225 @@
++import 'dart:async';
++import 'dart:convert';
++import 'dart:io';
++import 'dart:typed_data';
++
++import 'package:http2/http2.dart';
++
++/// One answer: the HTTP status and the whole body.
++typedef H2Reply = ({int status, Uint8List bytes});
++
++/// Thrown when HTTP/2 cannot be used for this request at all (the server does not offer it, the connection could not be made, or
++/// it was switched off after repeated failures). The caller then uses the ordinary HTTP/1.1 download instead.
++class H2Unavailable implements Exception {
++  const H2Unavailable(this.why);
++  final String why;
++  @override
++  String toString() => 'H2Unavailable: $why';
++}
++
++/// Downloads over HTTP/2 (the pure-Dart `http2` package), for the pictures. dart:io's HttpClient only speaks HTTP/1.1: one request
++/// per connection, so a screen of 20 posters meant 20 TCP + TLS handshakes, and a connection that had died silently held a poster
++/// until its timeout. Here ONE connection per host carries every request at the same time (streams), so the handshake is paid once.
++///
++///  * the connection is kept; a new one is made when it closed, got a GOAWAY, or does not answer a ping after sitting idle
++///  * a request that gets no answer within its time is cancelled alone (RST_STREAM); the connection is then pinged, and only a
++///    connection that does not answer that is thrown away (so one slow picture does not break the 19 others on it)
++///  * a body shorter than the announced content-length counts as failed, so half a picture is never saved
++///  * 3 failed connection attempts in a row (or a server that answers "http/1.1" in ALPN) switch HTTP/2 off for the rest of the
++///    run: [get] then throws [H2Unavailable] and everything goes the old way
++class H2Fetch {
++  H2Fetch._();
++
++  static final Map<String, Future<_H2Conn?>> _conns = {};
++  static int _failures = 0;
++  static const _maxFailures = 3;
++
++  static bool get broken => _failures >= _maxFailures;
++
++  /// Makes the connection to [uri]'s host now (DNS + TCP + TLS), so the first pictures do not wait for it. false = no HTTP/2 here.
++  static Future<bool> warm(Uri uri, Duration timeout) async {
++    if (broken || uri.scheme != 'https') return false;
++    try {
++      await _conn(uri.host, uri.hasPort ? uri.port : 443, timeout);
++      return true;
++    } catch (_) {
++      return false;
++    }
++  }
++
++  /// null = it failed or timed out (the caller may ask again); throws [H2Unavailable] when HTTP/2 cannot be used at all.
++  static Future<H2Reply?> get(Uri uri, Duration timeout) async {
++    if (broken || uri.scheme != 'https') throw const H2Unavailable('not available');
++    final sw = Stopwatch()..start();
++    final c = await _conn(uri.host, uri.hasPort ? uri.port : 443, timeout);
++    final left = timeout - sw.elapsed;
++    if (left < const Duration(milliseconds: 300)) return null;
++    return c.get(uri, left);
++  }
++
++  static Future<_H2Conn> _conn(String host, int port, Duration timeout) async {
++    final key = '$host:$port';
++    for (var i = 0; i < 2; i++) {
++      final f = _conns[key];
++      if (f == null) break;
++      final c = await f;
++      if (c != null && c.usable && await c.alive()) return c;
++      if (identical(_conns[key], f)) _conns.remove(key); // closed, failed or not answering: a new one is made below
++    }
++    var f = _conns[key];
++    if (f == null) {
++      f = _connect(host, port, timeout);
++      _conns[key] = f;
++    }
++    final c = await f;
++    if (c == null || !c.usable) {
++      if (identical(_conns[key], f)) _conns.remove(key);
++      throw const H2Unavailable('no connection');
++    }
++    return c;
++  }
++
++  static Future<_H2Conn?> _connect(String host, int port, Duration timeout) async {
++    SecureSocket? socket;
++    try {
++      socket = await SecureSocket.connect(host, port, supportedProtocols: const ['h2'], timeout: timeout);
++      if (socket.selectedProtocol != 'h2') {
++        _failures = _maxFailures; // this server does not do HTTP/2: HTTP/1.1 for the rest of the run
++        socket.destroy();
++        return null;
++      }
++      socket.setOption(SocketOption.tcpNoDelay, true);
++      final c = _H2Conn(socket, ClientTransportConnection.viaSocket(socket));
++      _failures = 0;
++      return c;
++    } catch (_) {
++      _failures++;
++      try {
++        socket?.destroy();
++      } catch (_) {}
++      return null;
++    }
++  }
++}
++
++class _H2Conn {
++  _H2Conn(this.socket, this.transport) {
++    unawaited(socket.done.then<void>((_) {
++      dead = true;
++    }, onError: (Object _) {
++      dead = true;
++    }));
++  }
++
++  final SecureSocket socket;
++  final ClientTransportConnection transport;
++  bool dead = false;
++  DateTime lastUsed = DateTime.now();
++  bool _checking = false;
++
++  bool get usable => !dead && transport.isOpen;
++
++  /// A connection that sat idle for a while may have been dropped by the server or the Wi-Fi without telling us: ask it.
++  Future<bool> alive() async {
++    if (DateTime.now().difference(lastUsed) < const Duration(seconds: 15)) return true;
++    try {
++      await transport.ping().timeout(const Duration(seconds: 2));
++      lastUsed = DateTime.now();
++      return true;
++    } catch (_) {
++      kill();
++      return false;
++    }
++  }
++
++  /// After a request got no answer at all: is the connection itself dead? Only then is it dropped.
++  Future<void> check() async {
++    if (_checking || dead) return;
++    _checking = true;
++    try {
++      await transport.ping().timeout(const Duration(seconds: 3));
++    } catch (_) {
++      kill();
++    } finally {
++      _checking = false;
++    }
++  }
++
++  void kill() {
++    dead = true;
++    try {
++      unawaited(transport.terminate().catchError((Object _) {}));
++    } catch (_) {}
++    try {
++      socket.destroy();
++    } catch (_) {}
++  }
++
++  Future<H2Reply?> get(Uri uri, Duration timeout) {
++    final done = Completer<H2Reply?>();
++    final body = BytesBuilder(copy: false);
++    var status = 0;
++    var expected = -1;
++    var gotHeaders = false;
++    Timer? limit;
++
++    void finish(H2Reply? r) {
++      if (done.isCompleted) return;
++      limit?.cancel();
++      done.complete(r);
++    }
++
++    ClientTransportStream? made;
++    try {
++      made = transport.makeRequest([
++        Header.ascii(':method', 'GET'),
++        Header.ascii(':scheme', 'https'),
++        Header.ascii(':authority', uri.host),
++        Header.ascii(':path', (uri.path.isEmpty ? '/' : uri.path) + (uri.hasQuery ? '?${uri.query}' : '')),
++        Header.ascii('accept', 'image/*'),
++      ], endStream: true);
++    } catch (_) {}
++    if (made == null) {
++      kill();
++      return Future.value(null);
++    }
++    final s = made;
++    lastUsed = DateTime.now();
++
++    limit = Timer(timeout, () {
++      try {
++        s.terminate(); // cancels this one request; the connection and the other pictures on it carry on
++      } catch (_) {}
++      final silent = !gotHeaders;
++      finish(null);
++      if (silent) unawaited(check());
++    });
++
++    s.incomingMessages.listen((m) {
++      if (m is HeadersStreamMessage) {
++        for (final h in m.headers) {
++          final name = ascii.decode(h.name, allowInvalid: true);
++          if (name == ':status') {
++            status = int.tryParse(ascii.decode(h.value, allowInvalid: true)) ?? 0;
++            gotHeaders = true;
++          } else if (name == 'content-length') {
++            expected = int.tryParse(ascii.decode(h.value, allowInvalid: true)) ?? -1;
++          }
++        }
++      } else if (m is DataStreamMessage) {
++        body.add(m.bytes);
++      }
++    }, onError: (Object _) {
++      finish(null);
++    }, onDone: () {
++      lastUsed = DateTime.now();
++      if (status == 0 || (expected >= 0 && body.length != expected)) {
++        finish(null); // no status, or cut short: never keep half a picture
++        return;
++      }
++      finish((status: status, bytes: body.takeBytes()));
++    }, cancelOnError: true);
++
++    return done.future;
++  }
++}
+diff -ruN orig/flutter_ui/lib/src/library.dart pek2/flutter_ui/lib/src/library.dart
+--- orig/flutter_ui/lib/src/library.dart	2026-11-07 21:29:57.000000000 +0000
++++ pek2/flutter_ui/lib/src/library.dart	2026-11-07 23:34:54.805511639 +0000
+@@ -43,7 +43,7 @@
+   @override
+   void initState() {
+     super.initState();
+-    _watch = Timer.periodic(const Duration(seconds: 3), (_) => _checkScan());
++    _watch = Timer.periodic(const Duration(seconds: 1), (_) => _checkScan());
+     _checkScan();
+     Api.libraryRevision.addListener(_onSourcesChanged);
+     Api.artRevision.addListener(_onArtChanged);
+@@ -51,11 +51,11 @@
+   }
+ 
+   /// The server says some titles got a new poster / synopsis: read the lists again. Unchanged posters come from their saved
+-  /// copies; a changed one has a new address and is downloaded. A burst of changes is read once.
++  /// copies; a changed one has a new address and is downloaded. A burst of changes is read once (the wait restarts with every change, so it is read 2 s after the last one).
+   Timer? _artTimer;
+   void _onArtChanged() {
+     _artTimer?.cancel();
+-    _artTimer = Timer(const Duration(seconds: 4), () {
++    _artTimer = Timer(const Duration(seconds: 2), () {
+       if (!mounted) return;
+       if (_refreshing || _scanning) {
+         _onArtChanged(); // busy: ask again shortly instead of dropping the news that posters arrived
+@@ -223,6 +223,7 @@
+     );
+ 
+     return CustomScrollView(
++      cacheExtent: 1200, // cards about three rows below the screen are built (and their pictures read from disk) before they scroll into view
+       slivers: [
+         SliverPadding(
+           padding: widget.padding.copyWith(bottom: 0),
+diff -ruN orig/flutter_ui/lib/src/plugin_ui.dart pek2/flutter_ui/lib/src/plugin_ui.dart
+--- orig/flutter_ui/lib/src/plugin_ui.dart	2026-11-04 08:11:28.000000000 +0000
++++ pek2/flutter_ui/lib/src/plugin_ui.dart	2026-11-07 23:34:54.805838203 +0000
+@@ -623,12 +623,15 @@
+     }
+   }
+ 
+-  /// A TMDb picture for Continue Watching: a poster / still path ("/abc.jpg") or an image.tmdb.org address. Anything else is dropped.
++  /// A TMDb picture for Continue Watching: a poster / still path ("/abc.jpg"), an image.tmdb.org address or one on our TMDb
++  /// worker. Anything else is dropped. An image.tmdb.org address is moved to the worker.
+   static String _artwork(String v) {
+     final x = v.trim();
+-    if (RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(x)) return 'https://image.tmdb.org/t/p/w342$x';
++    if (RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(x)) return '${RecFeed.imageBase}/w342$x';
+     final u = Uri.tryParse(x);
+-    return (u != null && u.scheme == 'https' && u.host == 'image.tmdb.org') ? x : '';
++    if (u == null || u.scheme != 'https') return '';
++    if (u.host == 'image.tmdb.org') return x.replaceFirst('https://image.tmdb.org/t/p/', '${RecFeed.imageBase}/');
++    return x.startsWith('${RecFeed.imageBase}/') ? x : '';
+   }
+ 
+   void _toast(String text) {
+@@ -981,6 +984,7 @@
+         height: minW / (2 / 3) + (0.45 + 0.85 * 1.2 + 0.1 + 0.75 * 1.4 + 0.6) * rem * math.max(1.0, textScale) + 2 * vPad + 6,
+         child: ListView.separated(
+           scrollDirection: Axis.horizontal,
++          cacheExtent: 800, // the next few cards of a row are built ahead, so they are already drawn when the row is scrolled
+           padding: EdgeInsets.symmetric(vertical: vPad, horizontal: hPad),
+           itemCount: kids.length,
+           separatorBuilder: (_, __) => SizedBox(width: gap),
+@@ -1299,7 +1303,7 @@
+ class PluginFavoritesSection extends StatelessWidget {
+   const PluginFavoritesSection({super.key});
+ 
+-  static const _imgBase = 'https://image.tmdb.org/t/p/w342';
++  static const _imgBase = '${RecFeed.imageBase}/w342';
+   static final _posterPath = RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$');
+   static final Map<String, Future<Details>> _art = {};
+ 
+diff -ruN orig/flutter_ui/lib/src/recs.dart pek2/flutter_ui/lib/src/recs.dart
+--- orig/flutter_ui/lib/src/recs.dart	2026-11-04 13:29:00.000000000 +0000
++++ pek2/flutter_ui/lib/src/recs.dart	2026-11-07 22:43:15.204556514 +0000
+@@ -178,7 +178,7 @@
+ 
+   /// The "not interested" key: `m603` for a movie, `t1396` for a show.
+   String get key => '${tv ? 't' : 'm'}$id';
+-  String get image => 'https://image.tmdb.org/t/p/w342$poster';
++  String get image => '${RecFeed.imageBase}/w342$poster';
+ }
+ 
+ class RecRow {
+@@ -210,6 +210,8 @@
+ 
+ class RecFeed {
+   static const _base = 'https://tmdb.pekindustries.com'; // the proxy that holds the TMDb key
++  /// TMDb pictures go through the same worker (it keeps them at Cloudflare's edge); /t/p/<size>/<file> like image.tmdb.org.
++  static const imageBase = '$_base/t/p';
+   static const _ttlMs = 6 * 3600 * 1000;
+   static final _c = http.Client();
+   /// The TMDb id of the movie called [name] (an exact title match first, else the top result), or 0 when none is found.
+@@ -278,7 +280,7 @@
+     pick ??= res.first is Map ? res.first as Map : null;
+     if (pick == null) return null;
+     final poster = '${pick['poster_path'] ?? ''}';
+-    return Details(overview: '${pick['overview'] ?? ''}', poster: poster.isEmpty ? '' : 'https://image.tmdb.org/t/p/w342$poster');
++    return Details(overview: '${pick['overview'] ?? ''}', poster: poster.isEmpty ? '' : '${RecFeed.imageBase}/w342$poster');
+   }
+ 
+   /// The TMDb id of the show called [name] (an exact name match first, else the top result), or 0 when none is found.
+@@ -313,7 +315,7 @@
+     final j = await _get('/episode?query=${Uri.encodeQueryComponent(show.trim())}&season=$season&episode=$episode');
+     if (j == null) return null;
+     final still = '${j['still_path'] ?? ''}';
+-    return EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: still.isEmpty ? '' : 'https://image.tmdb.org/t/p/w300$still');
++    return EpisodeInfo(name: '${j['name'] ?? ''}', overview: '${j['overview'] ?? ''}', still: still.isEmpty ? '' : '${RecFeed.imageBase}/w300$still');
+   }
+ 
+   /// The titles in a TMDb list answer. Anything without an id, a title or a poster is dropped. Pure, so it can be tested.
+diff -ruN orig/flutter_ui/pubspec.yaml pek2/flutter_ui/pubspec.yaml
+--- orig/flutter_ui/pubspec.yaml	2026-11-07 17:14:56.000000000 +0000
++++ pek2/flutter_ui/pubspec.yaml	2026-11-07 23:49:17.289038900 +0000
+@@ -10,6 +10,7 @@
+   flutter:
+     sdk: flutter
+   http: ^1.2.0
++  http2: ^2.2.0                     # HTTP/2 for the poster downloads: one connection carries every picture (h2_fetch.dart)
+   shared_preferences: ^2.2.3
+   crypto: ^3.0.3
+   share_plus: ^10.1.4               # sharing the history / ratings export file
+diff -ruN orig/flutter_ui/test/recs_test.dart pek2/flutter_ui/test/recs_test.dart
+--- orig/flutter_ui/test/recs_test.dart	2026-10-31 00:47:58.000000000 +0000
++++ pek2/flutter_ui/test/recs_test.dart	2026-11-07 22:43:15.206676488 +0000
+@@ -46,7 +46,7 @@
+     expect(items.first.key, 'm1');
+     final tv = RecFeed.parseResults({'results': [{'id': 9, 'name': 'Show', 'poster_path': '/s.png', 'first_air_date': '2011-04-17'}]}, true);
+     expect(tv.first.key, 't9');
+-    expect(tv.first.image, 'https://image.tmdb.org/t/p/w342/s.png');
++    expect(tv.first.image, 'https://tmdb.pekindustries.com/t/p/w342/s.png');
+     expect(RecFeed.parseResults(null, true), isEmpty);
+   });
+ 
+diff -ruN orig/plugins/tmdb-discover/plugin.json pek2/plugins/tmdb-discover/plugin.json
+--- orig/plugins/tmdb-discover/plugin.json	2026-11-07 19:58:48.000000000 +0000
++++ pek2/plugins/tmdb-discover/plugin.json	2026-11-07 22:43:34.331575910 +0000
+@@ -1,6 +1,6 @@
+ {
+   "name": "TMDb Discover",
+-  "version": "1.9.0",
++  "version": "1.9.1",
+   "author": "PEK",
+   "description": "Browse trending, top rated, popular and now playing movies and TV page by page, filter by streaming service, watch trailers, see the cast and related titles, and see what you already own.",
+   "permissions": {
+diff -ruN orig/plugins/tmdb-discover/screen.py pek2/plugins/tmdb-discover/screen.py
+--- orig/plugins/tmdb-discover/screen.py	2026-11-07 19:58:37.000000000 +0000
++++ pek2/plugins/tmdb-discover/screen.py	2026-11-07 22:43:15.208461185 +0000
+@@ -19,10 +19,10 @@
+ 
+ API = "https://api.themoviedb.org/3"                           # only used with a personal key
+ PROXY = "https://tmdb.pekindustries.com"       # PEK TV's built-in access (it adds the key)
+-IMG = "https://image.tmdb.org/t/p/w342"
+-IMG_WIDE = "https://image.tmdb.org/t/p/w780"          # backdrops (16:9) for landscape cards on a TV
+-IMG_PERSON = "https://image.tmdb.org/t/p/w185"
+-IMG_LOGO = "https://image.tmdb.org/t/p/w92"
++IMG = PROXY + "/t/p/w342"                      # pictures come through the same worker (edge-cached)
++IMG_WIDE = PROXY + "/t/p/w780"          # backdrops (16:9) for landscape cards on a TV
++IMG_PERSON = PROXY + "/t/p/w185"
++IMG_LOGO = PROXY + "/t/p/w92"
+ PER_ROW = 18
+ MAX_PAGES = 500          # TMDb does not serve pages past 500
+ SETTINGS = "settings.json"

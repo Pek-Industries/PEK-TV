@@ -43,7 +43,7 @@ class _LibraryPageState extends State<LibraryPage> {
   @override
   void initState() {
     super.initState();
-    _watch = Timer.periodic(const Duration(seconds: 3), (_) => _checkScan());
+    _watch = Timer.periodic(const Duration(seconds: 1), (_) => _checkScan());
     _checkScan();
     Api.libraryRevision.addListener(_onSourcesChanged);
     Api.artRevision.addListener(_onArtChanged);
@@ -51,11 +51,11 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   /// The server says some titles got a new poster / synopsis: read the lists again. Unchanged posters come from their saved
-  /// copies; a changed one has a new address and is downloaded. A burst of changes is read once.
+  /// copies; a changed one has a new address and is downloaded. A burst of changes is read once (the wait restarts with every change, so it is read 2 s after the last one).
   Timer? _artTimer;
   void _onArtChanged() {
     _artTimer?.cancel();
-    _artTimer = Timer(const Duration(seconds: 4), () {
+    _artTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) return;
       if (_refreshing || _scanning) {
         _onArtChanged(); // busy: ask again shortly instead of dropping the news that posters arrived
@@ -223,6 +223,7 @@ class _LibraryPageState extends State<LibraryPage> {
     );
 
     return CustomScrollView(
+      cacheExtent: 1200, // cards about three rows below the screen are built (and their pictures read from disk) before they scroll into view
       slivers: [
         SliverPadding(
           padding: widget.padding.copyWith(bottom: 0),

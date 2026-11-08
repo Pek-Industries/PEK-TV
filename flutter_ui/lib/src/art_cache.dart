@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'h2_fetch.dart';
 import 'recs.dart' show RecFeed;
 
 /// Keeps what was looked up online on the device, so posters, titles and synopses show at once after a restart and still
@@ -41,7 +42,7 @@ class ArtCache {
   // (10 s+), which is what made a single poster take about 15 s. A short idle time means a pooled connection is almost always alive.
   static final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 5)
-    ..maxConnectionsPerHost = 16
+    ..maxConnectionsPerHost = 24
     ..idleTimeout = const Duration(seconds: 5);
   // The second ("hedge") request of a slow download uses its own client, so it never lands on the same pooled connection that
   // made the first one slow (one HttpClient always hands out its idle pooled connections first). Its connections are not kept.
@@ -61,8 +62,10 @@ class ArtCache {
     return url;
   }
 
-  /// Opens a few connections to the picture server up front (DNS + TLS), so the first posters do not wait for that.
+  /// Opens the connection(s) to the picture server up front (DNS + TLS), so the first posters do not wait for that. One HTTP/2
+  /// connection is enough for all of them; when the server does not do HTTP/2 a few HTTP/1.1 connections are opened instead.
   static Future<void> _warm() async {
+    if (await H2Fetch.warm(Uri.parse(RecFeed.imageBase), const Duration(seconds: 6))) return;
     Future<void> one() async {
       try {
         final r = await _http.getUrl(Uri.parse(RecFeed.imageBase)).timeout(const Duration(seconds: 6));
@@ -79,7 +82,10 @@ class ArtCache {
   static final Map<String, Future<File?>> _inflight = {};
   static int _running = 0;
   static final List<(String?, Completer<void>)> _waiting = []; // newest last: the newest request (what is on screen now) goes first
-  static const _parallel = 12;
+  // Posters are all downloaded from one host now (the worker), over plain HTTP/1.1: one connection each. 20 at a time (the client
+  // may open 24) keeps a screenful from waiting for a second wave; the background lanes below use at most 13 of them, so
+  // pictures on screen always have free places.
+  static const _parallel = 20;
 
   /// Pictures that no widget wants any more (it was scrolled away / closed) are not downloaded while they wait in the queue.
   static final Set<String> _dropped = HashSet();
@@ -105,7 +111,7 @@ class ArtCache {
   /// into view they come straight from disk. Only [_prefetchLanes] downloads run at once for this, which leaves the other
   /// slots free for pictures that are on screen right now, and a picture that is already known or already downloading is
   /// skipped. Safe to call again and again with the same list (the screen is redrawn often).
-  static const _prefetchLanes = 5;
+  static const _prefetchLanes = 8;
   static final List<String> _prefetchQueue = [];
   static final Set<String> _prefetchQueued = HashSet();
   static int _prefetchRunning = 0;
@@ -286,7 +292,7 @@ class ArtCache {
     } catch (_) {}
     try {
       final sw = Stopwatch()..start();
-      final r = await _get(_address(url, direct: direct), timeout);
+      final r = await _getVia(_address(url, direct: direct), timeout);
       if (sw.elapsedMilliseconds > 2000) debugPrint('[art] slow picture: ${sw.elapsedMilliseconds} ms (${r == null ? 'failed' : 'ok'}) $url');
       if (r == null) return null;
       // Only "it is not there" is final. 403 / 429 / 5xx mean a busy or rate-limiting server: ask again later.
@@ -306,6 +312,23 @@ class ArtCache {
   /// whichever finishes first wins (the other is cancelled). A stalled connection / slow handshake / slow CDN edge used to
   /// hold the picture for the whole 10 s before the retry even started.
   static const _hedgeAfter = Duration(milliseconds: 2000);
+
+  /// Our own worker (the picture host) is asked over HTTP/2; any other host, or a failure to get HTTP/2 at all, goes the
+  /// HTTP/1.1 way below. A request that merely timed out or failed on HTTP/2 is NOT repeated on HTTP/1.1 here: [_withRetry] asks
+  /// again, and its last try goes to image.tmdb.org directly.
+  static final String _h2Host = Uri.parse(RecFeed.imageBase).host;
+
+  static Future<({int status, Uint8List bytes})?> _getVia(String address, Duration timeout) async {
+    final u = Uri.tryParse(address);
+    if (u != null && u.scheme == 'https' && u.host == _h2Host && !H2Fetch.broken) {
+      try {
+        return await H2Fetch.get(u, timeout);
+      } on H2Unavailable {
+        // fall through: HTTP/1.1
+      }
+    }
+    return _get(address, timeout);
+  }
 
   /// One download that is cut off for real when [timeout] passes. null = it failed or timed out.
   static Future<({int status, Uint8List bytes})?> _get(String url, Duration timeout) {
