@@ -53,6 +53,10 @@ class _LibraryPageState extends State<LibraryPage> {
   /// The server says some titles got a new poster / synopsis: read the lists again. Unchanged posters come from their saved
   /// copies; a changed one has a new address and is downloaded. A burst of changes is read once (the wait restarts with every change, so it is read 2 s after the last one).
   Timer? _artTimer;
+  // Bumped when the list has been read again because posters arrived: the grid gets a new key, so every card is built fresh from
+  // the new list. (A card that was already on screen kept its old "no poster yet" answer and only showed the poster after it was
+  // scrolled away and back, or touched.)
+  int _artEpoch = 0;
   DateTime _lastArtRead = DateTime.fromMillisecondsSinceEpoch(0);
   void _onArtChanged() {
     // First change after a quiet spell: read the list almost at once (one new movie should not wait 2 s for its poster).
@@ -68,9 +72,15 @@ class _LibraryPageState extends State<LibraryPage> {
         return;
       }
       Api.forgetLibrary();
+      final read = _load();
       setState(() {
-        _data = _load();
+        _data = read;
       });
+      read.then<void>((_) {
+        if (!mounted) return;
+        setState(() => _artEpoch++);
+        WidgetsBinding.instance.ensureVisualUpdate();
+      }, onError: (Object _) {});
     });
   }
 
@@ -147,6 +157,7 @@ class _LibraryPageState extends State<LibraryPage> {
           _emptyRetries++;
           unawaited(_followChange());
         }
+        debugPrint('[art-ui] list read: ${list.length} titles');
         return list;
       });
 
@@ -175,6 +186,7 @@ class _LibraryPageState extends State<LibraryPage> {
   Future<void> _rescan() async {
     if (_refreshing || _cooldown > 0) return;
     _emptyRetries = 0;
+    debugPrint('[art-ui] REFRESH pressed');
     _startCooldown(10);
     setState(() => _refreshing = true);
     Activity.begin('scan', 'Scanning your media folders\u2026');
@@ -324,7 +336,7 @@ class _LibraryPageState extends State<LibraryPage> {
                       SliverPadding(padding: widget.padding.copyWith(top: 0), sliver: SliverToBoxAdapter(child: card)),
                     ]);
                   }
-                  return SliverMainAxisGroup(slivers: [
+                  return SliverMainAxisGroup(key: ValueKey('grid$_artEpoch'), slivers: [
                     bar,
                     SliverPadding(
                       padding: widget.padding.copyWith(top: 0),

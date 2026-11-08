@@ -494,6 +494,7 @@ class _PosterCardState extends State<PosterCard> {
         var url = snap.data?.poster ?? '';
         if (url.isEmpty && widget.fallbackImage.startsWith('https://')) url = widget.fallbackImage;
         _plain = url.isEmpty || _failed;
+        debugPrint('[art-ui] card "${widget.title}": ${url.isEmpty ? 'no poster address yet (${snap.connectionState.name})' : 'has poster address'}');
         if (url.isEmpty && snap.connectionState == ConnectionState.done) _scheduleLookup(); // failed, or no picture yet
         if (url.isEmpty || _failed) {
           return ValueListenableBuilder<int>(

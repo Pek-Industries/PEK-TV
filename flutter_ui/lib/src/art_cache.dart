@@ -293,7 +293,7 @@ class ArtCache {
     try {
       final sw = Stopwatch()..start();
       final r = await _getVia(_address(url, direct: direct), timeout);
-      if (sw.elapsedMilliseconds > 2000) debugPrint('[art] slow picture: ${sw.elapsedMilliseconds} ms (${r == null ? 'failed' : 'ok'}) $url');
+      debugPrint('[art-ui] picture download ${sw.elapsedMilliseconds} ms (${r == null ? 'failed' : 'status ${r.status}'}) $url');
       if (r == null) return null;
       // Only "it is not there" is final. 403 / 429 / 5xx mean a busy or rate-limiting server: ask again later.
       if (r.status == 404 || r.status == 410) _gone.add(url);
