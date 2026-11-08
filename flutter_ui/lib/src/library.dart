@@ -9,6 +9,7 @@ import 'common.dart';
 import 'pages.dart';
 import 'store.dart';
 import 'tokens.dart';
+import 'library_search.dart';
 import 'library_sort.dart';
 import 'watch_filter.dart';
 import 'weather.dart' show WeatherBadge;
@@ -35,6 +36,7 @@ class _LibraryPageState extends State<LibraryPage> {
   bool _polling = false;
   int _changeTicket = 0; // a newer _followChange() replaces an older one
   int _emptyRetries = 0; // how many times an empty list has been read again by itself
+  List<Object> _items = const []; // the library as last loaded (the search box narrows from it)
 
   /// The chosen watched state, sort, genre and actor are kept while the app runs, so leaving the tab and coming back does not reset them.
   static final Map<String, LibraryFilters> _remembered = {};
@@ -253,6 +255,12 @@ class _LibraryPageState extends State<LibraryPage> {
             padding: EdgeInsets.only(left: widget.padding.left, right: widget.padding.right),
             sliver: const SliverToBoxAdapter(child: ScanLine(label: 'Scanning your library\u2026')),
           ),
+        // The search box lives here, outside the list's own rebuilds: typing must never lose the keyboard, even when a search
+        // answers with nothing and the grid below is swapped for a message.
+        SliverPadding(
+          padding: EdgeInsets.only(left: widget.padding.left, right: widget.padding.right),
+          sliver: SliverToBoxAdapter(child: LibrarySearchPanel(filters: _f, tab: widget.tab, library: () => _items)),
+        ),
         FutureBuilder<List<Object>>(
           future: _data,
           builder: (context, snap) {
@@ -285,6 +293,7 @@ class _LibraryPageState extends State<LibraryPage> {
               );
             }
             final items = snap.data ?? const <Object>[];
+            _items = items;
             if (items.isEmpty) return _empty(context);
             // Marking something watched, or finishing it, changes the list and the counts; a genre / actor / sort pick does too.
             return ListenableBuilder(
@@ -307,20 +316,23 @@ class _LibraryPageState extends State<LibraryPage> {
                           for (var i = 0; i < inScope.length; i++)
                             if (status[i] == _f.watch) inScope[i],
                         ];
-                  final shown = sortedBy<Object>(
-                    byState,
-                    _f.sort,
-                    _f.seed,
-                    title: (o) => o is Movie ? o.title : (o as Show).title,
-                    year: (o) => o is Movie ? o.year : 0,
-                  );
+                  // Rating, recently added and runtime come in the server's order (it knows the .nfo details); the others are worked out here.
+                  final List<Object> shown = _f.ordered
+                      ? (List<Object>.of(byState)..sort((a, b) => (a is Movie ? _f.rankOfMovie(a) : _f.rankOfShow(a as Show)).compareTo(b is Movie ? _f.rankOfMovie(b) : _f.rankOfShow(b as Show))))
+                      : sortedBy<Object>(
+                          byState,
+                          _f.sort,
+                          _f.seed,
+                          title: (o) => o is Movie ? o.title : (o as Show).title,
+                          year: (o) => o is Movie ? o.year : 0,
+                        );
                   final bar = SliverPadding(
                     padding: EdgeInsets.only(left: widget.padding.left, right: widget.padding.right, bottom: (p.isTv ? 1.25 : 1) * rem),
                     sliver: SliverToBoxAdapter(child: LibraryFilterBar(filters: _f, counts: counts)),
                   );
-                  if (_f.pending || _f.failed || shown.isEmpty) {
+                  if (_f.blocking || _f.failed || shown.isEmpty) {
                     final PekCard card;
-                    if (_f.pending) {
+                    if (_f.blocking) {
                       card = const PekCard(title: 'Filtering\u2026', subtitle: 'Asking your library.');
                     } else if (_f.failed) {
                       card = const PekCard(title: 'Could not reach your library', subtitle: 'Is the server running? Change the genre or actor above to try again.');

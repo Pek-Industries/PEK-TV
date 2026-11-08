@@ -89,3 +89,10 @@ movies and shows, a **Play with ...** button opens that plugin on the title.
 - Discover opens faster: the movie and TV rows are kept on the device and shown at once the next time (refreshed quietly when they are older than 30 minutes; the Refresh button always loads everything fresh).
 - Posters further along a row are downloaded ahead of time, so scrolling sideways shows pictures instead of empty tiles.
 - A poster that is still downloading shows a quiet empty tile, not its title, so a slow connection no longer looks like a title with no artwork.
+
+## 1.9.2
+- "See all" lists, an actor's titles and "More like this" use small cards (about three across on a phone) instead of one huge card per line.
+- An actor's page lists their movies and shows first; talk shows, news and "Self" / "Host" appearances go to the bottom.
+
+## 1.9.3
+- Search suggestions: typing in the search box shows a drop-down of matching titles with small posters. It narrows on every letter from titles already fetched, so there is no blank gap between letters; the network answer only adds to it, in a steady order, and a late answer never reopens the list after you searched. On an older PEK TV the box stays a plain search box.

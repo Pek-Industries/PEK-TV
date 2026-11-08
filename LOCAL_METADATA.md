@@ -59,14 +59,15 @@ The Movies and TV Shows tabs and Watch History share one filter bar of drop-down
 | Drop-down | Choices |
 |---|---|
 | Show | All, Unwatched, Watching, Watched (Watch History has no Unwatched: everything there has been started) |
-| Sort by | Default, Random, Title A–Z, Title Z–A, Year newest / oldest (movies); Recently watched, Oldest watched, Random, A–Z, Z–A (Watch History) |
+| Sort by | Default, Random, Title A–Z, Title Z–A, Year newest / oldest, Rating (highest first), Recently added, Runtime (longest / shortest first) (movies; TV Shows have Default, Random, A–Z, Z–A, Rating, Recently added); Recently watched, Oldest watched, Random, A–Z, Z–A (Watch History) |
 | Genre | Any genre, then the genres found in your .nfo files, with counts |
 | Actor | Any actor, then the actors found in your .nfo files, with counts |
 
 They combine: "Unwatched + Action + Random" lists unwatched action movies in a random order. With Random chosen, **Shuffle again**
 reshuffles; the order stays put until then, even when something is marked watched. **Clear filters** puts everything back.
-The Movies and TV Shows tabs remember their choices while the app runs. Genre and actor are answered by the server
-(`/api/library/search`), so they need the .nfo details above; the other filters work on the device.
+The Movies and TV Shows tabs remember their choices while the app runs. Genre, actor, the typed search, the extra filters
+below and the Rating / Recently added / Runtime orders are answered by the server (`/api/library/search`), so they need the .nfo
+details above (Recently added needs none); Show and the title / year orders work on the device.
 
 ## Posters and synopses are looked up once
 
@@ -93,3 +94,25 @@ A poster or synopsis that came from TMDb is also looked up once and then left al
 
 Whenever a stored poster or synopsis really changes, the server's change counter (`art` in `/api/scan-status`) goes up and the
 Movies / TV Shows pages read their lists again. Unchanged posters are not downloaded again; Refresh no longer wipes them.
+
+## Search bar and extra filters on the Movies and TV Shows tabs
+
+Both tabs have a search box (`library_search.dart`) above the filter bar. It reads the title, year and everything the title's
+`.nfo` says: genres, cast, director, studio, collection, rating, runtime and certificate. **Where a title has a `.nfo`, the
+`.nfo`'s title and details are used; a title without one is still found by its title and year** and just has no genre, cast or
+rating to match on. Nothing here asks TMDb.
+
+- The drop-down narrows on every letter from titles already known (the library on the device and every earlier answer), so
+  there is no wait and no blank gap between letters; the server's answer (`GET /api/library/suggest`) only adds to it (cast,
+  genre and studio matches, ratings) in the same order. A row says why it matched when its name is not what was typed
+  (`Cast: Tom Hanks`, `Genre: Drama`), and shows the year, type and rating.
+- The grid under the box follows the typed text a moment later and keeps showing its last answer until the new one arrives.
+- **More filters:** Director, Studio, Collection, Rated (certificate), Decade, Year, Rating (6, 7, 8, 9 and up),
+  Runtime (under 90 min, 90 min to 2 hours, over 2 hours) and Details from (has a `.nfo` / no `.nfo`). They combine with each
+  other, with Show, Genre and Actor, and with the typed text; **Clear filters** empties the box too.
+- **Sort by** also has Rating (highest first), Recently added and Runtime (longest / shortest first), put in order by the
+  server's library database.
+- API: `GET /api/library/search` takes `q`, `genre`, `actor`, `director`, `studio`, `collection`, `mpaa`, `year`, `decade`,
+  `min_rating`, `min_runtime`, `max_runtime`, `nfo=with|without` and `sort=title|title_desc|year|year_asc|added|rating|runtime|runtime_asc`;
+  `GET /api/library/suggest` takes the same plus `type=movies|shows|both`; `GET /api/library/facets` also lists `studios`,
+  `collections`, `mpaa` and how many titles have a `.nfo`.

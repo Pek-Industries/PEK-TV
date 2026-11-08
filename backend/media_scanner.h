@@ -189,17 +189,34 @@ public:
         std::string genre, actor, director, studio, collection;   // exact (case and accent insensitive) filters
         int year = 0;                      // exactly this year
         int decade = 0;                    // 1990 = 1990..1999
-        std::string sort = "title";        // title | year | added | rating
+        std::string sort = "title";        // title | title_desc | year | year_asc | added | rating | runtime | runtime_asc
         int limit = 500;
         int offset = 0;
+        // More filters. They read what the title's .nfo says (rating, runtime, mpaa); a title with no .nfo has none of these.
+        std::string mpaa;                  // "PG-13" ... exact (case insensitive)
+        double min_rating = 0;             // 0 = any; otherwise this or higher (0..10)
+        int min_runtime = 0;               // minutes, 0 = no lower limit
+        int max_runtime = 0;               // minutes, 0 = no upper limit
+        int nfo = 0;                       // 0 = any, 1 = only titles that have a .nfo, 2 = only titles without one
     };
     // {"total":N,"movies":["<id>",...]}  or  {"total":N,"shows":["<show title>",...]}
     std::string searchJson(const SearchQuery& query);
     // {"indexing":{"done":a,"total":b},"genres":[{"name","count"}],"decades":[{"decade","count"}],"years":[{"year","count"}],
     //  "actors":[...],"directors":[...],"studios":[...]}   actorPrefix narrows the actor list (the picker's own search box).
     std::string facetsJson(const std::string& type, const std::string& actorPrefix, int limit);
+    // Search-box drop-down: the best few titles for the free text in query.q (and any filter set on it), with their .nfo details.
+    // type = "movies", "shows" or "both". The title is the .nfo's title when the title has one, else the file's.
+    // {"items":[{"kind":"movie"|"show","id","title","year","rating","runtime","mpaa","studio","nfo":bool,"genres":[],"cast":[],
+    //            "directors":[],"match":"Cast: Tom Hanks"}]}   "match" says why a title came up when its name is not what was typed.
+    std::string suggestJson(const SearchQuery& query, const std::string& type, int limit);
 
 private:
+    struct SearchSql {
+        bool shows = false;
+        std::string from, where, order, key, year;
+        std::vector<std::string> binds;
+    };
+    SearchSql buildSearchSql(const SearchQuery& query);
     std::string sources_file_path_;
     std::string cache_file_path_;
     std::vector<std::string> media_dirs_;

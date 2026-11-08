@@ -1222,9 +1222,12 @@ void PekServer::start(int port, const std::string& plugins_dir,
     //     (genre, people, studio ...) are read into the library database after each scan, so this is one indexed query.
     //     GET /api/library/search?type=movies|shows&q=&genre=&actor=&director=&studio=&collection=&year=&decade=&sort=&limit=&offset=
     //       -> {"total":N,"movies":["<id>",...]}  or  {"total":N,"shows":["<show title>",...]}
+    //     GET /api/library/suggest?type=movies|shows|both&q=&limit=   (the search box's drop-down; same filters as search, plus .nfo details)
     //     GET /api/library/facets?type=movies|shows&q=<actor / director name part>&limit=
     //       -> genres, decades, years, actors, directors with counts, and how far the details are read ({"indexing":{"done","total"}})
-    svr.Get("/api/library/search", [scanner](const httplib::Request& req, httplib::Response& res) {
+    // Everything the search and the drop-down accept: free text plus genre / actor / director / studio / collection / year / decade /
+    // mpaa / min_rating / min_runtime / max_runtime / nfo=with|without / sort.
+    auto parseSearch = [](const httplib::Request& req) {
         MediaScanner::SearchQuery sq;
         sq.type = req.get_param_value("type") == "shows" ? "shows" : "movies";
         sq.q = req.get_param_value("q").substr(0, 200);
@@ -1233,12 +1236,27 @@ void PekServer::start(int port, const std::string& plugins_dir,
         sq.director = req.get_param_value("director").substr(0, 120);
         sq.studio = req.get_param_value("studio").substr(0, 120);
         sq.collection = req.get_param_value("collection").substr(0, 120);
+        sq.mpaa = req.get_param_value("mpaa").substr(0, 24);
         sq.year = std::max(0, std::min(2200, std::atoi(req.get_param_value("year").c_str())));
         sq.decade = std::max(0, std::min(2200, std::atoi(req.get_param_value("decade").c_str())));
+        sq.min_rating = std::max(0.0, std::min(10.0, std::atof(req.get_param_value("min_rating").c_str())));
+        sq.min_runtime = std::max(0, std::min(100000, std::atoi(req.get_param_value("min_runtime").c_str())));
+        sq.max_runtime = std::max(0, std::min(100000, std::atoi(req.get_param_value("max_runtime").c_str())));
+        const std::string nfo = req.get_param_value("nfo");
+        sq.nfo = nfo == "with" ? 1 : (nfo == "without" ? 2 : 0);
         sq.sort = req.get_param_value("sort");
         if (req.has_param("limit")) sq.limit = std::atoi(req.get_param_value("limit").c_str());
         if (req.has_param("offset")) sq.offset = std::atoi(req.get_param_value("offset").c_str());
-        res.set_content(scanner->searchJson(sq), "application/json");
+        return sq;
+    };
+    svr.Get("/api/library/search", [scanner, parseSearch](const httplib::Request& req, httplib::Response& res) {
+        res.set_content(scanner->searchJson(parseSearch(req)), "application/json");
+    });
+    //     GET /api/library/suggest?type=movies|shows|both&q=&limit=8 (+ the same filters)  -> the search box's drop-down, with .nfo details
+    svr.Get("/api/library/suggest", [scanner, parseSearch](const httplib::Request& req, httplib::Response& res) {
+        const std::string t = req.get_param_value("type");
+        const int limit = req.has_param("limit") ? std::atoi(req.get_param_value("limit").c_str()) : 8;
+        res.set_content(scanner->suggestJson(parseSearch(req), t == "movies" || t == "shows" ? t : "both", limit), "application/json");
     });
     svr.Get("/api/library/facets", [scanner](const httplib::Request& req, httplib::Response& res) {
         const std::string type = req.get_param_value("type") == "shows" ? "shows" : "movies";

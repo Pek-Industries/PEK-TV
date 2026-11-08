@@ -40,7 +40,7 @@ class WhatsNew {
       'Private by design: a phone that has not paired can do nothing, and the remote can be turned off on the TV at any time.',
       'DVDs: DVD images (.iso files) and ripped DVD folders now play from your library as a single movie. Physical discs are not supported yet.',
       'Multi-part movies: films split across several files now appear as a single title.',
-      'Filters: Movies and TV Shows have new drop-downs to sort randomly, pick by genre or actor, and mix them with watched and unwatched.',
+      'Search and filters: Movies and TV Shows have a search box with suggestions that finds titles by name, actor, director, genre, studio or year, and drop-downs to sort (random, rating, runtime, recently added), pick by genre or actor, and mix them with watched, unwatched and more filters such as decade, rating and runtime. Details come from your .nfo files when a title has one.',
       'Equalizer: new audio settings let you shape the sound of your music.',
       'Video audio: the video player has its own new audio options.',
       'Playback errors: fixed a cause of the libmpv playback error, so videos that failed to start now play.',

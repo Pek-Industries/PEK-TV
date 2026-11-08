@@ -548,13 +548,23 @@ class Api {
 
   // ---------------------------------------------------------------- library search (the NFO database: genre, actor, year ...)
 
-  /// {movies: [file ids], shows: [show titles]} or null when the server could not answer.
+  /// The filter part of a library query (everything except the free text): genre, year / decade, actor, director, studio, collection,
+  /// mpaa, minimum rating, runtime limits in minutes, nfo ('with' | 'without') and a server sort ('rating', 'added', 'runtime' ...).
+  static String _libFilterQuery({String genre = '', int decade = 0, int year = 0, String actor = '', String director = '', String studio = '', String collection = '', String mpaa = '', double minRating = 0, int minRuntime = 0, int maxRuntime = 0, String nfo = '', String sort = ''}) {
+    String e(String k, String v) => v.isEmpty ? '' : '&$k=${Uri.encodeQueryComponent(v)}';
+    return '${e('genre', genre)}${year > 0 ? '&year=$year' : (decade > 0 ? '&decade=$decade' : '')}${e('actor', actor)}${e('director', director)}'
+        '${e('studio', studio)}${e('collection', collection)}${e('mpaa', mpaa)}${minRating > 0 ? '&min_rating=$minRating' : ''}'
+        '${minRuntime > 0 ? '&min_runtime=$minRuntime' : ''}${maxRuntime > 0 ? '&max_runtime=$maxRuntime' : ''}${e('nfo', nfo)}${e('sort', sort)}';
+  }
+
+  /// {movies: [file ids], shows: [show titles]} or null when the server could not answer. Both lists come in the order the server
+  /// was asked for ([sort]; the default is by title).
   /// [only] ('movies' or 'shows') asks for just one of the two; [limit] is how many each (the server allows up to 5000).
-  static Future<({List<String> movies, List<String> shows})?> librarySearch(String q, {String genre = '', int decade = 0, int year = 0, String actor = '', String director = '', int limit = 60, String? only}) async {
+  /// Genre, people, studio, rating, runtime ... are what the title's .nfo says; a title without a .nfo only has its title and year.
+  static Future<({List<String> movies, List<String> shows})?> librarySearch(String q, {String genre = '', int decade = 0, int year = 0, String actor = '', String director = '', String studio = '', String collection = '', String mpaa = '', double minRating = 0, int minRuntime = 0, int maxRuntime = 0, String nfo = '', String sort = '', int limit = 60, String? only}) async {
     String qs(String type) =>
-        '/api/library/search?type=$type&limit=$limit&q=${Uri.encodeQueryComponent(q)}${genre.isNotEmpty ? '&genre=${Uri.encodeQueryComponent(genre)}' : ''}'
-        '${year > 0 ? '&year=$year' : (decade > 0 ? '&decade=$decade' : '')}${actor.isNotEmpty ? '&actor=${Uri.encodeQueryComponent(actor)}' : ''}'
-        '${director.isNotEmpty ? '&director=${Uri.encodeQueryComponent(director)}' : ''}';
+        '/api/library/search?type=$type&limit=$limit&q=${Uri.encodeQueryComponent(q)}'
+        '${_libFilterQuery(genre: genre, decade: decade, year: year, actor: actor, director: director, studio: studio, collection: collection, mpaa: mpaa, minRating: minRating, minRuntime: minRuntime, maxRuntime: maxRuntime, nfo: nfo, sort: sort)}';
     try {
       final r = await Future.wait<dynamic>([
         only == 'shows' ? Future<dynamic>.value(const {}) : _get(qs('movies')),
@@ -564,6 +574,21 @@ class Api {
         movies: ((r[0]['movies'] as List?) ?? const []).map((e) => '$e').toList(),
         shows: ((r[1]['shows'] as List?) ?? const []).map((e) => '$e').toList(),
       );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The search box's drop-down: the best few titles for [q] (and the filters), each with what its .nfo says. null = no answer.
+  /// Not shown with the loading ring (it runs while typing).
+  static Future<List<LibSuggest>?> librarySuggest(String q, {String type = 'both', int limit = 8, String genre = '', int decade = 0, int year = 0, String actor = '', String director = '', String studio = '', String collection = '', String mpaa = '', double minRating = 0, int minRuntime = 0, int maxRuntime = 0, String nfo = ''}) async {
+    try {
+      final j = await _getRaw(
+        '/api/library/suggest?type=$type&limit=$limit&q=${Uri.encodeQueryComponent(q)}'
+        '${_libFilterQuery(genre: genre, decade: decade, year: year, actor: actor, director: director, studio: studio, collection: collection, mpaa: mpaa, minRating: minRating, minRuntime: minRuntime, maxRuntime: maxRuntime, nfo: nfo)}',
+        const Duration(seconds: 8),
+      );
+      return [for (final x in ((j['items'] as List?) ?? const []).whereType<Map>()) LibSuggest.fromJson(Map<String, dynamic>.from(x))];
     } catch (_) {
       return null;
     }
@@ -604,6 +629,11 @@ class Api {
         years: top(sum('years', 'year'), (a, b) => (int.tryParse(b.key) ?? 0) - (int.tryParse(a.key) ?? 0)),
         actors: top(sum('actors', 'name'), byCount),
         directors: top(sum('directors', 'name'), byCount),
+        studios: top(sum('studios', 'name'), byCount),
+        collections: top(sum('collections', 'name'), byCount),
+        mpaas: top(sum('mpaa', 'name'), byCount),
+        nfoWith: sum('nfo', 'name')['with'] ?? 0,
+        nfoWithout: sum('nfo', 'name')['without'] ?? 0,
         indexingDone: (idx?['done'] as num?)?.toInt() ?? 0,
         indexingTotal: (idx?['total'] as num?)?.toInt() ?? 0,
       );
@@ -1164,14 +1194,59 @@ class NetDiscovery {
 }
 
 class Facets {
-  const Facets({required this.genres, required this.decades, required this.years, required this.actors, required this.directors, required this.indexingDone, required this.indexingTotal});
+  const Facets({required this.genres, required this.decades, required this.years, required this.actors, required this.directors, this.studios = const [], this.collections = const [], this.mpaas = const [], this.nfoWith = 0, this.nfoWithout = 0, required this.indexingDone, required this.indexingTotal});
   final List<MapEntry<String, int>> genres;
   final List<MapEntry<String, int>> decades; // key = the decade year (1990)
   final List<MapEntry<String, int>> years; // key = one release year (1994), newest first
   final List<MapEntry<String, int>> actors;
   final List<MapEntry<String, int>> directors;
+  final List<MapEntry<String, int>> studios;
+  final List<MapEntry<String, int>> collections;
+  final List<MapEntry<String, int>> mpaas; // the certificate (PG-13 ...) the .nfo files carry
+  final int nfoWith; // titles that have a .nfo
+  final int nfoWithout; // titles read but with no .nfo (title and year only)
   final int indexingDone;
   final int indexingTotal;
+}
+
+/// One row of the library search box's drop-down. Everything but [title] and [year] comes from the title's .nfo, so a title
+/// without one has no rating, genres or cast ([nfo] false). [id] is the movie's file id, or the show's title.
+class LibSuggest {
+  const LibSuggest({required this.isShow, required this.id, required this.title, required this.year, required this.rating, required this.runtime, required this.mpaa, required this.studio, required this.nfo, required this.genres, required this.cast, required this.directors, required this.match});
+  final bool isShow;
+  final String id;
+  final String title;
+  final int year;
+  final double rating; // 0 = none
+  final int runtime; // minutes, 0 = none
+  final String mpaa;
+  final String studio;
+  final bool nfo;
+  final List<String> genres;
+  final List<String> cast;
+  final List<String> directors;
+  final String match; // why it came up when its title is not what was typed: 'Cast: ...', 'Genre: ...'
+
+  String get key => isShow ? 's:${id.toLowerCase().trim()}' : 'm:$id';
+
+  factory LibSuggest.fromJson(Map<String, dynamic> j) {
+    List<String> names(String k) => ((j[k] as List?) ?? const []).map((e) => '$e').toList();
+    return LibSuggest(
+      isShow: j['kind'] == 'show',
+      id: '${j['id'] ?? ''}',
+      title: '${j['title'] ?? ''}',
+      year: (j['year'] as num?)?.toInt() ?? 0,
+      rating: (j['rating'] as num?)?.toDouble() ?? 0,
+      runtime: (j['runtime'] as num?)?.toInt() ?? 0,
+      mpaa: '${j['mpaa'] ?? ''}',
+      studio: '${j['studio'] ?? ''}',
+      nfo: j['nfo'] == true,
+      genres: names('genres'),
+      cast: names('cast'),
+      directors: names('directors'),
+      match: '${j['match'] ?? ''}',
+    );
+  }
 }
 
 /// Adds the per-launch token to every request that goes to the local server, whatever code made it.

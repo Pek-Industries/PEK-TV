@@ -30,7 +30,7 @@ bottom bar). "More" is a page of its own with tiles for Resume Watching, Favorit
 Settings; a tap opens that screen on top and Back returns. On a TV the sidebar lists everything and switches the content.
 
 - Dashboard: a random greeting on top (see "Dashboard greeting"), then the clock, Continue Watching, Recently Added, Favorites rows (press and hold a widget: Move / Delete; Add widget button)
-- Movies, TV Shows: poster grids, Refresh (rescan), movie and show / season / episode pages, Favorite button
+- Movies, TV Shows: a search box with a suggestion drop-down and a filter bar (watched state, sort, genre, actor, and "More filters": director, studio, collection, certificate, decade / year, rating, runtime, has a .nfo or not; see LOCAL_METADATA.md), poster grids, Refresh (rescan), movie and show / season / episode pages, Favorite button
 - Player: libmpv engine, audio + subtitle pick, buffering, auto-hiding controls, records progress for Resume Watching
 - Resume Watching, Favorites (long-press a poster to remove)
 - Music: Albums / Artists / Songs, search, album and artist pages, queue, shuffle / repeat, mini player, full-screen player
@@ -50,6 +50,7 @@ Resume progress, favorites and the dashboard layout are stored on the device wit
 - `flutter_ui/lib/src/mpv.dart` - Dart side of the player channels (one shared player for video and music)
 - `flutter_ui/lib/src/shell.dart` - swipe pages, bottom bar, More page, TV sidebar
 - `flutter_ui/lib/src/store.dart` - on-device progress, favorites, dashboard layout
+- `flutter_ui/lib/src/library.dart` - the Movies / TV Shows tabs; `library_sort.dart` - `LibraryFilters` (watched state, sort, genre, actor, search text and the extra filters; the server answers them through `/api/library/search`) and the filter bar; `library_search.dart` - the search box, its drop-down and the "More filters" panel (`/api/library/suggest`); `library_pages.dart` - the Search page under More
 - `flutter_ui/lib/src/{dashboard,music,music_controller,pages,common}.dart` - the screens above
 - `flutter_ui/lib/src/greeting.dart` - the dashboard greeting
 - `flutter_ui/lib/src/{account_pages,plan_ui,link_login}.dart` - Settings > Account: sign in, Free / Paid badge, how to get PEK Cloud

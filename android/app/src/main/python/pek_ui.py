@@ -159,7 +159,7 @@ def text_input(label, value="", on_change=None, placeholder="", secret=False, on
     A box with no label is a search bar, and a search bar can show suggestions while the person types:
       on_type(text)   runs a moment after the typing pauses (about 0.3 s), so the plugin can look up suggestions
                       (ui.background) and keep them in its state;
-      suggestions=    [ui.suggestion(title, sub, image, on), ...] (the first 8 are shown) drawn as a drop-down list under the
+      suggestions=    [ui.suggestion(title, sub, image, on), ...] (up to 8 are sent, the first 6 are drawn) drawn as a drop-down list under the
                       box. The D-pad can walk into it with Down, and OK opens the highlighted one.
     A plugin that also runs on an older PEK TV catches the TypeError of an unknown argument and draws a plain box."""
     k = _s(key, 80) or (_s(label, 60) + "|" + _s(placeholder, 60))

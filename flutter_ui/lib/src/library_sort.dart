@@ -18,14 +18,52 @@ enum LibrarySort {
   titleAz('Title A\u2013Z'),
   titleZa('Title Z\u2013A'),
   yearNew('Year: newest first'),
-  yearOld('Year: oldest first');
+  yearOld('Year: oldest first'),
+  // These four are put in order by the server's library database (the .nfo details), not on the device.
+  ratingHigh('Rating: highest first'),
+  recentlyAdded('Recently added'),
+  runtimeLong('Runtime: longest first'),
+  runtimeShort('Runtime: shortest first');
 
   const LibrarySort(this.label);
   final String label;
 
-  static const movies = [standard, random, titleAz, titleZa, yearNew, yearOld];
-  static const shows = [standard, random, titleAz, titleZa];
+  /// The server's name for the order ('' = worked out on the device).
+  String get server => switch (this) {
+        LibrarySort.ratingHigh => 'rating',
+        LibrarySort.recentlyAdded => 'added',
+        LibrarySort.runtimeLong => 'runtime',
+        LibrarySort.runtimeShort => 'runtime_asc',
+        _ => '',
+      };
+
+  static const movies = [standard, random, titleAz, titleZa, yearNew, yearOld, ratingHigh, recentlyAdded, runtimeLong, runtimeShort];
+  static const shows = [standard, random, titleAz, titleZa, ratingHigh, recentlyAdded];
   static const history = [standard, oldestFirst, random, titleAz, titleZa];
+}
+
+/// How long a title runs (the .nfo's runtime). Titles whose .nfo has no runtime are in none of the bands.
+enum RuntimeBand {
+  any('Any length', 0, 0),
+  short('Under 90 min', 0, 89),
+  medium('90 min to 2 hours', 90, 120),
+  long('Over 2 hours', 121, 0);
+
+  const RuntimeBand(this.label, this.min, this.max);
+  final String label;
+  final int min; // minutes, 0 = no lower limit
+  final int max; // minutes, 0 = no upper limit
+}
+
+/// Which titles to read from: all, only those with a .nfo (the details are the .nfo's own), or only those without one.
+enum NfoFilter {
+  any('Any', ''),
+  hasNfo('Has a .nfo', 'with'),
+  noNfo('No .nfo', 'without');
+
+  const NfoFilter(this.label, this.server);
+  final String label;
+  final String server;
 }
 
 /// "The Matrix" sorts under M, like a shelf does.
@@ -37,6 +75,10 @@ String sortKey(String title) => title.toLowerCase().trim().replaceFirst(RegExp(r
 List<T> sortedBy<T>(List<T> items, LibrarySort sort, int seed, {required String Function(T) title, int Function(T)? year}) {
   switch (sort) {
     case LibrarySort.standard:
+    case LibrarySort.ratingHigh: // the server's order, applied by the page (LibraryFilters.rankOf...)
+    case LibrarySort.recentlyAdded:
+    case LibrarySort.runtimeLong:
+    case LibrarySort.runtimeShort:
       return items;
     case LibrarySort.oldestFirst:
       return items.reversed.toList();
@@ -87,6 +129,18 @@ class LibraryFilters extends ChangeNotifier {
   LibrarySort sort = LibrarySort.standard;
   String genre = '';
   String actor = '';
+  // The rest of the library search (Movies / TV Shows tabs). All of them read what the title's .nfo says.
+  String query = ''; // free text: a title, actor, director, genre, studio, collection or year (every word has to match)
+  String director = '';
+  String studio = '';
+  String collection = '';
+  String mpaa = '';
+  int decade = 0;
+  int year = 0; // one exact year (wins over the decade)
+  double minRating = 0; // 0 = any
+  RuntimeBand runtime = RuntimeBand.any;
+  NfoFilter nfo = NfoFilter.any;
+  int clearEpoch = 0; // bumped by clear(), so a search box knows to empty itself
   int seed = math.Random().nextInt(1 << 30);
 
   Facets? facets;
@@ -99,15 +153,43 @@ class LibraryFilters extends ChangeNotifier {
   bool failed = false;
 
   ({Set<String> movies, Set<String> shows})? _match; // null = no genre / actor chosen
+  Map<String, int>? _rankMovies; // the server's own order (movie id -> place), for the orders it makes
+  Map<String, int>? _rankShows; // (show title, lower case -> place)
   int _ticket = 0;
+
+  /// The list should wait for the server's answer: nothing to show yet. (While one answer is replaced by a newer one, typing
+  /// for example, the last answer stays on screen, so the grid does not blink.)
+  bool get blocking => pending && _match == null && query.trim().isEmpty;
+
+  /// True when the server's order is known and should be used ([sort] is one of its orders).
+  bool get ordered => sort.server.isNotEmpty && _rankMovies != null;
+
+  int rankOfMovie(Movie m) => _rankMovies?[m.id] ?? (1 << 30);
+
+  int rankOfShow(Show s) => _rankShows?[s.title.toLowerCase().trim()] ?? (1 << 30);
 
   List<Movie> _library = const []; // Watch History: lets a history entry (title + year) be matched to a library movie id
   Set<String>? _movieKeys;
 
-  /// Anything other than "all, default order, any genre, any actor".
-  bool get active => watch != WatchFilter.all || sort != LibrarySort.standard || genre.isNotEmpty || actor.isNotEmpty;
+  /// How many of the extra filters (everything but watched state, sort, genre, actor and the typed text) are on.
+  int get moreCount =>
+      (director.isNotEmpty ? 1 : 0) +
+      (studio.isNotEmpty ? 1 : 0) +
+      (collection.isNotEmpty ? 1 : 0) +
+      (mpaa.isNotEmpty ? 1 : 0) +
+      (decade > 0 || year > 0 ? 1 : 0) +
+      (minRating > 0 ? 1 : 0) +
+      (runtime != RuntimeBand.any ? 1 : 0) +
+      (nfo != NfoFilter.any ? 1 : 0);
 
-  bool get _byDetails => genre.isNotEmpty || actor.isNotEmpty;
+  /// Anything other than "all, default order, nothing typed, no filter".
+  bool get active => watch != WatchFilter.all || sort != LibrarySort.standard || genre.isNotEmpty || actor.isNotEmpty || query.trim().isNotEmpty || moreCount > 0;
+
+  /// True when the server's library database has to answer (a typed search, a filter or one of its orders).
+  bool get _byDetails => genre.isNotEmpty || actor.isNotEmpty || query.trim().isNotEmpty || moreCount > 0 || sort.server.isNotEmpty;
+
+  /// Every filter except the typed text, as one string: the search box's drop-down is only reused while this is the same.
+  String get scope => '$genre|$actor|$director|$studio|$collection|$mpaa|$decade|$year|$minRating|${runtime.index}|${nfo.index}';
 
   /// Reads the genre and actor lists once.
   Future<void> loadFacets() async {
@@ -128,8 +210,13 @@ class LibraryFilters extends ChangeNotifier {
 
   void setSort(LibrarySort s) {
     if (s == sort) return;
+    final before = sort.server;
     sort = s;
     if (s == LibrarySort.random) seed = math.Random().nextInt(1 << 30); // choosing Random is a fresh shuffle
+    if (s.server != before) {
+      _refresh(); // one of the server's orders (or back to the device's): ask again
+      return;
+    }
     notifyListeners();
   }
 
@@ -150,12 +237,87 @@ class LibraryFilters extends ChangeNotifier {
     _refresh();
   }
 
-  /// Everything back to "all, default order, any genre, any actor".
+  void setQuery(String v) {
+    v = v.trim();
+    if (v == query) return;
+    query = v;
+    _refresh();
+  }
+
+  void setDirector(String v) {
+    if (v == director) return;
+    director = v;
+    _refresh();
+  }
+
+  void setStudio(String v) {
+    if (v == studio) return;
+    studio = v;
+    _refresh();
+  }
+
+  void setCollection(String v) {
+    if (v == collection) return;
+    collection = v;
+    _refresh();
+  }
+
+  void setMpaa(String v) {
+    if (v == mpaa) return;
+    mpaa = v;
+    _refresh();
+  }
+
+  /// A decade and one exact year replace each other.
+  void setDecade(int v) {
+    if (v == decade && year == 0) return;
+    decade = v;
+    year = 0;
+    _refresh();
+  }
+
+  void setYear(int v) {
+    if (v == year && decade == 0) return;
+    year = v;
+    decade = 0;
+    _refresh();
+  }
+
+  void setMinRating(double v) {
+    if (v == minRating) return;
+    minRating = v;
+    _refresh();
+  }
+
+  void setRuntime(RuntimeBand v) {
+    if (v == runtime) return;
+    runtime = v;
+    _refresh();
+  }
+
+  void setNfo(NfoFilter v) {
+    if (v == nfo) return;
+    nfo = v;
+    _refresh();
+  }
+
+  /// Everything back to "all, default order, nothing typed, any genre, any actor, no extra filter".
   void clear() {
     watch = WatchFilter.all;
     sort = LibrarySort.standard;
     genre = '';
     actor = '';
+    query = '';
+    director = '';
+    studio = '';
+    collection = '';
+    mpaa = '';
+    decade = 0;
+    year = 0;
+    minRating = 0;
+    runtime = RuntimeBand.any;
+    nfo = NfoFilter.any;
+    clearEpoch++;
     _refresh();
   }
 
@@ -172,21 +334,46 @@ class LibraryFilters extends ChangeNotifier {
     failed = false;
     if (!_byDetails) {
       _match = null;
+      _rankMovies = null;
+      _rankShows = null;
       pending = false;
       notifyListeners();
       return;
     }
     pending = true;
-    notifyListeners();
+    // With an answer already on screen (typing a longer search, say) the page stays as it is until the newer answer arrives.
+    if (_match == null) notifyListeners();
     // 5000 is the most the server gives; a genre or an actor is never near that.
-    final r = await Api.librarySearch('', genre: genre, actor: actor, limit: 5000, only: only);
+    final r = await Api.librarySearch(
+      query.trim(),
+      genre: genre,
+      actor: actor,
+      director: director,
+      studio: studio,
+      collection: collection,
+      mpaa: mpaa,
+      decade: decade,
+      year: year,
+      minRating: minRating,
+      minRuntime: runtime.min,
+      maxRuntime: runtime.max,
+      nfo: nfo.server,
+      sort: sort.server,
+      limit: 5000,
+      only: only,
+    );
     if (ticket != _ticket) return; // a newer pick replaced this one
     pending = false;
+    _movieKeys = null; // worked out again from this answer
     if (r == null) {
       failed = true;
       _match = (movies: <String>{}, shows: <String>{});
+      _rankMovies = null;
+      _rankShows = null;
     } else {
       _match = (movies: r.movies.toSet(), shows: {for (final t in r.shows) t.toLowerCase().trim()});
+      _rankMovies = {for (var i = 0; i < r.movies.length; i++) r.movies[i]: i};
+      _rankShows = {for (var i = 0; i < r.shows.length; i++) r.shows[i].toLowerCase().trim(): i};
     }
     notifyListeners();
   }

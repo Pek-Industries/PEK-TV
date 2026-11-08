@@ -1652,12 +1652,11 @@ void MediaScanner::indexMetadata() {
     std::cout << "[MediaScanner] Details read." << std::endl;
 }
 
-std::string MediaScanner::searchJson(const SearchQuery& sq) {
+MediaScanner::SearchSql MediaScanner::buildSearchSql(const SearchQuery& sq) {
+    SearchSql s;
     const bool shows = sq.type == "shows";
-    const std::string field = shows ? "shows" : "movies";
-    if (!db_) return "{\"total\":0,\"" + field + "\":[]}";
-
-    std::string from = shows
+    s.shows = shows;
+    s.from = shows
         ? " FROM (SELECT norm, MIN(show_title) AS name, MAX(mtime) AS added FROM media WHERE kind=1 GROUP BY norm) m"
           " LEFT JOIN title_meta t ON t.key = 's:' || m.norm WHERE 1=1"
         : " FROM media m LEFT JOIN title_meta t ON t.key = 'm:' || m.id WHERE m.kind=0";
@@ -1672,14 +1671,16 @@ std::string MediaScanner::searchJson(const SearchQuery& sq) {
                 if (safe) hidden += (hidden.empty() ? "'" : ",'") + e.id + "'";
             }
         }
-        if (!hidden.empty()) from += " AND m.id NOT IN (" + hidden + ")";
+        if (!hidden.empty()) s.from += " AND m.id NOT IN (" + hidden + ")";
     }
-    const std::string key = shows ? "('s:' || m.norm)" : "('m:' || m.id)";
-    const std::string year = shows ? "COALESCE(t.year,0)" : "m.year";
+    s.key = shows ? "('s:' || m.norm)" : "('m:' || m.id)";
+    s.year = shows ? "COALESCE(t.year,0)" : "m.year";
     const std::string added = shows ? "m.added" : "m.mtime";
+    const std::string& key = s.key;
+    const std::string& year = s.year;
 
-    std::string where;
-    std::vector<std::string> binds;
+    std::string& where = s.where;
+    std::vector<std::string>& binds = s.binds;
     auto like = [](const std::string& w) { return "%" + pekdb::likeEscape(w) + "%"; };
     for (const auto& w : pekdb::words(pekdb::fold(sq.q))) {
         where += " AND (m.norm LIKE ? ESCAPE '\\' OR CAST(" + year + " AS TEXT) = ?"
@@ -1702,32 +1703,125 @@ std::string MediaScanner::searchJson(const SearchQuery& sq) {
     person(sq.director, 1);
     if (!sq.studio.empty()) { where += " AND t.studio_norm LIKE ? ESCAPE '\\'"; binds.push_back(like(pekdb::fold(sq.studio))); }
     if (!sq.collection.empty()) { where += " AND t.collection_norm = ?"; binds.push_back(pekdb::fold(sq.collection)); }
-    if (sq.year > 0) { where += " AND " + year + " = ?"; binds.push_back(std::to_string(sq.year)); }
-    if (sq.decade > 0) { where += " AND " + year + " BETWEEN ? AND ?"; binds.push_back(std::to_string(sq.decade)); binds.push_back(std::to_string(sq.decade + 9)); }
+    // CAST(? AS INTEGER): a bound text value next to an expression (a show's year is COALESCE(...)) would otherwise be compared as text.
+    if (sq.year > 0) { where += " AND " + year + " = CAST(? AS INTEGER)"; binds.push_back(std::to_string(sq.year)); }
+    if (sq.decade > 0) { where += " AND " + year + " BETWEEN CAST(? AS INTEGER) AND CAST(? AS INTEGER)"; binds.push_back(std::to_string(sq.decade)); binds.push_back(std::to_string(sq.decade + 9)); }
+    if (!sq.mpaa.empty()) { where += " AND t.mpaa = ? COLLATE NOCASE"; binds.push_back(sq.mpaa.substr(0, 24)); }
+    if (sq.min_rating > 0) { where += " AND COALESCE(t.rating,0) >= CAST(? AS REAL)"; binds.push_back(std::to_string(sq.min_rating)); }
+    if (sq.min_runtime > 0) { where += " AND COALESCE(t.runtime,0) >= CAST(? AS INTEGER)"; binds.push_back(std::to_string(sq.min_runtime)); }
+    if (sq.max_runtime > 0) { where += " AND COALESCE(t.runtime,0) > 0 AND COALESCE(t.runtime,0) <= CAST(? AS INTEGER)"; binds.push_back(std::to_string(sq.max_runtime)); }
+    if (sq.nfo == 1) where += " AND COALESCE(t.has_nfo,0) = 1";
+    else if (sq.nfo == 2) where += " AND COALESCE(t.has_nfo,0) = 0";
 
-    std::string order = " ORDER BY m.norm";
-    if (sq.sort == "year") order = " ORDER BY " + year + " DESC, m.norm";
-    else if (sq.sort == "added") order = " ORDER BY " + added + " DESC, m.norm";
-    else if (sq.sort == "rating") order = " ORDER BY COALESCE(t.rating,0) DESC, m.norm";
+    s.order = " ORDER BY m.norm";
+    if (sq.sort == "title_desc") s.order = " ORDER BY m.norm DESC";
+    else if (sq.sort == "year") s.order = " ORDER BY " + year + " DESC, m.norm";
+    else if (sq.sort == "year_asc") s.order = " ORDER BY CASE WHEN " + year + " > 0 THEN 0 ELSE 1 END, " + year + ", m.norm";
+    else if (sq.sort == "added") s.order = " ORDER BY " + added + " DESC, m.norm";
+    else if (sq.sort == "rating") s.order = " ORDER BY COALESCE(t.rating,0) DESC, m.norm";
+    else if (sq.sort == "runtime") s.order = " ORDER BY COALESCE(t.runtime,0) DESC, m.norm";
+    else if (sq.sort == "runtime_asc") s.order = " ORDER BY CASE WHEN COALESCE(t.runtime,0) > 0 THEN 0 ELSE 1 END, COALESCE(t.runtime,0), m.norm";
+    return s;
+}
 
-    auto bindAll = [&](pekdb::Stmt& st) { for (size_t i = 0; i < binds.size(); ++i) st.text(static_cast<int>(i + 1), binds[i]); };
+std::string MediaScanner::searchJson(const SearchQuery& sq) {
+    const bool shows = sq.type == "shows";
+    const std::string field = shows ? "shows" : "movies";
+    if (!db_) return "{\"total\":0,\"" + field + "\":[]}";
+
+    const SearchSql s = buildSearchSql(sq);
+    auto bindAll = [&](pekdb::Stmt& st) { for (size_t i = 0; i < s.binds.size(); ++i) st.text(static_cast<int>(i + 1), s.binds[i]); };
 
     long long total = 0;
     {
-        pekdb::Stmt c(*db_, "SELECT count(*)" + from + where);
+        pekdb::Stmt c(*db_, "SELECT count(*)" + s.from + s.where);
         bindAll(c);
         if (c.step()) total = c.num(0);
     }
     const int limit = std::max(1, std::min(sq.limit, 5000));
-    pekdb::Stmt st(*db_, std::string("SELECT ") + (shows ? "m.name" : "m.id") + from + where + order + " LIMIT ? OFFSET ?");
+    pekdb::Stmt st(*db_, std::string("SELECT ") + (shows ? "m.name" : "m.id") + s.from + s.where + s.order + " LIMIT ? OFFSET ?");
     bindAll(st);
-    st.i64(static_cast<int>(binds.size() + 1), limit).i64(static_cast<int>(binds.size() + 2), std::max(0, sq.offset));
+    st.i64(static_cast<int>(s.binds.size() + 1), limit).i64(static_cast<int>(s.binds.size() + 2), std::max(0, sq.offset));
     std::string items;
     while (st.step()) {
         if (!items.empty()) items += ",";
         items += "\"" + jsonEsc(st.str(0)) + "\"";
     }
     return "{\"total\":" + std::to_string(total) + ",\"" + field + "\":[" + items + "]}";
+}
+
+std::string MediaScanner::suggestJson(const SearchQuery& base, const std::string& type, int limit) {
+    limit = std::max(1, std::min(limit, 20));
+    std::string out = "{\"items\":[";
+    if (!db_) return out + "]}";
+    const std::vector<std::string> words = pekdb::words(pekdb::fold(base.q));
+    auto like = [](const std::string& w) { return "%" + pekdb::likeEscape(w) + "%"; };
+    auto col = [&](const std::string& sql, const std::string& key) {
+        std::vector<std::string> v;
+        pekdb::Stmt q(*db_, sql);
+        q.text(1, key);
+        while (q.step()) v.push_back(q.str(0));
+        return v;
+    };
+    auto arr = [](const std::vector<std::string>& v) {
+        std::string a = "[";
+        for (size_t i = 0; i < v.size(); ++i) a += (i ? ",\"" : "\"") + jsonEsc(v[i]) + "\"";
+        return a + "]";
+    };
+    bool first = true;
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool shows = pass == 1;
+        if ((type == "movies" && shows) || (type == "shows" && !shows)) continue;
+        SearchQuery sq = base;
+        sq.type = shows ? "shows" : "movies";
+        const SearchSql s = buildSearchSql(sq);
+        struct Row { std::string key, id, name, mpaa, studio; long long year = 0, runtime = 0, nfo = 0; double rating = 0; };
+        std::vector<Row> rows;
+        {
+            // The title is the .nfo's own when the title has one (that is what "has_nfo" says), else the name found from the file.
+            pekdb::Stmt st(*db_, "SELECT " + s.key + ", " + (shows ? "m.name" : "m.id") + ", CASE WHEN COALESCE(t.has_nfo,0) = 1 AND t.name <> '' THEN t.name ELSE " +
+                                     (shows ? "m.name" : "m.title") + " END, " + s.year + ", COALESCE(t.rating,0), COALESCE(t.runtime,0), COALESCE(t.mpaa,''), COALESCE(t.studio,''), COALESCE(t.has_nfo,0)" +
+                                     s.from + s.where + s.order + " LIMIT ?");
+            for (size_t i = 0; i < s.binds.size(); ++i) st.text(static_cast<int>(i + 1), s.binds[i]);
+            st.i64(static_cast<int>(s.binds.size() + 1), limit);
+            while (st.step()) {
+                Row r;
+                r.key = st.str(0); r.id = st.str(1); r.name = st.str(2); r.year = st.num(3); r.rating = st.dbl(4);
+                r.runtime = st.num(5); r.mpaa = st.str(6); r.studio = st.str(7); r.nfo = st.num(8);
+                rows.push_back(std::move(r));
+            }
+        }
+        for (const Row& r : rows) {
+            const std::vector<std::string> genres = col("SELECT genre FROM title_genre WHERE key=? ORDER BY genre LIMIT 4", r.key);
+            const std::vector<std::string> cast = col("SELECT name FROM title_person WHERE key=? AND kind=0 ORDER BY ord LIMIT 6", r.key);
+            const std::vector<std::string> dirs = col("SELECT name FROM title_person WHERE key=? AND kind=1 ORDER BY ord LIMIT 2", r.key);
+            // Why did this title come up? Only worth saying when the name itself does not hold what was typed.
+            std::string match;
+            const std::string fn = pekdb::fold(r.name);
+            bool inName = true;
+            for (const auto& w : words) if (fn.find(w) == std::string::npos) { inName = false; break; }
+            if (!inName) {
+                for (const auto& w : words) {
+                    pekdb::Stmt q(*db_, "SELECT kind, name FROM title_person WHERE key=? AND norm LIKE ? ESCAPE '\\' ORDER BY kind, ord LIMIT 1");
+                    q.text(1, r.key).text(2, like(w));
+                    if (q.step()) { match = std::string(q.num(0) == 1 ? "Director: " : "Cast: ") + q.str(1); break; }
+                    pekdb::Stmt g(*db_, "SELECT genre FROM title_genre WHERE key=? AND genre LIKE ? ESCAPE '\\' LIMIT 1");
+                    g.text(1, r.key).text(2, like(w));
+                    if (g.step()) { match = "Genre: " + g.str(0); break; }
+                    if (!r.studio.empty() && pekdb::fold(r.studio).find(w) != std::string::npos) { match = "Studio: " + r.studio; break; }
+                }
+            }
+            if (!first) out += ",";
+            first = false;
+            char rate[32];
+            std::snprintf(rate, sizeof(rate), "%.1f", r.rating);
+            out += std::string("{\"kind\":\"") + (shows ? "show" : "movie") + "\",\"id\":\"" + jsonEsc(r.id) + "\",\"title\":\"" + jsonEsc(r.name) +
+                   "\",\"year\":" + std::to_string(r.year) + ",\"rating\":" + rate + ",\"runtime\":" + std::to_string(r.runtime) +
+                   ",\"mpaa\":\"" + jsonEsc(r.mpaa) + "\",\"studio\":\"" + jsonEsc(r.studio) + "\",\"nfo\":" + (r.nfo ? "true" : "false") +
+                   ",\"genres\":" + arr(genres) + ",\"cast\":" + arr(cast) + ",\"directors\":" + arr(dirs) + ",\"match\":\"" + jsonEsc(match) + "\"}";
+        }
+    }
+    return out + "]}";
 }
 
 std::string MediaScanner::facetsJson(const std::string& type, const std::string& actorPrefix, int limit) {
@@ -1761,6 +1855,10 @@ std::string MediaScanner::facetsJson(const std::string& type, const std::string&
          {prefix, "%" + fp + "%"}, false);
     list("directors", "SELECT MIN(name), count(*) c FROM title_person WHERE kind=1 AND key LIKE ? AND norm LIKE ? ESCAPE '\\' GROUP BY norm ORDER BY c DESC, norm" + lim,
          {prefix, "%" + fp + "%"}, false);   // the same name-part box narrows the director list too
+    list("studios", "SELECT MIN(studio), count(*) c FROM title_meta WHERE key LIKE ? AND studio <> '' GROUP BY studio_norm ORDER BY c DESC, studio_norm" + lim, {prefix}, false);
+    list("collections", "SELECT MIN(collection), count(*) c FROM title_meta WHERE key LIKE ? AND collection <> '' GROUP BY collection_norm ORDER BY c DESC, collection_norm" + lim, {prefix}, false);
+    list("mpaa", "SELECT MIN(mpaa), count(*) c FROM title_meta WHERE key LIKE ? AND mpaa <> '' GROUP BY mpaa COLLATE NOCASE ORDER BY c DESC, mpaa" + lim, {prefix}, false);
+    list("nfo", "SELECT CASE has_nfo WHEN 1 THEN 'with' ELSE 'without' END, count(*) FROM title_meta WHERE key LIKE ? GROUP BY has_nfo", {prefix}, false);   // how many titles have a .nfo
     return out + "}";
 }
 
