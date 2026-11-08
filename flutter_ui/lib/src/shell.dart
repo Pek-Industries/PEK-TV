@@ -12,6 +12,7 @@ import 'backup_reminder.dart';
 import 'lapse_notice.dart';
 import 'api.dart' show Api, PluginInfo;
 import 'cloud.dart';
+import 'cloud_usage.dart';
 import 'common.dart';
 import 'dashboard.dart';
 import 'library.dart';
@@ -342,7 +343,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _askExit();
         }
       },
-      child: Material(color: p.tokens.bg, child: LapseBanner.wrap(child: p.sidebar ? _tv(context) : _phone(context))),
+      child: Material(color: p.tokens.bg, child: BackupLimitBanner.wrap(child: LapseBanner.wrap(child: p.sidebar ? _tv(context) : _phone(context)))),
     );
   }
 

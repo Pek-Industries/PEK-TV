@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import 'api.dart';
 import 'cloud.dart';
+import 'cloud_usage.dart';
 import 'plugin_store.dart';
 import 'store.dart';
 
@@ -246,6 +247,7 @@ class PluginBackup {
       final plugins = (state['plugins'] as Map?)?.cast<String, dynamic>();
       if (plugins != null && plugins.remove(id) != null) await Store.setJsonMap(_kSeen, {...state, 'plugins': plugins}, scoped: false);
       await _drop(id);
+      unawaited(CloudUsage.refresh(force: true)); // a place was freed
       return '';
     } catch (_) {
       return 'offline';
@@ -301,6 +303,24 @@ class PluginBackup {
     }
     final all = <String>{...ids, ...cloud.keys.where(validId)};
 
+    // The account's allowance as the cloud reports it (30 plugins / 60 MB, shared by every profile). Checked BEFORE a plugin is read and
+    // uploaded, so a full account does not upload pieces every few minutes just to be refused. An older cloud sends no numbers: nothing is checked here.
+    var quotaHit = false;
+    var usedCount = -1, usedBytes = 0, maxCount = 30, maxBytes = 60 * 1024 * 1024;
+    final us = list.body['usage'];
+    if (us is Map) {
+      usedCount = _int(us['count']);
+      usedBytes = _int(us['bytes']);
+      if (_int(us['max']) > 0) maxCount = _int(us['max']);
+      if (_int(us['maxBytes']) > 0) maxBytes = _int(us['maxBytes']);
+    }
+    bool room(int raw, int old, bool isNew) => usedCount < 0 || ((!isNew || usedCount < maxCount) && usedBytes - old + raw <= maxBytes);
+    void took(int raw, int old, bool isNew) {
+      if (usedCount < 0) return;
+      if (isNew) usedCount++;
+      usedBytes += raw - old;
+    }
+
     BackupOffer offer(String id, Map<String, dynamic> c, String kind) =>
         BackupOffer(id: id, name: '${c['name'] ?? ''}'.isEmpty ? id : '${c['name']}', version: '${c['version'] ?? ''}', kind: kind, updated: _int(c['updated']), size: _int(c['size']));
 
@@ -321,10 +341,16 @@ class PluginBackup {
         if (listing == null) continue; // nothing readable: leave it alone
         final sameSizes = seen != null && seen['sig'] == listing.sig && !force;
 
+        final rawNow = listing.files.fold<int>(0, (a, f) => a + f.size);
         if (!live) {
           if (c != null && sameSizes) continue; // removed elsewhere, unchanged here: stay local-only
+          if (!room(rawNow, 0, true)) {
+            quotaHit = true;
+            continue;
+          }
           final p = await _pack(id, listing);
           final u = await _upload(id, p);
+          took(p.raw, 0, true);
           uploaded++;
           seenMap[id] = {'sig': listing.sig, 'fp': p.fp, 'u': u};
           continue;
@@ -345,7 +371,12 @@ class PluginBackup {
         final cloudChanged = seen == null || seen['fp'] != c['fp'];
         if (localChanged && !cloudChanged) {
           p ??= await _pack(id, listing);
+          if (!room(p.raw, _int(c['size']), false)) {
+            quotaHit = true;
+            continue;
+          }
           final u = await _upload(id, p);
+          took(p.raw, _int(c['size']), false);
           uploaded++;
           seenMap[id] = {'sig': listing.sig, 'fp': p.fp, 'u': u};
           continue;
@@ -354,12 +385,14 @@ class PluginBackup {
         seenMap[id] = {'sig': listing.sig, 'fp': localFp, 'u': seen?['u'] ?? 0};
       } on _Fail catch (e) {
         // One plugin failing must not stop the others. A signed-out session or no network stops everything.
+        if (e.code == 'plugin_quota') quotaHit = true; // the allowance is used up: smaller ones may still fit
         if (e.code == 'session_expired' || e.code == 'account_deleted' || e.code == 'offline' || e.code == 'rate_limited') failed = e.code;
       } catch (_) {/* this plugin only */}
     }
 
     await Store.setJsonMap(_kSeen, {'email': email, 'plugins': seenMap}, scoped: false);
     await _saveOffers(pending);
+    CloudUsage.notePluginRun(quotaHit: quotaHit);
     lastRun.value = DateTime.now().millisecondsSinceEpoch;
     if (failed != null) return BackupRun(ok: false, error: failed, uploaded: uploaded, offers: pending);
     return BackupRun(ok: true, uploaded: uploaded, offers: pending);
@@ -408,12 +441,13 @@ class PluginBackup {
     final plugins = (state['plugins'] as Map?)?.cast<String, dynamic>();
     if (plugins != null && plugins.remove(id) != null) await Store.setJsonMap(_kSeen, {...state, 'plugins': plugins}, scoped: false);
     await _drop(id);
+    unawaited(CloudUsage.refresh(force: true));
   }
 
   static String errorText(String code) {
     switch (code) {
       case 'plugin_quota':
-        return 'Your cloud plugin storage is full (30 plugins or 60 MB). Remove a plugin to make room.';
+        return 'Your cloud plugin storage is full (30 plugins or 60 MB), so backup of plugins has stopped. Delete a plugin backup to make room.';
       case 'local':
         return 'PEK TV could not read the plugins on this device.';
       case 'not_linked':

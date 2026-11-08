@@ -16,6 +16,7 @@ import 'store.dart';
 import 'layouts.dart' show Layouts;
 import 'recs.dart' show Recs;
 import 'ratings.dart' show RatingEntry;
+import 'cloud_usage.dart';
 import 'skins.dart' show Skins;
 import 'weather.dart' show Weather;
 
@@ -556,6 +557,7 @@ class Cloud {
       final pushed = all.history.length + all.progress.length + all.favorites.length + all.settings.length + all.skins.length + all.ratings.length;
       var anyChange = false;
       CloudResult? fail;
+      final rejectedSkins = <String>{}; // skins the cloud left out because this profile already has 100 there (they are sent again next time)
       for (var n = 1; n <= _maxRounds; n++) {
         final chunk = all.take(_chunk);
         final cursor = int.tryParse(Store.strGet('pek_sync_cursor') ?? '') ?? 0;
@@ -575,7 +577,9 @@ class Cloud {
           fail = const CloudResult(ok: false, error: 'cloud_outdated');
           break;
         }
-        _markPushed(chunk, settingsStored: r.body['settings'] is List, skinsStored: r.body['skins'] is List, ratingsStored: r.body['ratings'] is List); // an older cloud ignores settings, skins and ratings: keep them for later
+        final rej = r.body['skinsRejected'];
+        if (rej is List) rejectedSkins.addAll(rej.map((k) => '$k'));
+        _markPushed(chunk, settingsStored: r.body['settings'] is List, skinsStored: r.body['skins'] is List, ratingsStored: r.body['ratings'] is List, rejectedSkins: rejectedSkins); // an older cloud ignores settings, skins and ratings: keep them for later
         if (await _applyRemote(r.body)) anyChange = true;
         final arch = await _applyArchives(r.body);
         if (arch.changed) anyChange = true;
@@ -586,6 +590,7 @@ class Cloud {
         break;
       }
       if (fail == null) {
+        CloudUsage.noteSync(rejectedSkins.toList()); // the "skin backup has stopped" banner follows this
         if (!light) await _archiveLocal(); // history the cloud has and nobody touched for a while moves to cold files
         return CloudResult(ok: true, pushed: pushed, changed: anyChange);
       }
@@ -956,7 +961,7 @@ class Cloud {
     return meta;
   }
 
-  static void _markPushed(_Chunk chunk, {bool settingsStored = false, bool skinsStored = false, bool ratingsStored = false}) {
+  static void _markPushed(_Chunk chunk, {bool settingsStored = false, bool skinsStored = false, bool ratingsStored = false, Set<String> rejectedSkins = const {}}) {
     final seen = _seen();
     final sh = seen['h'] as Map<String, dynamic>;
     final sp = seen['p'] as Map<String, dynamic>;
@@ -981,6 +986,7 @@ class Cloud {
     if (skinsStored) {
       final sk = seen['k'] is Map ? Map<String, dynamic>.from(seen['k'] as Map) : <String, dynamic>{};
       for (final it in chunk.skins) {
+        if (rejectedSkins.contains('${it['key']}')) continue; // not stored: stays "changed" so it goes up once there is room
         sk['${it['key']}'] = it['updated'];
       }
       seen['k'] = sk;

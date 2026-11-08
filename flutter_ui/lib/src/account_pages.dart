@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'cloud.dart';
+import 'cloud_usage.dart';
 import 'common.dart';
 import 'fields.dart';
 import 'link_login.dart';
@@ -237,6 +238,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
             ]),
             SizedBox(height: 0.5 * rem),
             Text(Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'History and resume points stay on this device. PEK Cloud backs them up, syncs your devices and adds up to 5 profiles.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
+            if (Cloud.entitled) const CloudUsageCard(),
             if (Cloud.entitled) const PluginBackupSettings(),
           ],
         );

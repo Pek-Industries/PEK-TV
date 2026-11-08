@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'cloud.dart';
+import 'cloud_usage.dart';
 import 'common.dart';
 import 'plugin_backup.dart';
 import 'plugin_pins.dart';
@@ -45,6 +46,12 @@ class _Data {
 class _BackupsSectionState extends State<BackupsSection> {
   late Future<_Data> _data = _load();
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(CloudUsage.refresh(force: true));
+  }
 
   Future<_Data> _load() async {
     List<PluginInfo> local;
@@ -125,6 +132,7 @@ class _BackupsSectionState extends State<BackupsSection> {
     if (!mounted) return;
     setState(() => _busy = false);
     _say(ok ? 'Removed ${r.name}' : 'Could not remove ${r.name}');
+    unawaited(CloudUsage.refresh(force: true));
     _reload();
   }
 
@@ -139,7 +147,7 @@ class _BackupsSectionState extends State<BackupsSection> {
     final cloud = Cloud.linked ? ' It is removed from your account too, and from your other devices on their next sync.' : '';
     if (!await _ask('Delete the skin \u201c${s.name}\u201d?', 'It is deleted from this profile.$cloud', 'Delete')) return;
     await Skins.deleteCustom(s.id);
-    if (Cloud.linked) unawaited(Cloud.sync(light: true)); // the delete reaches the account
+    if (Cloud.linked) unawaited(Cloud.sync(light: true).then((_) => CloudUsage.refresh(force: true))); // the delete reaches the account
     if (!mounted) return;
     _say('Deleted ${s.name}');
     setState(() {});
@@ -190,6 +198,7 @@ class _BackupsSectionState extends State<BackupsSection> {
       children: [
         Text('Plugins', style: TextStyle(fontSize: rem, fontWeight: FontWeight.w600)),
         SizedBox(height: 0.4 * rem),
+        const CloudUsageBar.plugins(),
         FutureBuilder<_Data>(
           future: _data,
           builder: (context, snap) {
@@ -222,6 +231,7 @@ class _BackupsSectionState extends State<BackupsSection> {
         SizedBox(height: 0.2 * rem),
         Text(Cloud.linked ? 'Skins are saved in your account with this profile.' : 'Sign in to save your skins in your account.', style: muted),
         SizedBox(height: 0.4 * rem),
+        const CloudUsageBar.skins(),
         if (skins.isEmpty)
           Text('No skins made or installed on this profile.', style: muted)
         else
