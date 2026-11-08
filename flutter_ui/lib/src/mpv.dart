@@ -4,6 +4,7 @@ import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'api.dart' show Api;
 
 class Chapter {
   const Chapter(this.title, this.time);
@@ -85,14 +86,14 @@ class PekPlayer {
 
   /// [dvdDevice]: for a "dvd://" or "dvd://<title>" url, the folder that holds VIDEO_TS or the .iso file to play it from.
   Future<void> load(String url, {double startSec = 0, String title = '', String? dvdDevice}) =>
-      _method.invokeMethod('load', {'url': url, 'startSec': startSec, 'title': title, 'dvdDevice': dvdDevice});
+      _method.invokeMethod('load', {'url': Api.withToken(url), 'startSec': startSec, 'title': title, 'dvdDevice': dvdDevice});
   Future<void> play() => _method.invokeMethod('play');
   Future<void> pause() => _method.invokeMethod('pause');
   Future<void> seek(double sec) => _method.invokeMethod('seek', {'sec': sec < 0 ? 0.0 : sec});
   Future<void> setAudio(int id) => _method.invokeMethod('setAudio', {'id': id});
   Future<void> setSubtitle(int id) => _method.invokeMethod('setSubtitle', {'id': id});
   /// An extra subtitle file at [url] (loaded and switched on at once).
-  Future<void> addSubtitle(String url, String label) => _method.invokeMethod('addSubtitle', {'url': url, 'label': label});
+  Future<void> addSubtitle(String url, String label) => _method.invokeMethod('addSubtitle', {'url': Api.withToken(url), 'label': label});
   Future<void> destroy() => _method.invokeMethod('destroy');
 
   /// Shrinks the picture into a rectangle (logical pixels from the top left of the screen): the live TV guide uses it to

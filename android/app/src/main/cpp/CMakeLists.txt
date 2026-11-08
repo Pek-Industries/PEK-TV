@@ -70,6 +70,23 @@ endif()
 
 target_include_directories(pek PRIVATE ${BACKEND} ${OPENSSL_ROOT}/include ${SQLITE_DIR})
 target_compile_definitions(pek PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+
+# The pinned official plugin-signing keys (backend/pek_official_keys.txt): the installer (plugin_install.h) believes an
+# "official" plugin update only when it is signed by one of them. Empty list = no update can be official.
+file(STRINGS ${BACKEND}/pek_official_keys.txt PEK_KEY_LINES REGEX "^[0-9a-fA-F][0-9a-fA-F]+")
+set(PEK_KEYS "")
+foreach(line ${PEK_KEY_LINES})
+    string(REGEX MATCH "^[0-9a-fA-F]+" k "${line}")
+    if(k MATCHES "^[0-9a-fA-F]{64}$")
+        if(PEK_KEYS STREQUAL "")
+            set(PEK_KEYS "${k}")
+        else()
+            set(PEK_KEYS "${PEK_KEYS},${k}")
+        endif()
+    endif()
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BACKEND}/pek_official_keys.txt)
+target_compile_definitions(pek PRIVATE PEK_OFFICIAL_KEYS="${PEK_KEYS}")
 target_link_libraries(pek
     pek_sqlite
     ${OPENSSL_ROOT}/lib/libssl.a

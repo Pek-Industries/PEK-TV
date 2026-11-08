@@ -908,6 +908,87 @@ def cmd_convert(a):
     return 1 if failed else 0
 
 
+
+# ----------------------------------------------------------------------------
+# Official signatures (Ed25519).  See PEK_FORMAT.md "Signing official plugins".
+# ----------------------------------------------------------------------------
+def _backend():
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.join(here, "..", "backend"))
+    import pek_ed25519, pek_guard   # the same code the app uses to check, so tool and app cannot disagree
+    return pek_ed25519, pek_guard, os.path.join(here, "..", "backend", "pek_official_keys.txt")
+
+
+def _folder_digest(g, pid, folder):
+    rows = g._plugin_files(folder)
+    if rows is None:
+        raise Reject(folder, ["the folder holds a link or something that is not a plain file"])
+    entries = []
+    for rel, full in rows:
+        with open(full, "rb") as f:
+            entries.append((rel, hashlib.sha256(f.read()).hexdigest()))
+    return g.signed_message(pid, entries)
+
+
+def _load_seed(a):
+    raw = os.environ.get(a.key_env, "") if a.key_env else ""
+    if not raw and a.key:
+        with open(a.key, "r", encoding="ascii") as f:
+            raw = f.read()
+    raw = raw.strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", raw):
+        raise Reject("signing key", ["give the private key with --key FILE or --key-env VARIABLE (64 hex characters, from 'keygen')"])
+    return bytes.fromhex(raw)
+
+
+def cmd_keygen(a):
+    ed, g, keyfile = _backend()
+    if os.path.exists(a.output) and not a.force:
+        raise Reject(a.output, ["already exists (use --force to replace it; replacing it means every signed plugin must be signed again)"])
+    seed = os.urandom(32)
+    fd = os.open(a.output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(seed.hex() + "\n")
+    pub = ed.public_key(seed).hex()
+    print(green("Private key written to %s (keep it secret, never commit it)." % a.output))
+    print("Public key (pin this one in backend/pek_official_keys.txt, one per line):\n\n  %s\n" % pub)
+    print("For CI, store the private key as the repository secret PEK_PLUGIN_SIGNING_KEY (the 64 hex characters in that file).")
+    return 0
+
+
+def cmd_sign(a):
+    ed, g, keyfile = _backend()
+    folder = os.path.normpath(a.folder)
+    if not os.path.isdir(folder):
+        raise Reject(folder, ["not a folder"])
+    pid = a.id or os.path.basename(os.path.abspath(folder))
+    if not valid_id(pid):
+        raise Reject(pid, ["not a valid plugin id"])
+    seed = _load_seed(a)
+    sigpath = os.path.join(folder, g.SIGNATURE_NAME)
+    msg = _folder_digest(g, pid, folder)
+    sig = ed.sign(seed, msg)
+    doc = {"v": 1, "alg": "ed25519", "id": pid, "key": hashlib.sha256(ed.public_key(seed)).hexdigest()[:16], "sig": sig.hex()}
+    with open(sigpath, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=1)
+        f.write("\n")
+    print(green("signed %s (%s)" % (pid, sigpath)))
+    return 0
+
+
+def cmd_verify_sig(a):
+    ed, g, keyfile = _backend()
+    bad = 0
+    for folder in a.folders:
+        folder = os.path.normpath(folder)
+        pid = os.path.basename(os.path.abspath(folder))
+        if a.pubkey:
+            g.official_keys = lambda k=bytes.fromhex(a.pubkey): [k]
+        ok = g.verify_official(pid, folder)
+        print("%s  %s" % (green("signed  ") if ok else red("NOT SIGNED"), pid))
+        bad += 0 if ok else 1
+    return 1 if bad else 0
+
 # ----------------------------------------------------------------------------
 def main(argv=None):
     ap = argparse.ArgumentParser(
@@ -975,6 +1056,21 @@ def main(argv=None):
 
     sp = add("hexmap", cmd_hexmap, "show which byte range of a .PEK holds what")
     sp.add_argument("file")
+
+
+    sp = add("keygen", cmd_keygen, "OWNER ONLY: make the Ed25519 key pair that signs official plugins")
+    sp.add_argument("-o", "--output", default="pek-plugin-signing.key", help="where to write the private key (default: %(default)s)")
+    sp.add_argument("--force", action="store_true")
+
+    sp = add("sign", cmd_sign, "OWNER ONLY: sign a plugin folder (writes PEK-SIGNATURE.json inside it; run it before 'pack')")
+    sp.add_argument("folder")
+    sp.add_argument("--id", help="plugin id (default: the folder name)")
+    sp.add_argument("--key", help="file holding the private key")
+    sp.add_argument("--key-env", help="environment variable holding the private key (for CI)")
+
+    sp = add("verify-sig", cmd_verify_sig, "check that plugin folders carry a valid official signature (exit 1 if any does not)")
+    sp.add_argument("folders", nargs="+", metavar="folder")
+    sp.add_argument("--pubkey", help="64-hex public key to check against (default: backend/pek_official_keys.txt)")
 
     a = ap.parse_args(argv)
     global OFFICIAL_MODE

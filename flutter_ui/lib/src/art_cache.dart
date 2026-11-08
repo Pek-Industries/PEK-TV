@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 
 import 'h2_fetch.dart';
 import 'recs.dart' show RecFeed;
+import 'api.dart' show Api;
 
 /// Keeps what was looked up online on the device, so posters, titles and synopses show at once after a restart and still
 /// show when the internet is gone.
@@ -362,6 +363,9 @@ class ArtCache {
         }
         live.add(req);
         req.headers.set('accept', 'image/*');
+        for (final h in Api.headersFor(url).entries) {
+          req.headers.set(h.key, h.value);
+        }
         final resp = await req.close();
         final b = BytesBuilder(copy: false);
         await for (final c in resp) {
@@ -618,6 +622,7 @@ class _ArtImageState extends State<ArtImage> {
 
   Widget _network() => Image.network(
         widget.url,
+        headers: Api.headersFor(widget.url),
         key: ValueKey('net$_gen'),
         fit: widget.fit,
         cacheWidth: widget.cacheWidth,

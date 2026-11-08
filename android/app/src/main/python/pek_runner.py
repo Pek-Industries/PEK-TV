@@ -22,9 +22,13 @@ def _run_module(module_name, folder):
 PLUGINS_DIR = ""   # read by pek_flutter (the Flutter UI's plugin screens) to find plugins/<id>/screen.py
 
 
-def run_all(plugins_dir):
+def run_all(plugins_dir, local_token=""):
     global PLUGINS_DIR
     PLUGINS_DIR = plugins_dir
+    # The local server's per-launch token, for host code only (pek_guard.tmdb_json). It is not put in os.environ, so plugin code
+    # and anything it starts cannot read it.
+    import pek_guard
+    pek_guard.set_local_token(local_token)
     if not os.path.isdir(plugins_dir):
         print("[PEK Python Bridge] No plugins folder at", plugins_dir)
         return

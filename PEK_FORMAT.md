@@ -46,7 +46,7 @@ Entries are written sorted by path (byte order), so packing the same files alway
 
 ## Footer (32 bytes)
 
-SHA-256 of every byte before the footer. This detects damage and tampering with the file. It does **not** prove who made it (anyone can recompute it). Signing is reserved for version 2 via `flags` bit 0.
+SHA-256 of every byte before the footer. This detects damage and tampering with the file. It does **not** prove who made it (anyone can recompute it). This footer is not the signature. Official plugins are signed separately, see "Signing official plugins" below; `flags` bit 0 stays reserved for a future signature block in the container itself.
 
 ## What a reader must check
 
@@ -80,3 +80,27 @@ These mirror `backend/plugin_install.h`, so a PEK the tool accepts is one the in
 ## Versioning
 
 A reader that sees a `format_version` it doesn't know must reject the file and say which version it found. New optional features go behind `flags` bits, so old readers refuse them instead of misreading them.
+
+## Signing official plugins
+
+The footer hash proves a file is undamaged, not who made it. So that a compromised store cannot push full-access code, PEK's own
+plugins (`weather`, `tmdb-discover`, `skin-maker`) carry an Ed25519 signature, made with a key whose public half is pinned in the app
+(`backend/pek_official_keys.txt`; the private half is only ever on the owner's machine and in the CI secret `PEK_PLUGIN_SIGNING_KEY`).
+
+The signature is an ordinary file in the plugin, `PEK-SIGNATURE.json` (so format version 1 and `flags == 0` are unchanged and older readers still open the file):
+
+```
+{"v": 1, "alg": "ed25519", "id": "weather", "key": "<first 16 hex of sha256(public key)>", "sig": "<128 hex>"}
+```
+
+What is signed: the bytes `PEK-PLUGIN-v1\n`, the plugin id, `\n`, then one line `<sha256 hex>  <path>\n` for every file in the plugin, sorted by the
+bytes of the path. Left out: `PEK-SIGNATURE.json` itself and everything under the top-level `data/` folder (the plugin's own runtime files).
+Any changed, added or removed file therefore breaks the signature, and a signature for one id is no good for another.
+
+Who checks it (all three use the same rule):
+
+- `backend/plugin_install.h` (the installer): an "official" install of a built-in plugin is refused unless the files verify against a pinned key. The `official=1` form field alone no longer does anything.
+- `backend/pek_guard.py` (start-up): the Weather plugin runs with full access only while its folder verifies; the `tmdb` and `skins` permissions and PEK's reserved hosts are for a plugin that verifies. The name alone proves nothing.
+- `tools/pektool.py verify-sig <folder>...` (CI and by hand).
+
+Owner workflow: `python3 tools/pektool.py keygen` once (pin the public key, keep the private file out of git), then `pektool.py sign <folder>` before `pack`; CI signs the bundled plugins itself.

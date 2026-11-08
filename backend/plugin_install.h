@@ -38,6 +38,11 @@
 #include <system_error>
 #include <vector>
 
+#if __has_include(<openssl/evp.h>)
+#include <openssl/evp.h>
+#define PEK_HAVE_EVP 1
+#endif
+
 namespace pek_plugins {
 
 namespace fs = std::filesystem;
@@ -215,6 +220,115 @@ inline std::mutex& installMutex() {
     return m;
 }
 
+
+// ---- Official signatures ----------------------------------------------------------------------------------------------------
+// An "official" install (a built-in plugin replaced by an update from the PEK Store) used to be one form field the caller could
+// simply set. It is now believed only when the files carry an Ed25519 signature (PEK-SIGNATURE.json) made with a key pinned in
+// the app (backend/pek_official_keys.txt, passed in by the build as PEK_OFFICIAL_KEYS: 64-hex keys separated by commas). A store
+// that is compromised can still serve files, but it cannot sign them. The signed bytes are the same ones pek_guard.py and
+// tools/pektool.py use: "PEK-PLUGIN-v1\n" + id + "\n" + one "sha256hex  path\n" per file (byte order of the path), data/ and the
+// signature file left out.
+inline const char* signatureName() { return "PEK-SIGNATURE.json"; }
+
+inline bool hexToBytes(const std::string& hex, std::string& out) {
+    if (hex.size() % 2) return false;
+    out.clear();
+    auto nib = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        int a = nib(hex[i]), b = nib(hex[i + 1]);
+        if (a < 0 || b < 0) return false;
+        out.push_back(static_cast<char>(a * 16 + b));
+    }
+    return true;
+}
+
+inline std::vector<std::string> officialKeys() {
+    std::vector<std::string> keys;
+#ifdef PEK_OFFICIAL_KEYS
+    std::string all = PEK_OFFICIAL_KEYS, cur;
+    all += ',';
+    for (char c : all) {
+        if (c != ',') { cur += c; continue; }
+        std::string raw;
+        if (cur.size() == 64 && hexToBytes(cur, raw)) keys.push_back(raw);
+        cur.clear();
+    }
+#endif
+    return keys;
+}
+
+// The string value of "key" in a small JSON object ("" if absent). Enough for PEK-SIGNATURE.json, which is machine written.
+inline std::string smallJsonString(const std::string& doc, const std::string& key) {
+    size_t k = doc.find("\"" + key + "\"");
+    if (k == std::string::npos) return "";
+    size_t colon = doc.find(':', k);
+    if (colon == std::string::npos) return "";
+    size_t q1 = doc.find_first_not_of(" \t\r\n", colon + 1);
+    if (q1 == std::string::npos || doc[q1] != '"') return "";
+    size_t q2 = doc.find('"', q1 + 1);
+    return q2 == std::string::npos ? "" : doc.substr(q1 + 1, q2 - q1 - 1);
+}
+
+#ifdef PEK_HAVE_EVP
+inline std::string sha256Hex(const std::string& data) {
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int n = 0;
+    if (EVP_Digest(data.data(), data.size(), md, &n, EVP_sha256(), nullptr) != 1) return "";
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    for (unsigned i = 0; i < n; ++i) { out += hex[md[i] >> 4]; out += hex[md[i] & 15]; }
+    return out;
+}
+
+inline bool ed25519Verify(const std::string& pub, const std::string& msg, const std::string& sig) {
+    if (pub.size() != 32 || sig.size() != 64) return false;
+    EVP_PKEY* pk = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr,
+                                               reinterpret_cast<const unsigned char*>(pub.data()), pub.size());
+    if (!pk) return false;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    bool ok = ctx && EVP_DigestVerifyInit(ctx, nullptr, nullptr, nullptr, pk) == 1 &&
+              EVP_DigestVerify(ctx, reinterpret_cast<const unsigned char*>(sig.data()), sig.size(),
+                               reinterpret_cast<const unsigned char*>(msg.data()), msg.size()) == 1;
+    if (ctx) EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pk);
+    return ok;
+}
+#endif
+
+// "" = the files are signed for [id] by a pinned official key; otherwise the reason they are not.
+inline std::string verifyOfficialSignature(const std::string& id, const std::vector<InFile>& files) {
+#ifndef PEK_HAVE_EVP
+    (void)id; (void)files;
+    return "this build cannot check signatures";
+#else
+    const std::vector<std::string> keys = officialKeys();
+    if (keys.empty()) return "this app has no official signing key";
+    const InFile* sigFile = nullptr;
+    std::vector<std::pair<std::string, std::string>> entries;   // path, sha256 hex
+    for (const auto& f : files) {
+        if (f.path == signatureName()) { sigFile = &f; continue; }
+        if (f.path.rfind("data/", 0) == 0) continue;
+        entries.emplace_back(f.path, sha256Hex(f.data));
+    }
+    if (!sigFile) return "no signature";
+    if (sigFile->data.size() > 4096) return "bad signature file";
+    const std::string& doc = sigFile->data;
+    if (smallJsonString(doc, "alg") != "ed25519" || smallJsonString(doc, "id") != id) return "the signature is for another plugin";
+    std::string sig;
+    if (!hexToBytes(smallJsonString(doc, "sig"), sig) || sig.size() != 64) return "bad signature file";
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::string msg = "PEK-PLUGIN-v1\n" + id + "\n";
+    for (const auto& e : entries) msg += e.second + "  " + e.first + "\n";
+    for (const auto& k : keys) if (ed25519Verify(k, msg, sig)) return "";
+    return "the signature does not match these files";
+#endif
+}
+
 // dryRun == true: run every check and report, write nothing.
 // official == true: the app is installing a built-in plugin's update that it downloaded from the PEK Store's Official shelf.
 // Only then may a built-in plugin (weather, tmdb-discover) be replaced and the reserved TMDb host be listed. Every other check
@@ -225,6 +339,11 @@ inline Outcome install(const std::string& pluginsDir, const std::string& id,
     out.id = id;
     if (!validId(id)) { out.error = "the plugin id must be 1-40 lowercase letters, digits, - or _"; return out; }
     if (isReservedId(id) && !(official && isStockId(id))) { out.error = "\"" + id + "\" is a built-in plugin and can't be replaced"; return out; }
+    if (official && isStockId(id)) {
+        // "official" is only believed with a signature from the pinned PEK key (see verifyOfficialSignature)
+        const std::string why = verifyOfficialSignature(id, files);
+        if (!why.empty()) { out.error = "this update is not signed by PEK (" + why + ")"; return out; }
+    }
     size_t total = 0;
     out.error = checkFiles(files, total, official && isStockId(id));
     if (!out.error.empty()) return out;

@@ -12,6 +12,7 @@ import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.security.SecureRandom
 
 /**
  * The app's start-up work (copy the built-in files, start the C++ server and the Python plugins, wait for the server), done once
@@ -23,6 +24,13 @@ object Boot {
     private var thread: Thread? = null
     @Volatile private var finished = false
     @Volatile private var ok = false
+
+    /**
+     * The secret every request to the local server (127.0.0.1:8080) must carry. New random value on every process start, held
+     * only in memory and handed only to the C++ server, the Python host and our own Flutter UI. Another app on the phone can
+     * reach the port but cannot know this, so every route answers it 401.
+     */
+    val token: String = ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
     /** Starts the work if it is not running or done. Safe to call from every activity. */
     fun ensureStarted(context: Context) {
@@ -58,7 +66,7 @@ object Boot {
             }
             if (isTv(ctx)) File(root, "plugins/skin-maker").deleteRecursively()   // Skin Maker is off on TV devices (checked every start, so a store copy goes too)
             StorageVolumes.init(ctx, root)   // before the server starts: it reads the volume list for the folder picker
-            NativeBridge.startServer(root.absolutePath)
+            NativeBridge.startServer(root.absolutePath, token)
             startPythonPlugins(ctx, File(root, "plugins"))
             for (i in 0 until 125) {
                 try {
@@ -100,7 +108,7 @@ object Boot {
             try {
                 if (!Python.isStarted()) Python.start(AndroidPlatform(ctx))
                 Python.getInstance().getModule("pek_runner")
-                    .callAttr("run_all", pluginsDir.absolutePath)
+                    .callAttr("run_all", pluginsDir.absolutePath, token)
             } catch (e: Throwable) {
                 Log.e("PEK", "Python plugins failed", e)
             }

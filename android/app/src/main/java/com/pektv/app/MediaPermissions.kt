@@ -42,6 +42,7 @@ object MediaPermissions {
             try {
                 val c = URL("http://127.0.0.1:8080/api/rescan").openConnection() as HttpURLConnection
                 c.requestMethod = "POST"
+                c.setRequestProperty("X-Pek-Token", Boot.token)
                 c.connectTimeout = 3000
                 c.readTimeout = 5000
                 c.responseCode

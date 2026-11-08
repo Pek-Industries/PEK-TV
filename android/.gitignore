@@ -13,3 +13,6 @@ libnfs/
 app/src/main/python/pek_guard.py
 # stale copy from before the rename
 app/src/main/python/hesper_guard.py
+# copied / generated at build time from backend/ (see copyPekGuard in app/build.gradle)
+app/src/main/python/pek_ed25519.py
+app/src/main/python/pek_official_keys.py

@@ -130,7 +130,7 @@ class PekGithub {
   static Future<Uint8List> downloadBytes(GithubRelease rel, GithubOption opt) async {
     http.Response r;
     try {
-      r = await http.post(Uri.parse('${Api.base}/api/plugins/github-zip'), body: {'owner': rel.owner, 'repo': rel.repo, 'url': opt.url}).timeout(const Duration(seconds: 90));
+      r = await Api.client.post(Uri.parse('${Api.base}/api/plugins/github-zip'), body: {'owner': rel.owner, 'repo': rel.repo, 'url': opt.url}).timeout(const Duration(seconds: 90));
     } catch (_) {
       throw const StoreException("Couldn't reach PEK TV's server.");
     }

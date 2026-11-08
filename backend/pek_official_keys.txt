@@ -1,0 +1,11 @@
+# Public keys (Ed25519, 64 hex characters, one per line) that sign PEK's official plugins.
+# An official plugin (weather, tmdb-discover, skin-maker) only counts as official, in the app's guard and in the installer,
+# when its PEK-SIGNATURE.json verifies against one of the keys below. With no key here nothing can be official.
+#
+# Make the key pair once, on a machine you trust:   python3 tools/pektool.py keygen
+# Paste the printed PUBLIC key on a line below. Keep the private key file out of git; its 64 hex characters go into the
+# repository secret PEK_PLUGIN_SIGNING_KEY. A second line lets you rotate keys (ship a release with both, then drop the old one).
+
+
+
+d18afa7fc365712e9f66ae5135ad88e50227446590be703bdbe84edcd4cfb095

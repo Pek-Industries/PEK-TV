@@ -17,6 +17,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -61,7 +62,7 @@ import java.util.concurrent.Executors
  *   pek/mpv         (MethodChannel)  load, play, pause, seek, setAudio, setSubtitle, addSubtitle, setMiniRect,
  *                                    fullscreen, destroy
  *   pek/mpv/events  (EventChannel)   {event: time|state|tracks|ended|error, data: {...}}  - same payloads the web UI got; "error" = the file never loaded
- *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, dirs
+ *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs
  *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
  *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
  *                                    status {status, message} comes back from the installer
@@ -545,6 +546,7 @@ class FlutterHostActivity : FlutterActivity() {
                 // A pass the torrent server asks for before it starts a stream (backend/torrent_routes.cpp). Dart only asks for one
                 // after a plugin has handed it a release (torrent.dart), so nothing else on the device can start a torrent.
                 "torrentGrant" -> result.success(NativeBridge.mintTorrentGrant())
+                "apiToken" -> result.success(com.pektv.app.Boot.token)   // the local server's per-launch token (api.dart sends it on every request)
                 // "All files access" (Android 11+): needed to open folders on a USB drive / SD card. Older Android has no such switch (true).
                 "allFilesAccess" -> result.success(Build.VERSION.SDK_INT < Build.VERSION_CODES.R || android.os.Environment.isExternalStorageManager())
                 // Opens Android's switch for PEK TV; if a box has no such screen, the next best settings page.
@@ -564,6 +566,18 @@ class FlutterHostActivity : FlutterActivity() {
                 }
                 "setMulticast" -> {
                     setMulticast(call.argument<Boolean>("on") ?: false)
+                    result.success(null)
+                }
+                // The phone remote (remote_host.dart): dir 1 = louder, -1 = quieter, 0 = mute / unmute. Moves the system music volume.
+                "volume" -> {
+                    val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    val dir = call.argument<Int>("dir") ?: 0
+                    val action = when {
+                        dir > 0 -> AudioManager.ADJUST_RAISE
+                        dir < 0 -> AudioManager.ADJUST_LOWER
+                        else -> AudioManager.ADJUST_TOGGLE_MUTE
+                    }
+                    am.adjustStreamVolume(AudioManager.STREAM_MUSIC, action, AudioManager.FLAG_SHOW_UI)
                     result.success(null)
                 }
                 // Where the Flutter side keeps its artwork / title cache (art_cache.dart): files = kept, cache = may be cleared by Android.

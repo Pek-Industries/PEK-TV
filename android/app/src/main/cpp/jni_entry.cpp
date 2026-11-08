@@ -53,7 +53,7 @@ static void captureStdio(const std::string& file) {
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot) {
+Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot, jstring jToken) {
     if (g_started.exchange(true)) return;   // only start once per process
 
     // Tell OpenSSL where Android keeps its trusted HTTPS certificates,
@@ -63,6 +63,15 @@ Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot) 
     const char* c = env->GetStringUTFChars(jRoot, nullptr);
     std::string root(c);
     env->ReleaseStringUTFChars(jRoot, c);
+
+    // The per-launch token every request to the local server must carry (see PekServer::start). Kept in a local string:
+    // it is never put in the environment, where plugin code or a child process could read it.
+    std::string token;
+    if (jToken) {
+        const char* t = env->GetStringUTFChars(jToken, nullptr);
+        token = t;
+        env->ReleaseStringUTFChars(jToken, t);
+    }
 
     // Bundled Mozilla CA list (downloaded by the workflow). Works on any
     // Android version, even if the device's own certificate store is old.
@@ -86,10 +95,10 @@ Java_com_pektv_app_NativeBridge_startServer(JNIEnv* env, jclass, jstring jRoot) 
     g_scanner->setShowResolver(PekServer::resolveShowName);
     std::thread([]() { g_scanner->scan(); }).detach();
 
-    std::thread([plugins, skins]() {
+    std::thread([plugins, skins, token]() {
         PekServer::start(8080, plugins, skins,
             []() { return std::vector<std::string>(); },   // Python plugin list: later step
-            g_scanner);
+            g_scanner, token);
     }).detach();
 }
 

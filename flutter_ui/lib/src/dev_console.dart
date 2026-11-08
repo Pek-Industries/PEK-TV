@@ -6,7 +6,6 @@ import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
@@ -226,7 +225,7 @@ Commands run as the app's user, with no root. They can break the app. Stop kills
     }
     final p = path.startsWith('/') ? path : '/$path';
     final sw = Stopwatch()..start();
-    final r = await http.get(Uri.parse('${Api.base}$p')).timeout(const Duration(seconds: 20));
+    final r = await Api.client.get(Uri.parse('${Api.base}$p')).timeout(const Duration(seconds: 20));
     var body = utf8.decode(r.bodyBytes, allowMalformed: true);
     try {
       body = const JsonEncoder.withIndent('  ').convert(jsonDecode(body));

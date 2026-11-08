@@ -12,6 +12,7 @@ import 'src/key_guard.dart';
 import 'src/cloud.dart';
 import 'src/profile_pages.dart';
 import 'src/profiles.dart';
+import 'src/remote_host.dart';
 import 'src/skins.dart';
 import 'src/mpv.dart';
 import 'src/music_controller.dart';
@@ -40,6 +41,7 @@ Future<void> main() async {
       MusicController.instance.restore(); // the song the active profile was playing when the app closed
       Net.start(); // the green / red dot and offline mode (net.js)
       final phone = await phoneAsk;
+      unawaited(RemoteHost.instance.startIfWanted(isPhone: phone)); // TV: lets a paired phone act as remote and keyboard (remote_host.dart)
       runApp(PekApp(isPhone: phone));
     },
     (error, stack) => DevConsole.add('[uncaught] $error\n$stack'),

@@ -389,7 +389,7 @@ class PluginInstaller {
     write('--$boundary--\r\n');
     http.Response r;
     try {
-      r = await http.post(Uri.parse('${Api.base}/api/plugins/install'), headers: {'Content-Type': 'multipart/form-data; boundary=$boundary'}, body: body.takeBytes()).timeout(const Duration(seconds: 90));
+      r = await Api.client.post(Uri.parse('${Api.base}/api/plugins/install'), headers: {'Content-Type': 'multipart/form-data; boundary=$boundary'}, body: body.takeBytes()).timeout(const Duration(seconds: 90));
     } catch (_) {
       throw const StoreException("Couldn't reach PEK TV's server.");
     }

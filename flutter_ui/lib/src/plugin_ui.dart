@@ -1091,9 +1091,9 @@ class _PluginTrailerState extends State<_PluginTrailer> {
       _loadYoutube(c, id, play, muted);
       return;
     }
-    final video = Api.abs('${info['video']}');
+    final video = Api.withToken(Api.abs('${info['video']}'));
     final audioPath = '${info['audio'] ?? ''}';
-    final audio = audioPath.isEmpty ? '' : Api.abs(audioPath);
+    final audio = audioPath.isEmpty ? '' : Api.withToken(Api.abs(audioPath));
     const css = 'html,body{margin:0;height:100%;background:#000;overflow:hidden}'
         'video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .4s}'
         'video.on{opacity:1}';

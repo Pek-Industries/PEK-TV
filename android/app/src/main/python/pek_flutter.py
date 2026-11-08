@@ -326,15 +326,15 @@ def _open(req):
         if not os.path.isfile(os.path.join(folder, SCREEN_FILE + ".py")):
             return _fail("this plugin has no Flutter screen (screen.py)")
 
-        trusted = pid in g.trusted_names()
+        trusted = g.is_trusted(pid, folder)
         manifest, err = g.load_manifest(folder)
         if err:
             return _fail("plugin.json: %s" % err)
         hosts = [str(h).lower() for h in (manifest.get("permissions", {}).get("network", []) or [])]
         for reserved, owners in RESERVED_HOSTS.items():
-            if reserved in hosts and pid not in owners:
+            if reserved in hosts and not (pid in owners and g.verify_official(pid, folder)):
                 return _fail("%s is reserved for PEK's official plugins" % reserved)
-        if manifest.get("permissions", {}).get("skins") and pid not in OFFICIAL_SKIN_PLUGINS:
+        if manifest.get("permissions", {}).get("skins") and not (pid in OFFICIAL_SKIN_PLUGINS and g.verify_official(pid, folder)):
             return _fail("the 'skins' permission is reserved for PEK's official Skin maker")
         if manifest.get("permissions", {}).get("weather") and pid not in OFFICIAL_WEATHER_PLUGINS:
             return _fail("the 'weather' permission is reserved for PEK's official Weather plugin")
@@ -551,9 +551,9 @@ def _file_session(store, lock, pid, req, perm, key, what):
             return None, "%s is missing" % fname
         hosts = [str(h).lower() for h in (perms.get("network", []) or [])]
         for reserved, owners in RESERVED_HOSTS.items():
-            if reserved in hosts and pid not in owners:
+            if reserved in hosts and not (pid in owners and g.verify_official(pid, folder)):
                 return None, "%s is reserved for PEK's official plugins" % reserved
-        trusted = pid in g.trusted_names()
+        trusted = g.is_trusted(pid, folder)
         if not trusted:
             problems = g.scan_plugin_folder(folder)
             if problems:

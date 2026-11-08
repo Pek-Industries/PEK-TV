@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show ValueNotifier, debugPrint;
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:http/http.dart' as http;
 
 import 'activity.dart' show Busy;
@@ -12,7 +13,46 @@ import 'art_cache.dart';
 /// Talks to the existing C++ server (backend/server.cpp) on the loopback port. Nothing in the backend changes.
 class Api {
   static const base = 'http://127.0.0.1:8080';
-  static final http.Client _client = http.Client();
+
+  // ---- Per-launch access token --------------------------------------------------------------------------------------
+  // The local server answers 401 to every request that does not carry the random token Boot made at this launch (other apps on
+  // the phone can reach 127.0.0.1:8080 but cannot know it). Rules in this app:
+  //   * HTTP calls to the server go through [client], which adds the X-Pek-Token header itself.
+  //   * Pictures use [headersFor] (Image.network headers). Players and web pages that cannot set headers (libmpv, the trailer
+  //     page) get the address through [withToken], which adds ?pek_t= at the last moment.
+  //   * Addresses kept in memory, on disk or used as cache keys stay WITHOUT the token, so a cached poster survives a restart.
+  static const _hostChannel = MethodChannel('pek/host');
+  static String token = '';
+  static Future<void>? _tokenLoad;
+
+  /// Reads the token from the app (once). A build with no native side (tests, desktop) has none and sends no header.
+  static Future<void> loadToken() => _tokenLoad ??= () async {
+        try {
+          token = await _hostChannel.invokeMethod<String>('apiToken') ?? '';
+        } catch (_) {
+          token = '';
+        }
+      }();
+
+  static bool isLocal(String url) => url == base || url.startsWith('$base/');
+
+  /// Headers for a request to [url]: the token when it is this app's own server, nothing for any other address (the token never
+  /// leaves the device and is never sent to a remote site).
+  static Map<String, String> headersFor(String url) => token.isNotEmpty && isLocal(url) ? {'X-Pek-Token': token} : const {};
+
+  /// [url] with ?pek_t=<token> added when it is this app's own server (for libmpv, the trailer page and the lock-screen artwork).
+  /// An edl:// address (several files played as one) gets the token on each file in it.
+  static String withToken(String url) {
+    if (token.isEmpty) return url;
+    return url.replaceAllMapped(RegExp('${RegExp.escape(base)}/[^;]*'), (m) {
+      final u = m[0]!;
+      return u.contains('pek_t=') ? u : '$u${u.contains('?') ? '&' : '?'}pek_t=$token';
+    });
+  }
+
+  /// The one HTTP client for calls to the local server (adds the token header). Use it instead of the top-level http.get / http.post.
+  static http.Client get client => _client;
+  static final http.Client _client = _AuthClient(http.Client());
 
   /// A slow request shows the loading ring (Busy), like busy.js did for fetch().
   static Future<dynamic> _get(String path, {Duration timeout = const Duration(seconds: 20)}) => Busy.run(path, () => _getRaw(path, timeout));
@@ -46,6 +86,7 @@ class Api {
 
   /// MainActivity starts the server before opening this screen, so this normally succeeds on the first try.
   static Future<bool> waitForServer() async {
+    await loadToken();
     for (var i = 0; i < 60; i++) {
       try {
         final r = await _client.get(Uri.parse('$base/api/status')).timeout(const Duration(seconds: 2));
@@ -1131,4 +1172,22 @@ class Facets {
   final List<MapEntry<String, int>> directors;
   final int indexingDone;
   final int indexingTotal;
+}
+
+/// Adds the per-launch token to every request that goes to the local server, whatever code made it.
+class _AuthClient extends http.BaseClient {
+  _AuthClient(this._inner);
+  final http.Client _inner;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (Api.isLocal(request.url.toString())) {
+      await Api.loadToken();
+      if (Api.token.isNotEmpty) request.headers['X-Pek-Token'] = Api.token;
+    }
+    return _inner.send(request);
+  }
+
+  @override
+  void close() => _inner.close();
 }

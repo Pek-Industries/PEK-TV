@@ -69,6 +69,19 @@ jobs:
           echo "::error::Could not install NDK $NDK"; exit 1
 
       # ---- Version -------------------------------------------------------
+      # Refuse to build when the tag, pubspec.yaml, pekBaseCode and the top What's New entry disagree
+      # (a mismatch ships an apk Android refuses to install as an update). Same script you can run locally.
+      - name: Check release numbers agree
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            python3 tools/check_version.py --tag "${GITHUB_REF_NAME}"
+          else
+            python3 tools/check_version.py
+          fi
+
+      - name: Signing tests
+        run: python3 tools/test_signing.py
+
       - name: Work out version name
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
@@ -116,6 +129,8 @@ jobs:
 
       # ---- Bundle the plugins and skins into the apk -------------
       - name: Stage app assets
+        env:
+          PEK_PLUGIN_SIGNING_KEY: ${{ secrets.PEK_PLUGIN_SIGNING_KEY }}
         run: |
           A=android/app/src/main/assets/hesper
           mkdir -p "$A"
@@ -123,6 +138,25 @@ jobs:
           curl -fsSL https://curl.se/ca/cacert.pem -o "$A/cacert.pem"
           find "$A" -name __pycache__ -type d -prune -exec rm -rf {} +
           rm -rf "$A"/plugins/*/data
+
+          # Official plugins are trusted only while they carry a valid Ed25519 signature (backend/pek_official_keys.txt pins the
+          # public key; the private key is the secret PEK_PLUGIN_SIGNING_KEY, made with: python3 tools/pektool.py keygen).
+          # Sign the staged copies (after the cleaning above, so the signature covers exactly the files that ship), then check
+          # them against the PINNED key: a secret that does not match the key in the repo fails the build here.
+          OFFICIAL="weather tmdb-discover skin-maker"
+          if [ -n "$PEK_PLUGIN_SIGNING_KEY" ]; then
+            for d in $OFFICIAL; do
+              [ -d "$A/plugins/$d" ] || continue
+              python3 tools/pektool.py --no-color sign "$A/plugins/$d" --key-env PEK_PLUGIN_SIGNING_KEY
+            done
+            python3 tools/pektool.py --no-color verify-sig $(for d in $OFFICIAL; do [ -d "$A/plugins/$d" ] && echo "$A/plugins/$d"; done) \
+              || { echo "::error::The signed plugins do not verify against backend/pek_official_keys.txt - is PEK_PLUGIN_SIGNING_KEY the private half of that key?"; exit 1; }
+          elif [ "$BUILD_TYPE" = release ]; then
+            echo "::error::PEK_PLUGIN_SIGNING_KEY is not set. A release without signed official plugins would ship a Weather plugin that is not trusted. See UPDATES.md (Signing)."
+            exit 1
+          else
+            echo "::warning::PEK_PLUGIN_SIGNING_KEY is not set: this debug build's official plugins are unsigned, so Weather runs sandboxed."
+          fi
 
       # ---- Native dependencies -------------------------------------------
       - name: Cache OpenSSL

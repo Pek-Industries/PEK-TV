@@ -67,6 +67,7 @@ class _ArtState extends State<Art> {
             ? Image.file(File(widget.url), key: ValueKey(widget.url), fit: BoxFit.cover, cacheWidth: 400, gaplessPlayback: true, errorBuilder: (_, __, ___) => fallback())
             : Image.network(
             widget.url,
+            headers: Api.headersFor(widget.url),
             key: ValueKey('${widget.url}#$_tries'),
             fit: BoxFit.cover,
             cacheWidth: 400,

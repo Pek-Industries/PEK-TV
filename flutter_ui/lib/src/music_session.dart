@@ -65,7 +65,7 @@ class MusicSession {
       'title': t.title,
       'artist': t.artist,
       'album': t.album,
-      'art': t.art ? Api.trackArt(t) : '',
+      'art': t.art ? Api.withToken(Api.trackArt(t)) : '',
     });
     _schedule();
   }

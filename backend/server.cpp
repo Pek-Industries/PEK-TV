@@ -651,7 +651,8 @@ std::string PekServer::resolveShowName(const std::string& guess) {
 void PekServer::start(int port, const std::string& plugins_dir,
                            const std::string& skins_dir,
                            std::function<std::vector<std::string>()> get_plugins,
-                           MediaScanner* scanner) {
+                           MediaScanner* scanner,
+                           const std::string& localToken) {
     httplib::Server svr;
     ::setenv("PEK_PORT", std::to_string(port).c_str(), 0);   // the plugin sandbox's pek_host.tmdb_json finds this server by it
 
@@ -673,8 +674,22 @@ void PekServer::start(int port, const std::string& plugins_dir,
     // device to do things (CSRF) or point a hostile name at 127.0.0.1 (DNS rebinding).
     // So: when bound locally, only accept loopback Host headers; and never accept a
     // state-changing request whose Origin is a different site.
-    svr.set_pre_routing_handler([remoteOpen, token](const httplib::Request& req, httplib::Response& res) {
+    svr.set_pre_routing_handler([remoteOpen, token, localToken](const httplib::Request& req, httplib::Response& res) {
         const bool fromLoopback = isLoopbackAddr(req.remote_addr);
+
+        // Per-launch token (Android app): nothing is answered without it, not even from 127.0.0.1. The Host / Origin checks
+        // below stop web pages; this stops other installed apps, which can reach the loopback port too.
+        if (!localToken.empty()) {
+            const std::string viaHeader = req.get_header_value("X-Pek-Token");
+            const std::string viaQuery  = req.has_param("pek_t") ? req.get_param_value("pek_t") : std::string();
+            const bool okHeader = constantTimeEquals(viaHeader, localToken);
+            const bool okQuery  = constantTimeEquals(viaQuery, localToken);
+            if (!okHeader && !okQuery) {
+                res.status = 401;
+                res.set_content("{\"error\": \"Access token required\"}", "application/json");
+                return httplib::Server::HandlerResponse::Handled;
+            }
+        }
 
         // Plugins are Python only: no JavaScript is served out of a plugin folder (no .js / .mjs under /plugins/),
         // whatever is asked for.
@@ -707,7 +722,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
             }
         }
 
-        if (remoteOpen && !fromLoopback) {
+        if (remoteOpen && !fromLoopback && localToken.empty()) {
             const std::string viaHeader = req.get_header_value("X-Pek-Token");
             const std::string viaCookie = cookieValue(req.get_header_value("Cookie"), "pek_token");
             // old names (before the rename), still honoured so a saved cookie or script keeps working

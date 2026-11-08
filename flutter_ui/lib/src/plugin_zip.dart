@@ -212,7 +212,7 @@ class ZipPicker {
   static Future<ZipListing> browse(String path, {String ext = 'zip'}) async {
     http.Response r;
     try {
-      r = await http.post(Uri.parse('${Api.base}/api/plugins/browse'), body: {'path': path, 'ext': ext}).timeout(const Duration(seconds: 30));
+      r = await Api.client.post(Uri.parse('${Api.base}/api/plugins/browse'), body: {'path': path, 'ext': ext}).timeout(const Duration(seconds: 30));
     } catch (_) {
       throw const StoreException("Couldn't reach PEK TV's server.");
     }
@@ -240,7 +240,7 @@ class ZipPicker {
   static Future<Uint8List> fetch(String path, {String ext = 'zip'}) async {
     http.Response r;
     try {
-      r = await http.post(Uri.parse('${Api.base}/api/plugins/fetch'), body: {'path': path, 'ext': ext}).timeout(const Duration(seconds: 60));
+      r = await Api.client.post(Uri.parse('${Api.base}/api/plugins/fetch'), body: {'path': path, 'ext': ext}).timeout(const Duration(seconds: 60));
     } catch (_) {
       throw const StoreException("Couldn't reach PEK TV's server.");
     }

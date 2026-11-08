@@ -5,7 +5,8 @@ Used by the C++ core (backend/core.cpp) and by the Android runner
 
 Two tiers
 ---------
-1. TRUSTED plugins (bundled ones, or any named in the PEK_TRUSTED_PLUGINS
+1. TRUSTED plugins (the official ones that need it, and only while their files carry a valid Ed25519 signature (see
+   verify_official); or any named in the PEK_TRUSTED_PLUGINS
    environment variable, comma separated) run exactly as before, with full access.
 2. EVERYTHING ELSE must pass these layers, or it does not run:
    a. plugin.json manifest declaring its permissions (network hosts, storage).
@@ -51,10 +52,20 @@ try:
 except ImportError:
     pek_epg = None
 
-# Plugins that ship with PEK and keep full access (as they always had).
-BUNDLED_TRUSTED = {"weather", "sample_scraper"}
+# Full access is no longer granted by NAME. An official plugin (weather, tmdb-discover, skin-maker ...) is trusted only while the
+# files in its folder carry a valid Ed25519 signature (PEK-SIGNATURE.json) from a key pinned in pek_official_keys.txt, so a
+# plugin that merely has an official name, or an update pushed by a compromised store, gets nothing special.
 _TMDB_PLUGINS = {"tmdb-discover"}           # the only plugin that may use the "tmdb" permission
 _TMDB_PATH_RE = re.compile(r"^/[A-Za-z0-9/_.-]{1,160}$")
+
+# The per-launch token of the app's local server (Android). Set once by pek_runner.run_all from Boot; host code only.
+_LOCAL_TOKEN = ""
+
+
+def set_local_token(token):
+    global _LOCAL_TOKEN
+    _LOCAL_TOKEN = str(token or "")
+
 
 MANIFEST_NAME = "plugin.json"
 MAX_SOURCE_BYTES = 200 * 1024
@@ -108,10 +119,117 @@ class PluginTimeout(BaseException):
 # --------------------------------------------------------------------------
 
 def trusted_names():
-    names = set(BUNDLED_TRUSTED)
+    """Names the operator trusted explicitly with PEK_TRUSTED_PLUGINS (a developer / Termux setting; an app on the phone cannot
+    set another app's environment). Nothing is trusted by name alone any more: see is_trusted()."""
     extra = os.environ.get("PEK_TRUSTED_PLUGINS") or os.environ.get("HESPER_TRUSTED_PLUGINS", "")   # old name still honoured
-    names.update(n.strip() for n in extra.split(",") if n.strip())
-    return names
+    return set(n.strip() for n in extra.split(",") if n.strip())
+
+
+# ---- Official signatures ---------------------------------------------------------------------------------------------------
+SIGNATURE_NAME = "PEK-SIGNATURE.json"
+SIGNATURE_MAGIC = b"PEK-PLUGIN-v1\n"
+_sig_cache = {}
+
+
+def official_keys():
+    """The pinned public keys (32 bytes each). Android: generated from backend/pek_official_keys.txt into pek_official_keys.py at
+    build time; elsewhere the .txt next to this file is read. An empty list means nothing can be official (fails closed)."""
+    hexes = []
+    try:
+        import pek_official_keys  # generated module (Android build)
+        hexes = list(pek_official_keys.KEYS)
+    except ImportError:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pek_official_keys.txt"), encoding="ascii") as f:
+                hexes = [ln.split("#")[0].strip() for ln in f]
+        except OSError:
+            hexes = []
+    out = []
+    for h in hexes:
+        if re.fullmatch(r"[0-9a-fA-F]{64}", h or ""):
+            out.append(bytes.fromhex(h))
+    return out
+
+
+def _plugin_files(folder):
+    """(relative path, absolute path) of every file the signature covers: everything except data/ (the plugin's own runtime
+    files) and the signature itself. Returns None if there is anything odd (a link, a non-file), which can never verify."""
+    rows = []
+    for root, dirs, names in os.walk(folder):
+        rel_root = os.path.relpath(root, folder).replace(os.sep, "/")
+        if rel_root == ".":
+            rel_root = ""
+            dirs[:] = [d for d in dirs if d != "data"]
+        dirs.sort()
+        for d in list(dirs):
+            if os.path.islink(os.path.join(root, d)):
+                return None
+        for n in names:
+            full = os.path.join(root, n)
+            rel = (rel_root + "/" + n) if rel_root else n
+            if os.path.islink(full) or not os.path.isfile(full):
+                return None
+            if rel == SIGNATURE_NAME or n.endswith((".pyc", ".pyo")) or "/__pycache__/" in "/" + rel_root + "/":
+                continue
+            rows.append((rel, full))
+    rows.sort(key=lambda r: r[0].encode("utf-8"))
+    return rows
+
+
+def signed_message(plugin_id, entries):
+    """The bytes that are signed. entries: iterable of (relative path, sha256 hex). Same rule in tools/pektool.py and in
+    backend/plugin_install.h (the installer): magic, the plugin id, then 'sha256  path' per file in byte order of the path."""
+    parts = [SIGNATURE_MAGIC, plugin_id.encode("utf-8"), b"\n"]
+    for rel, digest in sorted(entries, key=lambda e: e[0].encode("utf-8")):
+        parts.append(("%s  %s\n" % (digest, rel)).encode("utf-8"))
+    return b"".join(parts)
+
+
+def verify_official(plugin_id, folder):
+    """True when the plugin in [folder] is signed for [plugin_id] by a pinned official key and not one byte of it changed."""
+    try:
+        keys = official_keys()
+        sigfile = os.path.join(folder, SIGNATURE_NAME)
+        if not keys or not folder or not os.path.isfile(sigfile) or os.path.islink(sigfile):
+            return False
+        rows = _plugin_files(folder)
+        if rows is None:
+            return False
+        fingerprint = tuple((rel, os.stat(full).st_size, os.stat(full).st_mtime_ns) for rel, full in rows) + (
+            (SIGNATURE_NAME, os.stat(sigfile).st_size, os.stat(sigfile).st_mtime_ns),)
+        hit = _sig_cache.get(folder)
+        if hit and hit[0] == fingerprint and hit[1] == plugin_id:
+            return hit[2]
+        with open(sigfile, "rb") as f:
+            doc = json.loads(f.read(4096).decode("utf-8"))
+        ok = False
+        if isinstance(doc, dict) and doc.get("v") == 1 and doc.get("alg") == "ed25519" and doc.get("id") == plugin_id \
+                and isinstance(doc.get("sig"), str) and re.fullmatch(r"[0-9a-fA-F]{128}", doc["sig"]):
+            import pek_ed25519
+            entries = []
+            for rel, full in rows:
+                with open(full, "rb") as f:
+                    entries.append((rel, hashlib.sha256(f.read()).hexdigest()))
+            msg = signed_message(plugin_id, entries)
+            sig = bytes.fromhex(doc["sig"])
+            ok = any(pek_ed25519.verify(k, msg, sig) for k in keys)
+        _sig_cache[folder] = (fingerprint, plugin_id, ok)
+        return ok
+    except Exception:  # noqa: BLE001
+        return False
+
+
+# The official plugins that always ran with full access (unchanged). The others (tmdb-discover, skin-maker) stay sandboxed; a valid
+# signature only lets them use their reserved extras (the "tmdb" / "skins" permissions and PEK's reserved hosts).
+FULL_ACCESS_OFFICIAL = {"weather"}
+
+
+def is_trusted(plugin_id, folder=None):
+    """Full access (no sandbox)? Only for an official plugin from FULL_ACCESS_OFFICIAL whose files carry a valid signature, or a
+    plugin the operator named in PEK_TRUSTED_PLUGINS. The name alone proves nothing."""
+    if plugin_id in trusted_names():
+        return True
+    return plugin_id in FULL_ACCESS_OFFICIAL and bool(folder) and verify_official(plugin_id, folder)
 
 
 # --------------------------------------------------------------------------
@@ -339,7 +457,7 @@ def build_host_module(plugin_id, folder, manifest):
     send_ok = bool(perms.get("send", False))
     epg_ok = bool(perms.get("epg", False))
     # PEK's cached TMDb access (the app's own server holds the key and the answers): official TMDb Discover only.
-    tmdb_ok = bool(perms.get("tmdb", False)) and plugin_id in _TMDB_PLUGINS
+    tmdb_ok = bool(perms.get("tmdb", False)) and plugin_id in _TMDB_PLUGINS and verify_official(plugin_id, folder)
     data_dir = os.path.join(folder, "data")
     mod = types.ModuleType("pek_host")
 
@@ -654,8 +772,10 @@ def build_host_module(plugin_id, folder, manifest):
                 port = 8080
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=min(float(timeout), 20.0))
             try:
-                conn.request("GET", target, headers={"Host": "127.0.0.1:%d" % port, "Accept": "application/json",
-                                                     "User-Agent": "PEK-Plugin/" + plugin_id})
+                hdrs = {"Host": "127.0.0.1:%d" % port, "Accept": "application/json", "User-Agent": "PEK-Plugin/" + plugin_id}
+                if _LOCAL_TOKEN:
+                    hdrs["X-Pek-Token"] = _LOCAL_TOKEN
+                conn.request("GET", target, headers=hdrs)
                 resp = conn.getresponse()
                 body = resp.read(4000001)
                 if resp.status != 200:
@@ -920,8 +1040,8 @@ def run_plugin(module_name, path):
         loose = module_name != "backend"
         plugin_id = module_name if loose else os.path.basename(os.path.normpath(path))
 
-        if plugin_id in trusted_names():
-            print("[PEK Plugin Guard] '%s' is trusted: running with full access." % plugin_id)
+        if is_trusted(plugin_id, None if loose else path):
+            print("[PEK Plugin Guard] '%s' is trusted (official signature or PEK_TRUSTED_PLUGINS): running with full access." % plugin_id)
             _run_legacy(module_name, path)
             return True
 

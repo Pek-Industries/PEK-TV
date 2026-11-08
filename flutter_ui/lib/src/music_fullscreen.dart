@@ -269,6 +269,7 @@ class _BackdropState extends State<_Backdrop> {
   Widget build(BuildContext context) {
     Widget img = Image.network(
       widget.url,
+      headers: Api.headersFor(widget.url),
       key: ValueKey('${widget.url}#$_tries'),
       fit: BoxFit.cover,
       cacheWidth: 640,

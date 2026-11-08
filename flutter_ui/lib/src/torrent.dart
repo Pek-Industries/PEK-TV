@@ -58,7 +58,7 @@ class TorrentStatus {
 
 /// The torrent routes of the existing backend (backend/torrent_routes.cpp). Nothing in the backend changes.
 class TorrentApi {
-  static final http.Client _c = http.Client();
+  static final http.Client _c = Api.client;
 
   static Future<bool> available() async {
     try {
