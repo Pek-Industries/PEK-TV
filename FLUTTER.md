@@ -219,3 +219,17 @@ Settings > Account (signed in), `account_pages.dart` and `plan_ui.dart`:
 
 ## TV navigation (D-pad)
 `flutter_ui/lib/src/tv_nav.dart` installs the `dpad` package once, above every screen (`main.dart`: `TvNav.root`). It replaces Flutter's "closest widget" focus search with a Leanback-style one: beam-based moves, animated scroll into view, lazy lists that scroll and continue, focus that never dies (a screen that opens gets focus, focus returns after a dialog), text boxes that let the arrows out at the caret's edge. `TvNav.region` marks one visual section (the sidebar, the top bar, a poster row on the dashboard): moves stay inside it first and coming back lands on the item you left. `PekFocusable`, `PekField` and Material widgets keep their own focus nodes, since the package works with plain `Focus` widgets. `KeyGuard` still sits inside the root, so held arrows are throttled before the package sees them. To add a row or grid, wrap it in `TvNav.region(memoryKey: ..., child: ...)`.
+
+## Phone as remote and keyboard
+More > **Remote** (`remote_ui.dart`). On a TV it pairs phones; on a phone or tablet it is the remote.
+- **TV side** (`remote_host.dart`): a listener of its own in the Flutter app, WebSocket on port 8766 and a UDP discovery answer on 8767.
+  The C++ server stays on 127.0.0.1 and is not involved. Default: on for TV boxes, off for phones (Remote > Turn on / Turn off).
+- **Pairing** (`remote_pairing.dart`): the TV shows a 6-digit code only while Remote > Pair a phone is open (5 minutes, once, 5 wrong
+  guesses close it). The phone gets a random token; the TV keeps only its SHA-256. Nothing but `hello` / `pair` is accepted before
+  that, for 20 seconds. Connections that carry an `Origin` header (a web page) are refused.
+- **What a paired phone can do**: arrow / OK / Menu keys (fed into Flutter's key pipeline, so focus, KeyGuard and TV nav treat them like a real
+  remote), Back, Home, text for the focused text box (mirrored live, Done submits), play / pause, seek +/-10 s, volume
+  (`volume` on `pek/host`, `FlutterHostActivity.kt`). Nothing else.
+- **Phone side** (`remote_client.dart`): searches the network (UDP broadcast) or takes a typed address, remembers each TV with its token,
+  finds it again if its address changes, and reconnects a few times after a drop. The connection closes when the screen closes.
+- Tests: `test/remote_pairing_test.dart`.

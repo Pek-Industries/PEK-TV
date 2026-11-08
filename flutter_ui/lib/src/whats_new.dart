@@ -33,6 +33,12 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
+    ReleaseNotes('2.3.0', 'Use your phone as a remote and keyboard', [
+      'Phone remote: your Android phone can now control PEK TV on your TV. Open More > Remote on the phone for arrows, OK, Back, Home, Menu, play / pause, skip 10 seconds and volume.',
+      'Typing: when a text box is open on the TV, a keyboard box appears on your phone, so searching and signing in no longer need the on-screen keyboard.',
+      'Pairing: on the TV open More > Remote > Pair a phone and enter the 6-digit code on your phone. You only do this once per phone, and you can remove a phone from the same screen.',
+      'Private by design: a phone that has not paired can do nothing, and the remote can be turned off on the TV at any time.',
+    ]),
     ReleaseNotes('2.2.4', 'DVD support, audio controls and smarter filters', [
       'DVDs: DVD images (.iso files) and ripped DVD folders now play from your library as a single movie. Physical discs are not supported yet.',
       'Multi-part movies: films split across several files now appear as a single title.',
