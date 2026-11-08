@@ -517,6 +517,7 @@ class _ArtImageState extends State<ArtImage> {
   File? _file;
   Future<File?>? _pending;
   bool _fileBroken = false;
+  bool _paintLogged = false;
   int _retries = 0;
   int _gen = 0;
   Timer? _retryTimer;
@@ -621,6 +622,13 @@ class _ArtImageState extends State<ArtImage> {
 
   Widget _disk(File f) => Image.file(
         f,
+        frameBuilder: (context, child, frame, sync) {
+          if (frame != null && !_paintLogged) {
+            _paintLogged = true;
+            debugPrint('[art-ui] poster decoded, drawing now: ${widget.url.split('/').last}');
+          }
+          return child;
+        },
         fit: widget.fit,
         cacheWidth: widget.cacheWidth,
         width: widget.width,

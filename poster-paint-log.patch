@@ -1,0 +1,36 @@
+diff -ruN a/flutter_ui/lib/src/art_cache.dart b/flutter_ui/lib/src/art_cache.dart
+--- a/flutter_ui/lib/src/art_cache.dart	2026-11-08 03:13:35.668727657 +0000
++++ b/flutter_ui/lib/src/art_cache.dart	2026-11-08 04:01:52.895123991 +0000
+@@ -517,6 +517,7 @@
+   File? _file;
+   Future<File?>? _pending;
+   bool _fileBroken = false;
++  bool _paintLogged = false;
+   int _retries = 0;
+   int _gen = 0;
+   Timer? _retryTimer;
+@@ -621,6 +622,13 @@
+ 
+   Widget _disk(File f) => Image.file(
+         f,
++        frameBuilder: (context, child, frame, sync) {
++          if (frame != null && !_paintLogged) {
++            _paintLogged = true;
++            debugPrint('[art-ui] poster decoded, drawing now: ${widget.url.split('/').last}');
++          }
++          return child;
++        },
+         fit: widget.fit,
+         cacheWidth: widget.cacheWidth,
+         width: widget.width,
+diff -ruN a/flutter_ui/lib/src/library.dart b/flutter_ui/lib/src/library.dart
+--- a/flutter_ui/lib/src/library.dart	2026-11-08 03:13:35.721902566 +0000
++++ b/flutter_ui/lib/src/library.dart	2026-11-08 04:01:52.895262661 +0000
+@@ -86,6 +86,7 @@
+ 
+   /// A source was added or removed (Settings > Media sources).
+   void _onSourcesChanged() {
++    debugPrint('[art-ui] media source added/removed: following the scan');
+     _emptyRetries = 0;
+     unawaited(_followChange());
+   }

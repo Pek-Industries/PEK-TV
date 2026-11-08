@@ -86,6 +86,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
   /// A source was added or removed (Settings > Media sources).
   void _onSourcesChanged() {
+    debugPrint('[art-ui] media source added/removed: following the scan');
     _emptyRetries = 0;
     unawaited(_followChange());
   }
