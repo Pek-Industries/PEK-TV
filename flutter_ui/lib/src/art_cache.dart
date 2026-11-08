@@ -576,12 +576,12 @@ class _ArtImageState extends State<ArtImage> {
   void _resolve() {
     _file = ArtCache.knownFile(widget.url);
     _pending = _file == null ? ArtCache.file(widget.url) : null;
-    // A picture that is still not drawn after 3 s is started over (a few times), so a stuck tile never waits for the person to
+    // A picture that is still not drawn after 1 s is started over (up to 10 times), so a stuck tile never waits for the person to
     // scroll it away and back. (It used to wait 20 s, and only when the file was not known yet: a poster that was on disk but
     // not decoded stayed blank until something else woke it up.)
     _watchdog?.cancel();
-    if (_wdTries < 6 && !_paintLogged) {
-      _watchdog = Timer(const Duration(seconds: 3), () {
+    if (_wdTries < 10 && !_paintLogged) {
+      _watchdog = Timer(const Duration(seconds: 1), () {
         if (!mounted || _paintLogged) return;
         _wdTries++;
         setState(() {
