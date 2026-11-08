@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 
 import 'api.dart' show Api, Details;
 import 'layouts.dart';
+import 'skin_button.dart';
+import 'skin_layout.dart' show ButtonShapeRadius;
 import 'tokens.dart';
 import 'art_cache.dart';
 import 'ratings.dart';
@@ -33,6 +35,9 @@ class PekFocusable extends StatefulWidget {
     this.padding,
     this.minHeight,
     this.alignment,
+    this.surface,
+    this.glow,
+    this.borderWidth = 1,
   });
 
   final Widget child;
@@ -55,6 +60,16 @@ class PekFocusable extends StatefulWidget {
   final EdgeInsetsGeometry? padding;
   final double? minHeight;
   final AlignmentGeometry? alignment;
+
+  /// Paint drawn behind the child, inside the corners and outside the padding (a skin's gradient button). It is told whether the
+  /// box is focused. null = the plain [background].
+  final Widget Function(bool focused)? surface;
+
+  /// A soft coloured glow around the box, always on (a skin's glowing button).
+  final Color? glow;
+
+  /// The thickness of the [borderColor] outline.
+  final double borderWidth;
 
   @override
   State<PekFocusable> createState() => _PekFocusableState();
@@ -119,23 +134,39 @@ class _PekFocusableState extends State<PekFocusable> {
     // On a TV the focus ring is drawn ON TOP of the box (foregroundDecoration). A solid BoxShadow behind a see-through focus
     // fill shines through it and turns the whole row deep orange. The ring crossfades quickly (150 ms), like Netflix / Prime.
     final ringColor = (widget.focusBackground != null && widget.focusBackground != Colors.transparent ? t.text : t.borderFocus).withAlpha(210);
+    // With a [surface] the padding / alignment / minimum height move inside it, so the paint reaches the box's edges.
+    final layered = widget.surface != null;
+    final shadows = <BoxShadow>[
+      if (widget.glow != null) BoxShadow(color: widget.glow!, blurRadius: 14),
+      if (focused && !p.isTv) BoxShadow(color: t.accentGlow, blurRadius: 10),
+    ];
     final box = AnimatedContainer(
       duration: const Duration(milliseconds: 150),
       curve: Curves.easeOutCubic,
-      padding: widget.padding,
-      alignment: widget.alignment,
-      constraints: widget.minHeight == null ? null : BoxConstraints(minHeight: widget.minHeight!),
+      padding: layered ? null : widget.padding,
+      alignment: layered ? null : widget.alignment,
+      constraints: layered || widget.minHeight == null ? null : BoxConstraints(minHeight: widget.minHeight!),
       clipBehavior: widget.radius > 0 ? Clip.antiAlias : Clip.none,
       decoration: BoxDecoration(
         color: focused ? (widget.focusBackground ?? t.surfaceFocused) : widget.background,
         borderRadius: BorderRadius.circular(widget.radius),
-        border: widget.borderColor == null ? null : Border.all(color: focused ? t.borderFocus : widget.borderColor!),
-        boxShadow: focused && !p.isTv ? [BoxShadow(color: t.accentGlow, blurRadius: 10)] : null,
+        border: widget.borderColor == null ? null : Border.all(color: focused ? t.borderFocus : widget.borderColor!, width: widget.borderWidth),
+        boxShadow: shadows.isEmpty ? null : shadows,
       ),
       foregroundDecoration: focused && p.isTv
           ? BoxDecoration(borderRadius: BorderRadius.circular(widget.radius), border: Border.all(color: ringColor, width: 0.16 * p.rem))
           : null,
-      child: widget.child,
+      child: layered
+          ? Stack(children: [
+              Positioned.fill(child: IgnorePointer(child: widget.surface!(focused))),
+              Container(
+                padding: widget.padding,
+                alignment: widget.alignment,
+                constraints: widget.minHeight == null ? null : BoxConstraints(minHeight: widget.minHeight!),
+                child: widget.child,
+              ),
+            ])
+          : widget.child,
     );
     return FocusableActionDetector(
       autofocus: widget.autofocus,
@@ -189,9 +220,14 @@ class PekButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
-    final rem = p.rem;
-    final fg = primary ? t.bg : t.text;
-    final bg = primary ? t.accent : t.surface;
+    // The skin's button look (skin_layout.dart): size, corners, colours, gradient and animation.
+    final look = p.layout.buttons;
+    final paint = PaintLook(primary ? look.primary : look.secondary, t);
+    final rem = p.rem * (look.size ?? 1.0);
+    final outline = look.outline == true;
+    final appFg = primary ? (outline ? t.accent : t.bg) : t.text;
+    final fg = paint.label(appFg);
+    final bg = paint.boxFill(primary ? (outline ? Colors.transparent : t.accent) : (outline ? Colors.transparent : t.surface));
     final tv = p.isTv;
     // On a TV the button wraps its label (no full-width stretch inside a Wrap) and is slimmer: 2.4rem (2.1rem compact).
     // Phones keep the old sizes.
@@ -199,32 +235,39 @@ class PekButton extends StatelessWidget {
     final tvHeight = (compact ? 2.1 : 2.4) * rem;
     final fontSize = (tv ? 0.85 : 0.9) * rem;
     final height = tv ? tvHeight : (compact ? 2.5 : 2.6) * rem;
+    final text = look.uppercase == true ? label.toUpperCase() : label;
+    final side = look.padding ?? 1.0;
+    final border = paint.border ?? (outline ? (primary ? t.accent : t.border) : (tv && !primary ? t.border : null));
     return Opacity(
       opacity: onTap == null ? 0.5 : 1,
       child: PekFocusable(
         autofocus: autofocus,
         enabled: onTap != null,
         onTap: onTap,
-        radius: 999,
+        radius: look.radius ?? look.shape?.radius(t.radius) ?? 999,
         background: bg,
-        focusBackground: primary ? t.accent : null,
+        // A button with its own colour keeps it when focused (the ring / glow shows the focus); the app's own accent button too.
+        focusBackground: paint.painted ? bg : (primary && !outline ? t.accent : null),
         // Subtle outline on secondary TV buttons so they read as buttons, not floating text.
-        borderColor: tv && !primary ? t.border : null,
+        borderColor: border,
+        borderWidth: look.borderWidth ?? 1,
+        glow: paint.glow,
+        surface: paint.surface,
         // A gentle lift on focus (TV only), so the selected button stands out without a bigger ring.
-        focusScale: tv ? 1.05 : 1.0,
+        focusScale: look.focusScale ?? (tv ? 1.05 : 1.0),
         // A natural-width button has no alignment (it would stretch to the full line) so its height comes from padding.
         minHeight: natural ? null : 2.75 * rem,
         alignment: natural ? null : Alignment.center,
         padding: natural
-            ? EdgeInsets.symmetric(horizontal: (tv ? (compact ? 1.1 : 1.4) : (compact ? 1.0 : 1.2)) * rem, vertical: (height - fontSize * 1.2) / 2)
-            : EdgeInsets.symmetric(horizontal: (compact ? 1.0 : 1.25) * rem, vertical: (compact ? 0.45 : 0.6) * rem),
+            ? EdgeInsets.symmetric(horizontal: (tv ? (compact ? 1.1 : 1.4) : (compact ? 1.0 : 1.2)) * rem * side, vertical: (height - fontSize * 1.2) / 2)
+            : EdgeInsets.symmetric(horizontal: (compact ? 1.0 : 1.25) * rem * side, vertical: (compact ? 0.45 : 0.6) * rem),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (leading != null) ...[leading!, SizedBox(width: 0.5 * rem)],
             Flexible(
-              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600, letterSpacing: tv ? 0.2 : 0, color: fg, height: 1.2)),
+              child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: fontSize, fontWeight: look.fontWeight ?? FontWeight.w600, letterSpacing: tv ? 0.2 : 0, color: fg, height: 1.2)),
             ),
           ],
         ),

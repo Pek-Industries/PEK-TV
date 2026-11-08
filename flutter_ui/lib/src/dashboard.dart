@@ -141,7 +141,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   /// The press-and-hold menu of one widget.
   Future<void> _menu(String id) async {
-    if (_moving) return;
+    if (_moving || Store.dashboardLocked) return; // a skin that fixes the dashboard leaves nothing to move, resize or delete
     final it = Store.dashboardItems().where((e) => e.id == id).firstOrNull;
     if (it == null || !mounted) return;
     final p = context.pek;
@@ -382,7 +382,7 @@ class _DashboardPageState extends State<DashboardPage> {
             Heading(
               'Dashboard',
               weather: true,
-              trailing: PekButton(compact: true, label: 'Add widget', onTap: _add),
+              trailing: Store.dashboardLocked ? null : PekButton(compact: true, label: 'Add widget', onTap: _add),
             ),
             FutureBuilder<List<PluginInfo>>(
               future: _plugins,
@@ -870,9 +870,9 @@ class _AddWidget extends StatelessWidget {
           rows.add(ListRow(
             autofocus: first,
             title: 'Reset to default layout',
-            subtitle: 'Clock, weather, continue watching, recently added, favorites',
+            subtitle: Store.skinArrangesDashboard ? 'Back to the arrangement of this skin' : 'Clock, weather, continue watching, recently added, favorites',
             onTap: () {
-              Store.setDashboardItems(Store.dashboardDefault());
+              Store.setDashboardItems(Store.dashboardResetTarget());
               Navigator.pop(context);
             },
           ));

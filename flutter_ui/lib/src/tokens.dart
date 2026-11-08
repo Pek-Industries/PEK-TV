@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'activity.dart';
+import 'skin_layout.dart';
 import 'tv_mode.dart';
 
 /// The design tokens from style.css. Default = :root (the light "sx" theme). [netflix] = html.nf-on.
@@ -74,10 +75,14 @@ class PekScope extends InheritedWidget {
     required this.safePct,
     required this.rem,
     required this.size,
+    this.layout = SkinLayout.none,
     required super.child,
   });
 
   final PekTokens tokens;
+
+  /// How the skin in use rearranges the app (menu, buttons, dashboard, ...). [SkinLayout.none] for a skin that does not.
+  final SkinLayout layout;
   /// The 10-foot look (html.pek-tv): bigger text, safe margins, bold focus ring. Follows Settings > TV mode.
   final bool isTv;
 
@@ -105,7 +110,7 @@ class PekScope extends InheritedWidget {
   static PekScope of(BuildContext c) => c.dependOnInheritedWidgetOfExactType<PekScope>()!;
 
   @override
-  bool updateShouldNotify(PekScope o) => tokens != o.tokens || isTv != o.isTv || tvDevice != o.tvDevice || safePct != o.safePct || rem != o.rem || size != o.size;
+  bool updateShouldNotify(PekScope o) => tokens != o.tokens || isTv != o.isTv || tvDevice != o.tvDevice || safePct != o.safePct || rem != o.rem || size != o.size || layout != o.layout;
 }
 
 extension PekContext on BuildContext {
@@ -115,9 +120,10 @@ extension PekContext on BuildContext {
 /// Wraps the whole app. html.pek-tv: font-size clamp(16px, 1.5625vw, 64px) on the root, so everything in rem scales
 /// with the screen width (1920 wide = 30px). On a phone 1rem = 16px. The TV look follows Settings > TV mode (tv_mode.dart).
 class PekRoot extends StatelessWidget {
-  const PekRoot({super.key, required this.isPhone, required this.child, this.tokens = PekTokens.light});
+  const PekRoot({super.key, required this.isPhone, required this.child, this.tokens = PekTokens.light, this.layout = SkinLayout.none});
   final bool isPhone;
   final PekTokens tokens;
+  final SkinLayout layout;
   final Widget child;
 
   @override
@@ -136,6 +142,7 @@ class PekRoot extends StatelessWidget {
       safePct: TvMode.safe,
       rem: rem,
       size: size,
+      layout: layout,
       child: PekBackdrop(
         tokens: tokens,
         child: PekIdlePointer(

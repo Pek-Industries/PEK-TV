@@ -35,6 +35,15 @@ Examples
 
 Spec file (batch): [{"name": "Sunset", "accent": "#ffb347", "bg": "...", "surface": "...", "text": "...", "radius": 14,
                      "mode": "dark", "hue": 30, "glow": true, "tokens": {"textMuted": "#aaa"}}]
+
+Layout (beyond colours): a skin may also move the menu, rename / reorder / remove its buttons, restyle and animate buttons
+(colours, gradient, moving gradient, shimmer), arrange the dashboard and move the mini player. It is plain data, no code. Put a
+"layout" object in a batch spec, or pass a JSON file with `new --layout layout.json`. See SKINS.md for every field.
+
+    {"name": "Arcade", "accent": "#ff2bd6",
+     "layout": {"nav": {"position": "right", "show": "icons", "hide": ["duplicates"]},
+                "buttons": {"radius": 8, "primary": {"gradient": ["#ff2bd6", "#00d4ff"], "anim": "flow", "speed": 3}},
+                "dashboard": {"items": [{"type": "clock", "size": "m"}, {"type": "weather"}], "locked": false}}}
 """
 import argparse, colorsys, json, math, os, re, sys, zipfile
 
@@ -50,6 +59,169 @@ NO_CSS = "skins can't contain CSS (skin.css): a skin is colours and a corner siz
 
 class SkinError(Exception):
     pass
+
+
+# ---------------------------------------------------------------- layout (port of SkinLayout.problems in flutter_ui/lib/src/skin_layout.dart)
+# The app is forgiving (it drops what it does not know). This tool is strict, so a typo is an error you see, not a silent no-op.
+SCREEN_ID = re.compile(r"^(plugin:[A-Za-z0-9_-]{1,80}|[a-z][a-z0-9]{0,23})$")
+PROTECTED_SCREENS = {"dashboard", "settings", "more", "mhome", "msettings"}   # a skin can never hide these
+COLOR_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+PALETTE_NAMES = {"bg", "bgElevated", "surface", "surfaceFocused", "border", "borderFocus", "text", "textMuted", "accent", "accentGlow"}
+ICON_NAMES = {"home", "movie", "tv", "music", "news", "search", "history", "favorite", "heart", "copy", "help", "plugin", "settings",
+              "more", "star", "bolt", "fire", "play", "live", "folder", "person", "cloud", "bookmark", "download", "game", "radio",
+              "podcast", "explore", "info", "grid", "list", "library", "camera", "rocket", "palette", "bell", "lock", "tune",
+              "sparkle", "trophy"}
+DASH_TYPES = {"clock", "weather", "continue", "recent", "favorites", "plugin", "nowplaying", "albums", "playlists", "shows", "pinned",
+              "stats", "surprise", "upnext", "watched", "recommend"}
+LAYOUT_ENUMS = {"position": ("left", "right", "top", "bottom"), "show": ("both", "icons", "text"), "align": ("start", "center", "end"),
+                "shape": ("pill", "rounded", "square"), "anim": ("none", "flow", "shimmer", "breathe"), "when": ("always", "focus"),
+                "miniPlayer": ("top", "bottom", "hidden")}
+PAINT_KEYS = {"fill", "gradient", "angle", "text", "border", "glow", "anim", "speed", "when"}
+NAV_KEYS = {"position", "show", "align", "shape", "width", "gap", "order", "hide", "labels", "icons", "brand", "footer", "paint", "activePaint"}
+BUTTON_KEYS = {"shape", "radius", "size", "padding", "borderWidth", "uppercase", "weight", "outline", "focusScale", "primary", "secondary"}
+
+
+def check_layout(layout):
+    """Checks a skin.json "layout" object with the app's rules, in plain words. Returns it unchanged or raises SkinError."""
+    bad = []
+
+    def is_num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    def num(path, v, lo, hi):
+        if not is_num(v) or not lo <= v <= hi:
+            bad.append("%s must be a number between %s and %s" % (path, lo, hi))
+
+    def enum(path, key, v):
+        if not isinstance(v, str) or v not in LAYOUT_ENUMS[key]:
+            bad.append("%s must be one of: %s" % (path, ", ".join(LAYOUT_ENUMS[key])))
+
+    def colour(path, v):
+        if not isinstance(v, str) or not (v in PALETTE_NAMES or COLOR_RE.match(v)):
+            bad.append("%s: %r is not a colour (use #rrggbb, #rrggbbaa or a palette name like accent)" % (path, v))
+
+    def keys(path, obj, allowed):
+        if not isinstance(obj, dict):
+            bad.append("%s must be an object" % path)
+            return False
+        for k in obj:
+            if k not in allowed:
+                bad.append("%s: unknown field %r" % (path, k))
+        return True
+
+    def paint(path, p):
+        if not keys(path, p, PAINT_KEYS):
+            return
+        for k in ("fill", "text", "border", "glow"):
+            if k in p:
+                colour("%s.%s" % (path, k), p[k])
+        if "gradient" in p:
+            g = p["gradient"]
+            if not isinstance(g, list) or not 2 <= len(g) <= 6:
+                bad.append("%s.gradient needs 2 to 6 colours" % path)
+            else:
+                for c in g:
+                    colour("%s.gradient" % path, c)
+        if "angle" in p:
+            num("%s.angle" % path, p["angle"], -360, 360)
+        if "speed" in p:
+            num("%s.speed" % path, p["speed"], 0.5, 20)
+        for k in ("anim", "when"):
+            if k in p:
+                enum("%s.%s" % (path, k), k, p[k])
+        if p.get("anim") == "flow" and not (isinstance(p.get("gradient"), list) and len(p["gradient"]) >= 2):
+            bad.append("%s: anim flow needs a gradient of 2 or more colours" % path)
+
+    if not isinstance(layout, dict):
+        raise SkinError('"layout" must be an object')
+    keys("layout", layout, {"nav", "buttons", "dashboard", "miniPlayer", "poster"})
+
+    nav = layout.get("nav")
+    if nav is not None and keys("layout.nav", nav, NAV_KEYS):
+        for k in ("position", "show", "align", "shape"):
+            if k in nav:
+                enum("nav.%s" % k, k, nav[k])
+        if "width" in nav:
+            num("nav.width", nav["width"], 0.7, 1.6)
+        if "gap" in nav:
+            num("nav.gap", nav["gap"], 0, 2)
+        for k in ("order", "hide"):
+            if k in nav:
+                ids = nav[k]
+                if not isinstance(ids, list) or len(ids) > 40:
+                    bad.append("nav.%s must be a list of at most 40 screen ids" % k)
+                    continue
+                for i in ids:
+                    if not isinstance(i, str) or not SCREEN_ID.match(i):
+                        bad.append("nav.%s: %r is not a screen id" % (k, i))
+                    elif k == "hide" and i in PROTECTED_SCREENS:
+                        bad.append("nav.hide: %r cannot be hidden (the app would be unusable without it)" % i)
+        for k, check in (("labels", lambda v: isinstance(v, str) and 1 <= len(v.strip()) and len(v) <= 24),
+                         ("icons", lambda v: isinstance(v, str) and v in ICON_NAMES)):
+            if k in nav:
+                if not isinstance(nav[k], dict):
+                    bad.append("nav.%s must be an object" % k)
+                    continue
+                for i, v in nav[k].items():
+                    if not SCREEN_ID.match(i):
+                        bad.append("nav.%s: %r is not a screen id" % (k, i))
+                    if not check(v):
+                        bad.append("nav.%s.%s: %s" % (k, i, "must be 1 to 24 characters" if k == "labels" else "%r is not an icon name" % (v,)))
+        for k, mx in (("brand", 24), ("footer", 40)):
+            if k in nav and (not isinstance(nav[k], str) or len(nav[k]) > mx):
+                bad.append("nav.%s must be text of at most %d characters" % (k, mx))
+        for k in ("paint", "activePaint"):
+            if k in nav:
+                paint("nav.%s" % k, nav[k])
+
+    buttons = layout.get("buttons")
+    if buttons is not None and keys("layout.buttons", buttons, BUTTON_KEYS):
+        if "shape" in buttons:
+            enum("buttons.shape", "shape", buttons["shape"])
+        for k, lo, hi in (("radius", 0, 999), ("size", 0.8, 1.5), ("padding", 0.5, 2), ("borderWidth", 0, 6), ("weight", 400, 900), ("focusScale", 1.0, 1.2)):
+            if k in buttons:
+                num("buttons.%s" % k, buttons[k], lo, hi)
+        for k in ("uppercase", "outline"):
+            if k in buttons and not isinstance(buttons[k], bool):
+                bad.append("buttons.%s must be true or false" % k)
+        for k in ("primary", "secondary"):
+            if k in buttons:
+                paint("buttons.%s" % k, buttons[k])
+
+    dash = layout.get("dashboard")
+    if dash is not None and keys("layout.dashboard", dash, {"items", "locked"}):
+        items = dash.get("items", [])
+        if not isinstance(items, list) or len(items) > 40:
+            bad.append("dashboard.items must be a list of at most 40 widgets")
+        else:
+            seen = set()
+            for it in items:
+                if not keys("dashboard item", it, {"type", "size", "folder"}):
+                    continue
+                t = it.get("type")
+                if not isinstance(t, str) or t not in DASH_TYPES:
+                    bad.append("dashboard: %r is not a widget (known: %s)" % (t, ", ".join(sorted(DASH_TYPES))))
+                    continue
+                if it.get("size", "s") not in ("s", "m"):
+                    bad.append("dashboard: the size of %s must be s or m" % t)
+                folder = it.get("folder", "")
+                if t == "plugin" and not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(folder)):
+                    bad.append("dashboard: a plugin widget needs a folder name")
+                key = "plugin:%s" % folder if t == "plugin" else t
+                if key in seen:
+                    bad.append("dashboard: %r is listed twice" % key)
+                seen.add(key)
+        if "locked" in dash and not isinstance(dash["locked"], bool):
+            bad.append("dashboard.locked must be true or false")
+
+    if "miniPlayer" in layout:
+        enum("miniPlayer", "miniPlayer", layout["miniPlayer"])
+    if "poster" in layout and layout["poster"] not in ("s", "m", "l"):
+        bad.append("poster must be s, m or l")
+
+    if bad:
+        raise SkinError("layout: " + "; ".join(bad[:6]) + ("; and %d more" % (len(bad) - 6) if len(bad) > 6 else ""))
+    return layout
 
 
 # ---------------------------------------------------------------- colours
@@ -227,6 +399,8 @@ def build(spec):
     manifest = {"name": name[:60], "author": str(spec.get("author") or "")[:80] or "PEK TV",
                 "version": str(spec.get("version") or "1.0.0")[:20],
                 "description": str(spec.get("description") or "")[:200], "pek_api": 1, "tokens": tokens}
+    if spec.get("layout") is not None:
+        manifest["layout"] = check_layout(spec["layout"])
     files = {"skin.json": (json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode("utf-8")}
 
     if spec.get("css"):
@@ -342,6 +516,8 @@ def spec_from_args(a):
     spec["mode"] = "light" if a.light else "dark"
     spec["glow"], spec["force"] = a.glow, a.force
     spec["files"] = a.file or []
+    if getattr(a, "layout", None):
+        spec["layout"] = json.load(open(a.layout, encoding="utf-8"))
     return spec
 
 
@@ -359,6 +535,7 @@ def main(argv=None):
     n.add_argument("--glow", action="store_true", help="add a soft accent glow behind the app (web UI only)")
     n.add_argument("--force", action="store_true", help="allow low-contrast text")
     n.add_argument("--file", action="append", help="extra image or font to include (repeatable)")
+    n.add_argument("--layout", help="a JSON file with a layout object: menu, buttons (colours, gradient, animation), dashboard, mini player")
     n.add_argument("--out", default=".", help="folder for the .zip (default: here)")
     n.add_argument("--folder", action="store_true", help="write a skin folder instead of a .zip")
     n.add_argument("--print", action="store_true", help="print skin.json and write nothing")
@@ -375,7 +552,10 @@ def main(argv=None):
             check_files(files)
             if sid in RESERVED_IDS: raise SkinError('"%s" is the id of a skin that ships with PEK TV' % sid)
             m = json.loads(files["skin.json"].decode("utf-8").lstrip("\ufeff"))
-            print("OK  id=%s  name=%s  files=%d  tokens=%d" % (sid, m.get("name"), len(files), len(m.get("tokens") or {})))
+            if m.get("layout") is not None:
+                check_layout(m["layout"])
+            print("OK  id=%s  name=%s  files=%d  tokens=%d%s" % (sid, m.get("name"), len(files), len(m.get("tokens") or {}),
+                                                              "  layout=yes" if m.get("layout") else ""))
             return 0
         specs = json.load(open(a.spec, encoding="utf-8")) if a.cmd == "batch" else [spec_from_args(a)]
         if isinstance(specs, dict): specs = [specs]

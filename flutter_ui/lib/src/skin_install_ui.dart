@@ -155,6 +155,7 @@ class _SkinInstallPageState extends State<SkinInstallPage> {
           [if (pr.version.isNotEmpty) 'Version ${pr.version}', if (pr.author.isNotEmpty) 'by ${pr.author}'].join(' \u00b7 '),
           pr.description,
           'Sets ${pr.tokenCount} colours and sizes. This app uses the colours and the corner size.',
+          if (pr.layout != null && !pr.layout!.isEmpty) 'Also rearranges the app: ${pr.layout!.summary.join(', ')}.',
           if (replaced) 'This replaces the version you already have.',
           'A skin only changes how PEK TV looks. It can\u2019t run code or reach the network.',
         ]..removeWhere((l) => l.isEmpty);

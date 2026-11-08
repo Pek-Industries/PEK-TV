@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'common.dart';
+import 'skins.dart' show Skins;
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -41,7 +42,8 @@ class Layouts {
     return sizes.any((s) => s.$1 == v) ? v! : 'auto';
   }
 
-  static String get poster => posterSetting == 'auto' ? current.poster : posterSetting;
+  /// The person's own size; on Auto, the skin's (skin_layout.dart `poster`) or else the layout's.
+  static String get poster => posterSetting == 'auto' ? (Skins.layout.poster ?? current.poster) : posterSetting;
 
   /// Multiplier for the poster grid's minimum cell width.
   static double get posterScale => switch (poster) { 's' => 0.75, 'l' => 1.35, _ => 1.0 };

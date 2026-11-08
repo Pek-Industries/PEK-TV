@@ -28,6 +28,8 @@ import 'plugin_hooks.dart';
 import 'plugin_host.dart' show PluginBack, PluginHost;
 import 'plugin_store_ui.dart' show PluginPicture;
 import 'plugin_ui.dart';
+import 'skin_button.dart';
+import 'skin_layout.dart';
 import 'skins.dart' show Skins;
 import 'store.dart';
 import 'tokens.dart';
@@ -81,7 +83,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   // Music mode is read once: switching it rebuilds the whole shell (main.dart keys it on the mode).
   final bool _music = Store.musicMode;
   String get _home => _music ? 'mhome' : 'dashboard';
-  List<String> get _pages => _music ? _musicPages : _swipePages;
+  /// The pages in the order of the tab bar: the app's own, with the skin's order and removed pages applied (skin_layout.dart).
+  /// The home page and "More" (music mode: Home and Settings) always stay, so every screen can still be reached.
+  List<String> get _pages => Skins.layout.nav.arrange(_music ? _musicPages : _swipePages, keep: _music ? const {'mhome', 'msettings'} : const {'dashboard', 'more'});
   late String _tab = _home; // TV: sidebar selection
   Timer? _syncTimer;
   Timer? _backupTimer;
@@ -120,8 +124,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return out;
   }
 
-  /// The menu with one entry per pinned plugin screen, just above Plugins (a plugin's own plugin.json ui.navTab names it).
+  /// The menu with the skin's order, removed buttons and names applied (skin_layout.dart). Dashboard and Settings always stay.
   List<(String, String)> get _nav {
+    final base = _navBase;
+    final nav = Skins.layout.nav;
+    final ids = nav.arrange([for (final e in base) e.$1], keep: _music ? const {'mhome', 'msettings'} : const {'dashboard', 'settings'});
+    final titles = {for (final e in base) e.$1: e.$2};
+    return [for (final id in ids) (id, nav.labels[id] ?? titles[id] ?? id)];
+  }
+
+  /// The menu with one entry per pinned plugin screen, just above Plugins (a plugin's own plugin.json ui.navTab names it).
+  List<(String, String)> get _navBase {
     if (_music) return _musicNav;
     final i = _navItems.indexWhere((e) => e.$1 == 'plugins');
     return [
@@ -136,14 +149,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// ('plugin:<folder>' for a pinned plugin, 'pin+:<n>' for an empty slot).
   List<String> get _more {
     final pins = _pinnedScreens;
-    return [
+    return Skins.layout.nav.arrange([
       ..._moreIds,
       for (final pl in pins) 'plugin:${pl.folder}',
       for (var i = pins.length; i < PluginPins.max; i++) 'pin+:$i',
-    ];
+    ], keep: const {'settings'});
   }
 
   String _title(String id) {
+    final named = Skins.layout.nav.labels[id]; // a name the skin gave this screen
+    if (named != null) return named;
     if (id.startsWith('plugin:')) {
       final pl = _pluginScreens.where((e) => 'plugin:${e.folder}' == id).firstOrNull;
       if (pl != null) return pl.navTab.isEmpty ? pl.name : pl.navTab;
@@ -351,7 +366,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         return DashboardPage(padding: pad, onOpenResume: () => _open('history'), onOpenFavorites: () => _open('favorites'), onOpenMusic: () => _open('music'));
       case 'movies':
       case 'shows':
-        return LibraryPage(key: ValueKey(id), tab: id, title: _titleOf(id), padding: pad);
+        return LibraryPage(key: ValueKey(id), tab: id, title: _title(id), padding: pad);
       case 'music':
         return MusicPage(padding: pad);
       case 'more':
@@ -391,25 +406,55 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Widget _phone(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
-    final bottom = MediaQuery.paddingOf(context).bottom;
+    final skin = Skins.layout;
+    final nav = skin.nav;
+    final pages = _pages;
+    // A skin may have removed pages since the person last swiped: land on one that exists.
+    if (_page >= pages.length) {
+      _page = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _pageN.value = 0;
+        if (_pager.hasClients) _pager.jumpToPage(0);
+      });
+    }
+    final inset = MediaQuery.paddingOf(context);
+    final onTop = nav.position == NavPosition.top; // a phone has the bar at the bottom (the app's own) or at the top; sides do not fit
+    final showIcon = nav.show != NavShow.text;
+    final showLabel = nav.show != NavShow.icons;
+    final barPaint = nav.paint.isEmpty ? null : nav.paint;
+    final barActive = nav.activePaint.isEmpty ? barPaint : nav.activePaint.over(nav.paint);
     final bar = Container(
-      padding: EdgeInsets.only(bottom: bottom),
-      decoration: BoxDecoration(color: t.bgElevated, border: Border(top: BorderSide(color: t.border))),
+      padding: EdgeInsets.only(top: onTop ? inset.top : 0, bottom: onTop ? 0 : inset.bottom),
+      decoration: BoxDecoration(color: t.bgElevated, border: onTop ? Border(bottom: BorderSide(color: t.border)) : Border(top: BorderSide(color: t.border))),
       child: IntrinsicHeight(
         child: ValueListenableBuilder<int>(
           valueListenable: _pageN,
           builder: (context, page, _) => Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (var i = 0; i < _pages.length; i++)
-                Expanded(child: _BarItem(label: _swipeLabel[_pages[i]]!, icon: _swipeIcon[_pages[i]]!, active: i == page, badge: _pages[i] == 'updates', onTap: () => _goTo(i))),
+              for (var i = 0; i < pages.length; i++)
+                Expanded(
+                  child: _BarItem(
+                    label: nav.labels[pages[i]] ?? _swipeLabel[pages[i]]!,
+                    icon: SkinIcons.byName(nav.icons[pages[i]]) ?? _swipeIcon[pages[i]]!,
+                    showIcon: showIcon,
+                    showLabel: showLabel,
+                    paint: i == page ? barActive : barPaint,
+                    active: i == page,
+                    badge: pages[i] == 'updates',
+                    onTap: () => _goTo(i),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
+    final mini = skin.miniPlayer ?? MiniZone.bottom;
     return Column(
       children: [
+        if (onTop) bar,
+        if (mini == MiniZone.top) const MiniPlayer(),
         Expanded(
           child: PageView(
             controller: _pager,
@@ -420,11 +465,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               _pageN.value = i;
               if (_pages[i] == 'updates') unawaited(News.markAllSeen()); // swiped to Updates: everything counts as read
             },
-            children: [for (final id in _pages) RepaintBoundary(child: _KeepAlive(child: _body(context, id)))],
+            children: [for (final id in pages) RepaintBoundary(key: ValueKey('page-$id'), child: _KeepAlive(child: _body(context, id)))],
           ),
         ),
-        const MiniPlayer(),
-        bar,
+        if (mini == MiniZone.bottom) const MiniPlayer(),
+        if (!onTop) bar,
       ],
     );
   }
@@ -433,77 +478,134 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   Widget _tv(BuildContext context) => ListenableBuilder(listenable: Layouts.changes, builder: (context, _) => _tvLayout(context));
 
+  /// The menu buttons in a scrolling line (a column for a side menu, a row for a top / bottom one). [align] only matters when the
+  /// buttons do not fill the bar: the list then shrinks to its buttons and sits at the start, the middle or the end.
+  Widget _navList(Axis axis, int count, IndexedWidgetBuilder itemBuilder, double gap, NavAlign align) {
+    final list = ListView.separated(
+      scrollDirection: axis,
+      shrinkWrap: align != NavAlign.start,
+      padding: axis == Axis.vertical ? const EdgeInsets.all(4) : null,
+      itemCount: count,
+      separatorBuilder: (_, __) => axis == Axis.vertical ? SizedBox(height: gap) : SizedBox(width: gap),
+      itemBuilder: itemBuilder,
+    );
+    if (align == NavAlign.start) return list;
+    final center = align == NavAlign.center;
+    return Align(
+      alignment: axis == Axis.vertical ? (center ? Alignment.center : Alignment.bottomCenter) : (center ? Alignment.center : Alignment.centerRight),
+      child: list,
+    );
+  }
+
+  /// The TV / wide-screen shell. Without a skin layout: the menu on the left (across the top with the Top bar layout), the mini
+  /// player at the bottom. A skin (skin_layout.dart) can put the menu on any side, give it icons, reorder / rename / remove its
+  /// buttons, change the corner of its buttons, and move or hide the mini player.
   Widget _tvLayout(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
-    final content = Expanded(child: Column(children: [Expanded(child: KeyedSubtree(key: ValueKey(_tab), child: _body(context, _tab))), const MiniPlayer()]));
-    if (Layouts.id == 'topbar') {
-      // Menu across the top, like Arctic.
+    final skin = Skins.layout;
+    final nav = skin.nav;
+    final items = _nav;
+    final pos = nav.position ?? (Layouts.id == 'topbar' ? NavPosition.top : NavPosition.left);
+    final mini = skin.miniPlayer ?? MiniZone.bottom;
+    final show = nav.show ?? NavShow.text;
+    final showIcon = show != NavShow.text;
+    final showLabel = show != NavShow.icons;
+    final radius = nav.shape?.radius(t.radius) ?? 12.0;
+    final brand = nav.brand ?? (_music ? 'PEK Music' : 'PEK TV');
+    final footer = nav.footer ?? 'System Online';
+    final content = Expanded(
+      child: Column(children: [
+        if (mini == MiniZone.top) const MiniPlayer(),
+        Expanded(child: KeyedSubtree(key: ValueKey(_tab), child: _body(context, _tab))),
+        if (mini == MiniZone.bottom) const MiniPlayer(),
+      ]),
+    );
+
+    // Colours / gradient / animation for the menu buttons: the general paint, and the selected button's on top of it.
+    final navPaint = nav.paint.isEmpty ? null : nav.paint;
+    final navActive = nav.activePaint.isEmpty ? navPaint : nav.activePaint.over(nav.paint);
+
+    Widget item(int i, {required bool fill}) {
+      final id = items[i].$1;
+      return _NavItem(
+        paint: id == _tab ? navActive : navPaint,
+        label: items[i].$2,
+        icon: SkinIcons.byName(nav.icons[id]) ?? SkinIcons.forScreen(id),
+        showIcon: showIcon,
+        showLabel: showLabel,
+        radius: radius,
+        fill: fill,
+        markerRight: pos == NavPosition.right,
+        active: id == _tab,
+        autofocus: id == _tab,
+        onTap: () => setState(() => _tab = id),
+      );
+    }
+
+    if (pos == NavPosition.top || pos == NavPosition.bottom) {
+      // Menu across the top (like Arctic) or the bottom.
+      final top = pos == NavPosition.top;
       final bar = Container(
-        padding: EdgeInsets.fromLTRB(rem + p.safeX, 0.75 * rem + p.safeY, rem + p.safeX, 0.75 * rem),
-        decoration: BoxDecoration(color: t.bgElevated, border: Border(bottom: BorderSide(color: t.border))),
+        padding: EdgeInsets.fromLTRB(rem + p.safeX, 0.75 * rem + (top ? p.safeY : 0), rem + p.safeX, 0.75 * rem + (top ? 0 : p.safeY)),
+        decoration: BoxDecoration(
+          color: t.bgElevated,
+          border: Border(top: top ? BorderSide.none : BorderSide(color: t.border), bottom: top ? BorderSide(color: t.border) : BorderSide.none),
+        ),
         child: Row(children: [
-          Padding(padding: EdgeInsets.only(right: 1.5 * rem), child: Text(_music ? 'PEK Music' : 'PEK TV', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.accent))),
+          if (brand.isNotEmpty) Padding(padding: EdgeInsets.only(right: 1.5 * rem), child: Text(brand, maxLines: 1, style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.accent))),
           Expanded(
             child: TvNav.region(
               memoryKey: 'shell/topbar',
               child: SizedBox(
-              height: 3 * rem,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _nav.length,
-                separatorBuilder: (_, __) => SizedBox(width: 0.5 * rem),
-                itemBuilder: (_, i) => _NavItem(
-                  label: _nav[i].$2,
-                  active: _nav[i].$1 == _tab,
-                  autofocus: _nav[i].$1 == _tab,
-                  onTap: () => setState(() => _tab = _nav[i].$1),
-                ),
+                height: 3 * rem,
+                child: _navList(Axis.horizontal, items.length, (_, i) => item(i, fill: false), 0.5 * rem * (nav.gap ?? 1.0), nav.align ?? NavAlign.start),
               ),
-            )),
+            ),
           ),
         ]),
       );
-      return Column(children: [bar, content]);
+      return Column(children: top ? [bar, content] : [content, bar]);
     }
+
+    final right = pos == NavPosition.right;
     final slim = Layouts.id == 'wall' || Layouts.id == 'compact';
+    final iconsOnly = show == NavShow.icons;
+    var width = (slim ? 11 : 14) * rem;
+    if (iconsOnly) width = 6 * rem + p.safeX;
+    if (nav.width != null) width = math.max(width * nav.width!, (iconsOnly ? 5.6 : 7.0) * rem + p.safeX);
     final sidebar = Container(
-      width: (slim ? 11 : 14) * rem,
-      padding: EdgeInsets.fromLTRB(rem + p.safeX, 1.5 * rem + p.safeY, rem, 1.5 * rem + p.safeY),
-      decoration: BoxDecoration(color: t.bgElevated, border: Border(right: BorderSide(color: t.border))),
+      width: width,
+      padding: right
+          ? EdgeInsets.fromLTRB(rem, 1.5 * rem + p.safeY, rem + p.safeX, 1.5 * rem + p.safeY)
+          : EdgeInsets.fromLTRB(rem + p.safeX, 1.5 * rem + p.safeY, rem, 1.5 * rem + p.safeY),
+      decoration: BoxDecoration(color: t.bgElevated, border: right ? Border(left: BorderSide(color: t.border)) : Border(right: BorderSide(color: t.border))),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: EdgeInsets.only(left: 0.5 * rem, bottom: 2 * rem),
-            child: Text(_music ? 'PEK Music' : 'PEK TV', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.accent)),
-          ),
+          if (brand.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(left: 0.5 * rem, bottom: 2 * rem),
+              child: Text(brand, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.accent)),
+            ),
           Expanded(
             child: TvNav.region(
               memoryKey: 'shell/sidebar',
               columnEdgesStop: true,
-              child: ListView.separated(
-              padding: const EdgeInsets.all(4),
-              itemCount: _nav.length,
-              separatorBuilder: (_, __) => SizedBox(height: (Layouts.id == 'compact' ? 0.3 : 0.5) * rem),
-              itemBuilder: (_, i) => _NavItem(
-                label: _nav[i].$2,
-                active: _nav[i].$1 == _tab,
-                autofocus: _nav[i].$1 == _tab,
-                onTap: () => setState(() => _tab = _nav[i].$1),
-              ),
-            )),
+              child: _navList(Axis.vertical, items.length, (_, i) => item(i, fill: true), (Layouts.id == 'compact' ? 0.3 : 0.5) * rem * (nav.gap ?? 1.0), nav.align ?? NavAlign.start),
+            ),
           ),
-          Container(
-            padding: EdgeInsets.only(top: rem),
-            decoration: BoxDecoration(border: Border(top: BorderSide(color: t.border))),
-            child: Text('System Online', style: TextStyle(fontSize: 0.85 * rem, color: t.textMuted)),
-          ),
+          if (footer.isNotEmpty)
+            Container(
+              padding: EdgeInsets.only(top: rem),
+              decoration: BoxDecoration(border: Border(top: BorderSide(color: t.border))),
+              child: Text(footer, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 0.85 * rem, color: t.textMuted)),
+            ),
         ],
       ),
     );
-    return Row(children: [sidebar, content]);
+    return Row(children: right ? [content, sidebar] : [sidebar, content]);
   }
 }
 
@@ -639,49 +741,100 @@ class _MorePage extends StatelessWidget {
   }
 }
 
-/// `.nav-item` in the sidebar (and in the phone "More" sheet).
+/// `.nav-item` in the sidebar (and in the phone "More" sheet). Without a skin layout: the name only, 12px corners, the active
+/// marker on the left. A skin can add an icon (or show only the icon), change the corner and mirror the marker.
 class _NavItem extends StatelessWidget {
-  const _NavItem({required this.label, required this.active, required this.onTap, this.autofocus = false, this.center = false});
+  const _NavItem({
+    required this.label,
+    required this.active,
+    required this.onTap,
+    this.autofocus = false,
+    this.center = false,
+    this.icon,
+    this.showIcon = false,
+    this.showLabel = true,
+    this.radius = 12,
+    this.fill = true,
+    this.markerRight = false,
+    this.paint,
+  });
+
+  /// The skin's colours / gradient / animation for this button (already merged for the selected one). null = the app's own look.
+  final ButtonPaint? paint;
   final String label;
   final bool active;
   final bool autofocus;
   final bool center;
   final VoidCallback onTap;
+  final IconData? icon;
+  final bool showIcon;
+  final bool showLabel;
+  final double radius;
+
+  /// Stretch across the bar (a side menu). false = the button's own width (a top / bottom menu, where the width is unbounded).
+  final bool fill;
+  final bool markerRight;
 
   @override
   Widget build(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
+    final look = paint == null || paint!.isEmpty ? null : PaintLook(paint!, t);
+    final appText = active ? t.text : t.textMuted;
+    final ownText = look != null && (look.painted || look.textColor != null); // the skin colours this button's label
+    final textColor = look?.label(appText) ?? appText;
+    final glyph = showIcon && icon != null ? Icon(icon, size: 1.3 * rem, color: ownText ? textColor : (active ? t.accent : t.textMuted)) : null;
+    final text = Text(
+      label,
+      textAlign: center ? TextAlign.center : TextAlign.start,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: rem, fontWeight: active ? FontWeight.w600 : FontWeight.w500, color: textColor),
+    );
+    final appBg = active ? t.surfaceFocused : null;
+    final bg = look == null ? appBg : look.boxFill(appBg);
+    final Widget inner;
+    if (glyph != null && showLabel) {
+      inner = Row(
+        mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+        mainAxisAlignment: center ? MainAxisAlignment.center : MainAxisAlignment.start,
+        children: [glyph, SizedBox(width: 0.7 * rem), Flexible(child: text)],
+      );
+    } else if (glyph != null) {
+      inner = Center(child: Tooltip(message: label, child: glyph)); // icon only: the name is still read aloud and shown on hover
+    } else {
+      inner = text;
+    }
     return PekFocusable(
       autofocus: autofocus,
       onTap: onTap,
-      radius: 12,
-      background: active ? t.surfaceFocused : null,
+      radius: radius,
+      alignment: fill ? null : Alignment.center,
+      background: bg,
+      focusBackground: look != null && look.painted ? bg : null,
+      borderColor: look?.border,
+      borderWidth: p.layout.buttons.borderWidth ?? 1,
+      glow: look?.glow,
+      surface: look?.surface,
       child: Stack(
         children: [
           Padding(
             padding: EdgeInsets.symmetric(horizontal: rem, vertical: 0.7 * rem),
-            child: SizedBox(
-              width: double.infinity,
-              child: Text(
-                label,
-                textAlign: center ? TextAlign.center : TextAlign.start,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: rem, fontWeight: active ? FontWeight.w600 : FontWeight.w500, color: active ? t.text : t.textMuted),
-              ),
-            ),
+            child: fill ? SizedBox(width: double.infinity, child: inner) : inner,
           ),
           if (active)
             Positioned.fill(
               child: Align(
-                alignment: Alignment.centerLeft,
+                alignment: markerRight ? Alignment.centerRight : Alignment.centerLeft,
                 child: FractionallySizedBox(
                   heightFactor: 0.52,
                   child: Container(
                     width: 3,
-                    decoration: BoxDecoration(color: t.accent, borderRadius: const BorderRadius.horizontal(right: Radius.circular(3))),
+                    decoration: BoxDecoration(
+                      color: t.accent,
+                      borderRadius: markerRight ? const BorderRadius.horizontal(left: Radius.circular(3)) : const BorderRadius.horizontal(right: Radius.circular(3)),
+                    ),
                   ),
                 ),
               ),
@@ -692,38 +845,54 @@ class _NavItem extends StatelessWidget {
   }
 }
 
-/// `.bb-item` in the phone tab bar: an icon over a small label; the active item is bright, the rest are muted.
+/// `.bb-item` in the phone tab bar: an icon over a small label; the active item is bright, the rest are muted. A skin can show
+/// only the icons or only the names.
 class _BarItem extends StatelessWidget {
-  const _BarItem({required this.label, required this.icon, required this.active, required this.onTap, this.badge = false});
+  const _BarItem({required this.label, required this.icon, required this.active, required this.onTap, this.badge = false, this.showIcon = true, this.showLabel = true, this.paint});
+
+  /// The skin's colours / gradient / animation for this tab (already merged for the selected one). null = the app's own look.
+  final ButtonPaint? paint;
   final bool badge; // shows a dot while there are unread Updates
   final String label;
   final IconData icon;
   final bool active;
   final VoidCallback onTap;
+  final bool showIcon;
+  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
-    final c = active ? t.text : t.textMuted;
+    final look = paint == null || paint!.isEmpty ? null : PaintLook(paint!, t);
+    final appC = active ? t.text : t.textMuted;
+    final c = look?.label(appC) ?? appC;
+    final bg = look?.boxFill(null);
     return PekFocusable(
       onTap: onTap,
       minHeight: 58,
+      background: bg,
+      focusBackground: look != null && look.painted ? bg : null,
+      borderColor: look?.border,
+      borderWidth: p.layout.buttons.borderWidth ?? 1,
+      glow: look?.glow,
+      surface: look?.surface,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (badge)
-            ListenableBuilder(
-              listenable: Listenable.merge([News.unread, PluginUpdates.unseen]), // news OR a plugin update the person has not seen
-              builder: (context, _) => Stack(clipBehavior: Clip.none, children: [
-                Icon(icon, size: 22, color: c),
-                if (News.unread.value + PluginUpdates.unseen.value > 0) Positioned(right: -3, top: -1, child: Container(width: 9, height: 9, decoration: BoxDecoration(color: t.accent, shape: BoxShape.circle))),
-              ]),
-            )
-          else
-            Icon(icon, size: 22, color: c),
-          const SizedBox(height: 3),
-          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 0.68 * p.rem, fontWeight: active ? FontWeight.w600 : FontWeight.w500, color: c)),
+          if (showIcon)
+            if (badge)
+              ListenableBuilder(
+                listenable: Listenable.merge([News.unread, PluginUpdates.unseen]), // news OR a plugin update the person has not seen
+                builder: (context, _) => Stack(clipBehavior: Clip.none, children: [
+                  Icon(icon, size: 22, color: c),
+                  if (News.unread.value + PluginUpdates.unseen.value > 0) Positioned(right: -3, top: -1, child: Container(width: 9, height: 9, decoration: BoxDecoration(color: t.accent, shape: BoxShape.circle))),
+                ]),
+              )
+            else
+              Icon(icon, size: 22, color: c),
+          if (showIcon && showLabel) const SizedBox(height: 3),
+          if (showLabel) Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: (showIcon ? 0.68 : 0.85) * p.rem, fontWeight: active ? FontWeight.w600 : FontWeight.w500, color: c)),
         ],
       ),
     );

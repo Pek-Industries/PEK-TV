@@ -1,7 +1,8 @@
 # PEK TV skins
 
-A skin changes how PEK TV looks: its colours and its corner size.
-A skin can't run code, can't contain CSS and can't reach the network.
+A skin changes how PEK TV looks: its colours and its corner size. A skin can also change how the app is laid out (where the menu
+sits, which buttons it has, how buttons are coloured and animated, what the dashboard shows): see [Layout](#layout-menu-buttons-dashboard).
+A skin can't run code, can't contain CSS and can't reach the network: a layout is plain data (names, numbers, colours), never code.
 
 ## Installing and removing
 
@@ -55,10 +56,11 @@ a zip with the same id again updates the skin.
 | `version` | no | the Appearance list and the install screen |
 | `tokens` | no | colours and the corner size (`radius`); see the bundled `skins/neon/skin.json` for every token. The app draws the colours and `radius`; other tokens are checked but not drawn |
 | `tokens.bgImage` | no | accepted and checked (a plain CSS gradient, no `url()`), but **not drawn** by the Flutter app, which has no background image |
+| `layout` | no | where the menu sits, its buttons, button colours / shape / size / animation, the dashboard, the mini player, poster size. Plain data; see [Layout](#layout-menu-buttons-dashboard). The install screen lists what a skin rearranges |
 
 ## No CSS
 
-A skin is its colours and its corner size, nothing more. **A skin that contains a `skin.css` (any `.css` file) is refused**: by
+A skin is its colours, its corner size and (if it wants) a `layout` of plain data, nothing more. **A skin that contains a `skin.css` (any `.css` file) is refused**: by
 Skin from .zip / GitHub in the app, by the server, by `SkinBuilder` and by
 `tools/make_skin.py`. The message is "skins can't contain CSS (skin.css): a skin is colours and a corner size only. Remove the .css
 file and try again."
@@ -69,6 +71,163 @@ file and try again."
 No code of any kind (`.js`, `.py`, `.html`, `.svg`). Up to 60 files, 2 MB per file, 6 MB in total.
 The server (`backend/skin_install.h`) checks all of this again, so a hand-made request gets no
 more than the app does.
+
+## Layout: menu, buttons, dashboard
+
+A skin can rearrange the app, not only recolour it. **Everything is optional and independent**: set one thing or all of it, in any
+combination. What a skin leaves out stays as the app has it, so a skin with no `layout` looks and works exactly as before. A layout is
+**plain data** (names, numbers, colours, ids from fixed lists): no code, no callbacks, no files, nothing that reaches the network.
+
+It is written in code (`SkinBuilder` in Dart, `tools/make_skin.py`, or a `layout` object in `skin.json`). The Skin maker does not edit
+layouts, but editing a skin there keeps the layout it has. (The Skin Maker plugin is off on TV devices; code is how a skin gets a layout there.)
+
+```json
+{
+  "name": "Arcade",
+  "tokens": { "bg": "#05010d", "text": "#f6eaff", "accent": "#ff2bd6" },
+  "layout": {
+    "nav": {
+      "position": "right", "show": "icons", "align": "center", "shape": "pill",
+      "order": ["music", "movies"], "hide": ["duplicates", "unknown"],
+      "labels": { "shows": "Series" }, "icons": { "movies": "fire" },
+      "brand": "ARCADE", "footer": "",
+      "paint": { "fill": "surface", "border": "accent" },
+      "activePaint": { "gradient": ["#ff2bd6", "#00d4ff"], "anim": "flow", "speed": 3 }
+    },
+    "buttons": {
+      "radius": 8, "size": 1.1, "uppercase": true, "weight": 800, "borderWidth": 2,
+      "primary": { "gradient": ["#ff2bd6", "#7a5cff", "#00d4ff"], "anim": "flow", "speed": 3, "glow": "#ff2bd680", "text": "#ffffff" },
+      "secondary": { "border": "accent", "anim": "shimmer", "when": "focus" }
+    },
+    "dashboard": { "items": [ { "type": "clock", "size": "m" }, { "type": "nowplaying" }, { "type": "plugin", "folder": "weather" } ], "locked": false },
+    "miniPlayer": "top",
+    "poster": "l"
+  }
+}
+```
+
+The same in Dart (every call changes only what you pass, so the pieces combine in any order; `.layout(SkinLayout(...))` sets it all at once):
+
+```dart
+final arcade = SkinBuilder.fromAccent('Arcade', const Color(0xFFFF2BD6))
+    .nav(position: NavPosition.right, show: NavShow.icons, align: NavAlign.center, shape: ButtonShape.pill,
+         order: ['music', 'movies'], hide: ['duplicates', 'unknown'],
+         labels: {'shows': 'Series'}, icons: {'movies': 'fire'}, brand: 'ARCADE', footer: '',
+         paint: const ButtonPaint(fill: 'surface', border: 'accent'),
+         activePaint: const ButtonPaint(gradient: ['#ff2bd6', '#00d4ff'], anim: ButtonAnim.flow, speed: 3))
+    .buttons(radius: 8, size: 1.1, uppercase: true, weight: 800, borderWidth: 2,
+         primary: const ButtonPaint(gradient: ['#ff2bd6', '#7a5cff', '#00d4ff'], anim: ButtonAnim.flow, speed: 3, glow: '#ff2bd680', text: '#ffffff'),
+         secondary: const ButtonPaint(border: 'accent', anim: ButtonAnim.shimmer, when: AnimWhen.focus))
+    .dashboard(['clock:m', 'nowplaying', 'plugin:weather'])      // 'name', 'name:m' (wide), 'plugin:folder'
+    .miniPlayer(MiniZone.top)
+    .posters('l');
+final skin = arcade.build();   // throws SkinBuildException with a plain message on a mistake
+await skin.save();             // Settings > Appearance
+```
+
+### The menu (`layout.nav`)
+
+| Field | Values | What it does |
+|---|---|---|
+| `position` | `left`, `right`, `top`, `bottom` | where the menu sits. Default: the left (the top with the *Top bar* layout; the bottom on a phone). A phone has only `top` and `bottom` |
+| `show` | `text`, `icons`, `both` | what each button shows. Default: text on a TV, icon over name on a phone |
+| `align` | `start`, `center`, `end` | where the buttons sit along the bar when they do not fill it |
+| `shape` | `pill`, `rounded`, `square` | the corner of the menu buttons (`rounded` = the skin's `radius`) |
+| `width` | 0.7 to 1.6 | how wide a side menu is, as a multiple of the app's own |
+| `gap` | 0 to 2 | the space between buttons, as a multiple of the app's own |
+| `order` | screen ids | these come first, in your order; the rest follow in the app's order |
+| `hide` | screen ids | buttons to remove (not the ones below). A hidden screen is gone from the menu and the phone's More list |
+| `labels` | `{id: name}` | new names, up to 24 characters. The screen's own title follows |
+| `icons` | `{id: icon}` | an icon for a button (names below) |
+| `brand` | text, up to 24 | the name above the menu (`""` for none). Default: PEK TV / PEK Music |
+| `footer` | text, up to 40 | the line under a side menu (`""` for none). Default: System Online |
+| `paint` | a [button paint](#button-colours-and-animation) | colours, gradient and animation of every menu button |
+| `activePaint` | a button paint | the selected button's, laid on top of `paint` |
+
+**Screen ids:** `dashboard`, `movies`, `shows`, `music`, `updates`, `search`, `history`, `favorites`, `duplicates`, `unknown`, `plugins`,
+`settings`, and `plugin:<folder>` for a pinned plugin screen. Music mode uses `mhome`, `msearch`, `mlibrary`, `msettings`.
+
+**Never hidden:** `dashboard`, `settings`, `more`, `mhome`, `msettings`. Without them the person could not reach the rest of the app. The
+builder and `make_skin.py` refuse a skin that tries; the app ignores it.
+
+**Icons:** `home`, `movie`, `tv`, `music`, `news`, `search`, `history`, `favorite`, `heart`, `copy`, `help`, `plugin`, `settings`, `more`,
+`star`, `bolt`, `fire`, `play`, `live`, `folder`, `person`, `cloud`, `bookmark`, `download`, `game`, `radio`, `podcast`, `explore`, `info`,
+`grid`, `list`, `library`, `camera`, `rocket`, `palette`, `bell`, `lock`, `tune`, `sparkle`, `trophy`. A skin names an icon, it can't bring
+its own picture. An icon-only button still has its name (read aloud, and shown as a tooltip).
+
+### Buttons (`layout.buttons`)
+
+Applies to PEK's buttons (Refresh, Add widget, Install, and the like).
+
+| Field | Values | What it does |
+|---|---|---|
+| `shape` | `pill`, `rounded`, `square` | the corner. Default: pill |
+| `radius` | 0 to 999 | an exact corner in pixels; wins over `shape` |
+| `size` | 0.8 to 1.5 | text, padding and height together, as a multiple of the app's own |
+| `padding` | 0.5 to 2 | the side padding only, to make buttons slimmer or roomier |
+| `borderWidth` | 0 to 6 | the outline's thickness in pixels (default 1) |
+| `uppercase` | true / false | UPPERCASE labels |
+| `weight` | 400 to 900 | text weight (rounded to 400, 500 ... 900) |
+| `outline` | true / false | outline only, no fill (unless a paint below gives the button a colour) |
+| `focusScale` | 1.0 to 1.2 | how much a focused button grows |
+| `primary` | a button paint | the accent buttons |
+| `secondary` | a button paint | the plain buttons |
+
+### Button colours and animation
+
+A **button paint** is used by `buttons.primary`, `buttons.secondary`, `nav.paint` and `nav.activePaint`. Every field is optional.
+
+| Field | Values | What it does |
+|---|---|---|
+| `fill` | a colour | the button's colour (ignored when there is a `gradient`) |
+| `gradient` | 2 to 6 colours | blended across the button |
+| `angle` | -360 to 360 | the gradient's direction in degrees: 0 left to right (default), 90 top to bottom, 45 corner to corner |
+| `text` | a colour | the label. Default: black or white, whichever reads better on the fill, so a colour you pick never makes a label unreadable |
+| `border` | a colour | the outline |
+| `glow` | a colour | a soft glow around the button, always on |
+| `anim` | `none`, `flow`, `shimmer`, `breathe` | `flow`: the gradient slides across and loops (needs a `gradient`). `shimmer`: a soft highlight sweeps across every few seconds. `breathe`: the colour gently brightens and dims |
+| `speed` | 0.5 to 20 | seconds for one loop (default 4) |
+| `when` | `always`, `focus` | `focus` animates only the focused button (kinder to weak TV boxes) |
+
+A **colour** is `#rrggbb`, `#rrggbbaa` (the last two digits are transparency), `#rgb`, or a **palette name** (`accent`, `text`, `bg`, `surface`,
+`border`, `borderFocus`, `bgElevated`, `surfaceFocused`, `textMuted`, `accentGlow`). A palette name follows the palette, so
+`"border": "accent"` stays right when the person switches colours. Anything else (`red`, `rgb(...)`, `url(...)`) is not a colour and is dropped.
+
+Animations stop on their own when the device is set to reduce motion, and while the screen is not showing. A focused button is always a little
+brighter and keeps its focus ring, whatever its colours. On a phone the tab bar uses `nav.paint` / `nav.activePaint` the same way.
+
+### The dashboard (`layout.dashboard`)
+
+`items` is the arrangement, in order: `{ "type": ..., "size": "s" | "m", "folder": ... }`. Types: `clock`, `weather`, `continue`, `recent`,
+`favorites`, `nowplaying`, `albums`, `playlists`, `shows`, `pinned`, `stats`, `surprise`, `upnext`, `watched`, `recommend`, and `plugin`
+(with the plugin's `folder`). `size: "m"` is wide (clock, plugin, stats, surprise). Unknown types and repeats are dropped; at most 40.
+
+- `"locked": false` (default): the **starting** arrangement. It is used until the person arranges their own dashboard (then theirs wins and
+  is what the cloud syncs). *Reset to default* in Add widget goes back to the skin's arrangement.
+- `"locked": true`: **always** this arrangement. The person can't move, resize, add or remove widgets while the skin is in use (the *Add widget*
+  button and the hold menu are gone). Nothing is saved over their own dashboard, which comes back when they pick another skin.
+
+### Mini player and posters
+
+- `miniPlayer`: `top`, `bottom` (default) or `hidden`. Hidden removes the strip; the full player still opens from the Music page.
+- `poster`: `s`, `m` or `l`, the poster size the skin starts with. It is used while the person's Settings > Layout > Poster size is *Auto*;
+  their own choice wins.
+
+### Combining
+
+The fields never depend on each other, so mix freely. Some ideas:
+
+- **Icon rail:** `nav: { position: "left", show: "icons", width: 0.8, brand: "", footer: "" }`
+- **Kiosk:** `nav: { hide: [...] }`, `dashboard: { items: [...], locked: true }`, `miniPlayer: "hidden"`
+- **Neon arcade:** a gradient `flow` on the primary buttons and the selected menu button, `glow` on both, `shimmer` on focus for the rest
+- **Square and calm:** `buttons: { shape: "square", borderWidth: 2, outline: true }`, `nav: { shape: "square", position: "top", align: "center" }`
+
+### Limits worth knowing
+
+- Layout needs colours too: a `skin.json` with a layout and no `tokens` is refused (add at least a colour).
+- Plugin screens' own buttons use the same PEK buttons, so they follow the skin; a plugin that draws its own colours does not.
+- The install screen says what a skin rearranges ("menu on the right, a fixed dashboard, ..."), so the person knows before they install.
+- Layout stays on the device (see *Skins in the cloud*). The web UI ignores a `layout` it does not know.
 
 ## Making a skin in the Flutter app
 
@@ -111,10 +270,16 @@ tools/make_skin.py validate dist/sunset.zip
 ```
 
 `--print` shows the skin.json without writing a file, `--folder` writes a skin folder instead of a .zip, `--file image.png` adds an
-extra file, `--force` allows low-contrast text. A batch file is a list of
-`{"name", "accent", "bg", "surface", "text", "radius", "mode", "hue", "glow", "tokens": {...}}`.
+extra file, `--force` allows low-contrast text, `--layout layout.json` adds a [layout](#layout-menu-buttons-dashboard). A batch file is a list of
+`{"name", "accent", "bg", "surface", "text", "radius", "mode", "hue", "glow", "tokens": {...}, "layout": {...}}`.
+The tool checks a layout strictly (an unknown field, a wrong value or a typo is an error with a plain message, where the app would quietly
+ignore it), and `validate` checks the layout of a zip too.
 
-**2. By hand**: write `skin.json` as above.
+**2. From Dart: `SkinBuilder`** (`flutter_ui/lib/src/skin_builder.dart`), inside the app or its tests. Colours and layout in one chain,
+with the same checks (a mistake throws a `SkinBuildException` with a plain message); `build()` gives a `Skin`, `save()` adds it to
+Settings > Appearance, `zip()` / `skinJson()` give an installable file. See [Layout](#layout-menu-buttons-dashboard) for the whole chain.
+
+**3. By hand**: write `skin.json` as above.
 
 ## Installing skins in the Flutter app
 
@@ -123,8 +288,11 @@ device, library folders and network folders), the GitHub lookup (latest release 
 `flutter_ui/lib/src/skin_install.dart` (mirroring `backend/skin_install.h`) and a confirm screen. A skin from GitHub is labelled "unverified". Installing the same
 skin again updates it; hold it in the list to remove it.
 
-Notes: an installed skin gives the app its **colours and corner size** only (`bgImage` and the glass tokens are checked but
-not drawn). A skin with no colours or radius in `skin.json` is refused there. The skin is kept on the device (not in the server's `skins/` folder).
+Notes: an installed skin gives the app its **colours, corner size and layout** (`bgImage` and the glass tokens are checked but
+not drawn). A skin with no colours or radius in `skin.json` is refused there, even if it has a layout. The skin is kept on the device (not in the server's `skins/` folder).
+A `layout` in `skin.json` is read the same careful way as everything else from a file: what the app does not understand is dropped, numbers are
+clamped into range, and the screens in the table below can never be hidden. Installing a newer version of a skin replaces its layout (a version
+with no `layout` clears it).
 
 ## Skins in the cloud (per profile)
 
@@ -140,5 +308,7 @@ normal sync (at start, every 5 minutes after a change, and when a profile is ope
   unless it was changed after the delete.
 - **What is stored:** the name, author, version, description, the colours, the corner size and, for an installed skin, where it came
   from (GitHub skins stay labelled "unverified"). Up to 50 skins per profile. Nothing else from a skin zip is kept in the cloud.
+  **A skin's layout stays on the device** (the cloud copy is the colours only). A device keeps its own layout when a newer cloud copy of the
+  skin arrives, so syncing never wipes it; on a new device, install the skin's zip (or run your `SkinBuilder` code) to get the layout.
 - **Needs the new worker:** redeploy the sync worker first. Until then the skins stay on the device and are
   sent once the worker is updated.

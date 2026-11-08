@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'cold_history.dart';
 import 'plugin_hooks.dart' show PluginHooks;
+import 'skins.dart' show Skins;
 
 /// On-device state for the Flutter UI (the web UI kept the same things in localStorage, which Flutter cannot read):
 /// watch progress (Resume Watching), favorites and the dashboard layout. The C++ backend is not involved.
@@ -650,7 +651,29 @@ class Store {
     return out;
   }
 
+  /// What the dashboard shows. The person's own list, except when the skin in use sets an arrangement (skin_layout.dart): then the
+  /// skin's, either until the person arranges their own (a starting layout) or always (a locked one).
   static List<DashItem> dashboardItems() {
+    final skin = Skins.layout.dashboard;
+    if (skin.active && (skin.locked || !dashboardChosen)) {
+      final l = cleanDashboard([for (final e in skin.items) e.toJson()]);
+      if (l.isNotEmpty) return l;
+    }
+    return savedDashboardItems();
+  }
+
+  /// The skin in use sets a dashboard arrangement.
+  static bool get skinArrangesDashboard => Skins.layout.dashboard.active && cleanDashboard([for (final e in Skins.layout.dashboard.items) e.toJson()]).isNotEmpty;
+
+  /// The skin in use keeps the dashboard fixed: no moving, adding or removing widgets.
+  static bool get dashboardLocked => skinArrangesDashboard && Skins.layout.dashboard.locked;
+
+  /// What "Reset to default" goes back to: the skin's arrangement when it has one, else the app's.
+  static List<DashItem> dashboardResetTarget() => skinArrangesDashboard ? cleanDashboard([for (final e in Skins.layout.dashboard.items) e.toJson()]) : dashboardDefault();
+
+  /// The person's own saved list (or the app's default when they never saved one), whatever the skin says. Cloud sync reads this,
+  /// so a skin's arrangement is never sent to the account as if the person had chosen it.
+  static List<DashItem> savedDashboardItems() {
     final v3 = _p.getString(_dashKey3);
     if (v3 != null) {
       try {

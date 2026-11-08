@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'plugin_github.dart';
 import 'plugin_store.dart' show PluginFile, StoreException;
 import 'plugin_zip.dart';
+import 'skin_layout.dart';
 import 'skins.dart';
 import 'tokens.dart';
 
@@ -20,6 +21,7 @@ class PreparedSkin {
     required this.files,
     required this.skipped,
     this.source,
+    this.layout,
   });
 
   /// The slug (folder name, else skin name). The stored skin's id is [skinId].
@@ -34,16 +36,19 @@ class PreparedSkin {
   /// null (a picked .zip counts as {'type': 'zip'}) or {'type': 'github', 'owner', 'repo', 'tag', 'kind'}.
   final Map<String, dynamic>? source;
 
+  /// How the skin rearranges the app (skin.json `layout`, already cleaned), or null when skin.json has none.
+  final SkinLayout? layout;
+
   String get skinId => '${Skins.installedPrefix}$id';
 
   PreparedSkin withSource(Map<String, dynamic> s) => PreparedSkin(
         id: id, name: name, author: author, description: description, version: version, tokenCount: tokenCount,
-        tokens: tokens, files: files, skipped: skipped, source: s,
+        tokens: tokens, files: files, skipped: skipped, source: s, layout: layout,
       );
 
   PreparedSkin withId(String newId) => PreparedSkin(
         id: newId, name: name, author: author, description: description, version: version, tokenCount: tokenCount,
-        tokens: tokens, files: files, skipped: skipped, source: source,
+        tokens: tokens, files: files, skipped: skipped, source: source, layout: layout,
       );
 }
 
@@ -183,6 +188,10 @@ class SkinInstaller {
     if (tokensRaw != null && tokensRaw is! Map) {
       throw const StoreException('\u201ctokens\u201d in skin.json must be an object of colours and sizes');
     }
+    final layoutRaw = raw['layout'];
+    if (layoutRaw != null && layoutRaw is! Map) {
+      throw const StoreException('\u201clayout\u201d in skin.json must be an object');
+    }
     String str(Object? v, int max) {
       final s = v is String ? v.trim() : '';
       return s.length > max ? s.substring(0, max) : s;
@@ -213,6 +222,7 @@ class SkinInstaller {
       tokens: tokens,
       files: files,
       skipped: skipped,
+      layout: SkinLayout.fromJson(layoutRaw), // untrusted: unknown parts are dropped, numbers clamped, screens that must stay cannot be hidden
     );
   }
 
@@ -228,8 +238,9 @@ class SkinInstaller {
 
   /// Stores the skin (a skin with the same id is updated, and repaints at once if it is in use). Returns the stored skin.
   static Future<Skin> install(PreparedSkin p) async {
+    // An update without a layout clears the old one (SkinLayout.none), unlike a save that does not know about layouts (null).
     final skin = Skin(p.skinId, p.name, p.description, p.tokens,
-        custom: true, author: p.author, version: p.version, source: p.source ?? const {'type': 'zip'});
+        custom: true, author: p.author, version: p.version, source: p.source ?? const {'type': 'zip'}, layout: p.layout ?? SkinLayout.none);
     await Skins.saveCustom(skin);
     return skin;
   }

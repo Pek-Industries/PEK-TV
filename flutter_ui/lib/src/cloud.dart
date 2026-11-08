@@ -880,7 +880,7 @@ class Cloud {
   static Map<String, dynamic>? _settingRead(String n) {
     switch (n) {
       case 'dashboard':
-        return Store.dashboardChosen || Recs.touched ? _dashValue(Store.dashboardItems()) : null;
+        return Store.dashboardChosen || Recs.touched ? _dashValue(Store.savedDashboardItems()) : null;
       case 'look':
         return Layouts.syncValue();
       case 'skin':

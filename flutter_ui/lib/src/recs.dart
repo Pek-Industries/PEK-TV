@@ -154,7 +154,7 @@ class Recs {
   static Future<void> offerWidget() async {
     if (offered) return;
     if (Store.dashboardChosen) {
-      final items = Store.dashboardItems();
+      final items = Store.savedDashboardItems();
       if (!items.any((e) => e.type == 'recommend')) {
         final at = items.indexWhere((e) => e.type == 'continue');
         final n = List.of(items)..insert(at >= 0 ? at + 1 : (items.length < 2 ? items.length : 2), const DashItem('recommend', 'recommend'));

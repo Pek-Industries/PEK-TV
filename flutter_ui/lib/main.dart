@@ -70,7 +70,7 @@ class PekApp extends StatelessWidget {
           navigatorKey: DeepLink.navKey,
           theme: pekTheme(tokens),
           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
-          builder: (context, child) => PekRoot(isPhone: isPhone, tokens: tokens, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()])))),
+          builder: (context, child) => PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()])))),
           home: const _Boot(),
         );
       },

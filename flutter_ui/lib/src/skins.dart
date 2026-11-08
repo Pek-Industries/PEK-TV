@@ -4,11 +4,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'skin_layout.dart';
 import 'store.dart';
 import 'tokens.dart';
 
 class Skin {
-  const Skin(this.id, this.name, this.description, this.tokens, {this.custom = false, this.author = '', this.version = '', this.source, this.updated = 0});
+  const Skin(this.id, this.name, this.description, this.tokens, {this.custom = false, this.author = '', this.version = '', this.source, this.updated = 0, this.layout});
   final String id;
   final String name;
   final String description;
@@ -25,15 +26,20 @@ class Skin {
   /// When this skin last changed (ms since epoch). The cloud keeps the newest copy of each skin; 0 = a built-in.
   final int updated;
 
+  /// How the skin rearranges the app (menu, buttons, dashboard, ...), set from code or by a skin.json `layout`. null = not
+  /// said: a save that does not know about layouts (the Skin maker, a plugin) keeps the layout the stored skin already has.
+  /// An empty [SkinLayout] is a skin that deliberately changes nothing. Kept on this device only (the cloud copy has colours).
+  final SkinLayout? layout;
+
   bool get fromGithub => source?['type'] == 'github';
 
   /// Installed from the PEK Store: {'type': 'store', 'shelf': 'official' | 'community'}.
   bool get fromStore => source?['type'] == 'store';
   bool get installed => id.startsWith(Skins.installedPrefix);
 
-  Skin copyWith({String? id, String? name, String? description, PekTokens? tokens, String? author, String? version, Map<String, dynamic>? source, int? updated}) =>
+  Skin copyWith({String? id, String? name, String? description, PekTokens? tokens, String? author, String? version, Map<String, dynamic>? source, int? updated, SkinLayout? layout}) =>
       Skin(id ?? this.id, name ?? this.name, description ?? this.description, tokens ?? this.tokens,
-          custom: custom, author: author ?? this.author, version: version ?? this.version, source: source ?? this.source, updated: updated ?? this.updated);
+          custom: custom, author: author ?? this.author, version: version ?? this.version, source: source ?? this.source, updated: updated ?? this.updated, layout: layout ?? this.layout);
 }
 
 /// The built-in skins (the colours of skins/*/skin.json and style.css). Each profile remembers its own.
@@ -134,6 +140,7 @@ class Skins {
         author: '${e['author'] ?? ''}',
         version: '${e['version'] ?? ''}',
         source: (e['source'] as Map?)?.cast<String, dynamic>(),
+        layout: SkinLayout.fromJson(e['layout']),
         updated: u is num && u > 0 ? u.toInt() : 1); // a skin from before skins synced: older than anything in the cloud
   }
 
@@ -167,6 +174,7 @@ class Skins {
               'description': s.description,
               'tokens': SkinJson.tokensTo(s.tokens),
               if (s.source != null) 'source': s.source,
+              if (s.layout != null && !s.layout!.isEmpty) 'layout': s.layout!.toJson(),
               'updated': s.updated,
             },
         ]);
@@ -191,7 +199,9 @@ class Skins {
     final list = [...customSkins];
     final i = list.indexWhere((s) => s.id == skin.id);
     final now = DateTime.now().millisecondsSinceEpoch;
-    final stamped = skin.copyWith(updated: i >= 0 && list[i].updated >= now ? list[i].updated + 1 : now);
+    // A save that says nothing about the layout (the Skin maker, a plugin) must not wipe the one the skin already has.
+    final kept = skin.layout == null && i >= 0 ? skin.copyWith(layout: list[i].layout) : skin;
+    final stamped = kept.copyWith(updated: i >= 0 && list[i].updated >= now ? list[i].updated + 1 : now);
     if (i >= 0) {
       list[i] = stamped;
     } else {
@@ -317,7 +327,7 @@ class Skins {
       final skin = cleanSync(id, r['data'], ru);
       if (skin == null) continue;
       if (i >= 0) {
-        list[i] = skin;
+        list[i] = skin.copyWith(layout: list[i].layout); // the cloud copy has colours only: this device keeps its layout
       } else {
         list.add(skin);
         if (t.remove(id) != null) tombsChanged = true;
@@ -347,6 +357,9 @@ class Skins {
   }
 
   static PekTokens get tokens => current.tokens;
+
+  /// How the skin in use rearranges the app ([SkinLayout.none] when it does not).
+  static SkinLayout get layout => current.layout ?? SkinLayout.none;
 
   static Future<void> set(String id) async {
     await Store.strSet('pek_skin', id);
@@ -468,6 +481,7 @@ class SkinJson {
         'description': skin.description,
         'pek_api': 1,
         'tokens': tokensTo(skin.tokens),
+        if (skin.layout != null && !skin.layout!.isEmpty) 'layout': skin.layout!.toJson(),
       });
 
   /// A skin from pasted skin.json text, or null when it is not one.
@@ -478,7 +492,8 @@ class SkinJson {
       final tokens = tokensFrom((j['tokens'] as Map?)?.cast<String, dynamic>() ?? const {});
       if (tokens == null) return null;
       final name = '${j['name'] ?? ''}'.trim();
-      return Skin(Skins.newId(), name.isEmpty ? 'Imported skin' : name, '${j['description'] ?? ''}', tokens, custom: true, author: '${j['author'] ?? ''}');
+      return Skin(Skins.newId(), name.isEmpty ? 'Imported skin' : name, '${j['description'] ?? ''}', tokens,
+          custom: true, author: '${j['author'] ?? ''}', layout: SkinLayout.fromJson(j['layout']));
     } catch (_) {
       return null;
     }

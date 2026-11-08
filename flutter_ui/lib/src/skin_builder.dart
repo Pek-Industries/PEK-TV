@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'plugin_store.dart' show PluginFile;
 import 'plugin_zip.dart';
 import 'skin_install.dart';
+import 'skin_layout.dart';
 import 'skins.dart';
+import 'store.dart' show Store;
 import 'tokens.dart';
 
 /// Makes skins from code. The Dart twin of `tools/make_skin.py`: the same four-colours-in, everything-else-derived rule
@@ -22,6 +24,19 @@ import 'tokens.dart';
 ///     // one accent is enough; a hue works too
 ///     final ocean = SkinBuilder.fromAccent('Ocean', const Color(0xFF38BDF8)).build();
 ///     final moss  = SkinBuilder.fromHue('Moss', 140, dark: false).build();
+///
+///     // beyond colours: move the menu, rename and reorder its buttons, restyle buttons, arrange the dashboard (skin_layout.dart).
+///     // Every call changes only the fields you pass, so the pieces combine in any order.
+///     final arcade = SkinBuilder.fromAccent('Arcade', const Color(0xFFFF2BD6))
+///         .nav(position: NavPosition.right, show: NavShow.icons, shape: ButtonShape.pill, order: ['music', 'movies'], hide: ['duplicates', 'unknown'],
+///              labels: {'shows': 'Series'}, icons: {'movies': 'fire'}, brand: 'ARCADE', footer: '')
+///         .buttons(radius: 8, uppercase: true, weight: 800, size: 1.1,
+///              primary: const ButtonPaint(gradient: ['#ff2bd6', '#7a5cff', '#00d4ff'], anim: ButtonAnim.flow, speed: 3, glow: '#ff2bd680'),
+///              secondary: const ButtonPaint(border: 'accent', anim: ButtonAnim.shimmer, when: AnimWhen.focus))
+///         .dashboard(['clock:m', 'nowplaying', 'continue', 'plugin:weather'], locked: true)
+///         .miniPlayer(MiniZone.top)
+///         .posters('l')
+///         .build();
 ///
 ///     await skin.save();                       // adds it to Settings > Appearance
 ///     final zip = skin.zip();                  // an installable .zip (skin-id/skin.json), same as the web build installs
@@ -69,6 +84,7 @@ class SkinBuilder {
       .._text = t.text
       .._accent = t.accent
       .._radius = t.radius
+      .._layout = s.layout ?? SkinLayout.none
       .._dark = t.bg.computeLuminance() < 0.5;
   }
 
@@ -84,6 +100,7 @@ class SkinBuilder {
   bool _force = false, _glowOn = false;
   final Map<String, String> _tokenOverrides = {};
   final Map<String, List<int>> _extraFiles = {};
+  SkinLayout _layout = SkinLayout.none;
 
   // ------------------------------------------------------------------ setters (each returns the builder)
 
@@ -160,6 +177,128 @@ class SkinBuilder {
     return this;
   }
 
+  // ------------------------------------------------------------------ layout (skin_layout.dart)
+
+  /// Sets the whole layout at once, replacing anything the other layout methods set.
+  SkinBuilder layout(SkinLayout l) {
+    _layout = l;
+    return this;
+  }
+
+  /// The menu. Pass only what you want to change:
+  ///  - [position]: left, right, top or bottom (a phone only has top and bottom); [show]: icons, text or both; [align]: start, center, end
+  ///  - [shape]: pill, rounded or square buttons; [width] (0.7-1.6) and [gap] (0-2): multiples of the app's own
+  ///  - [order]: screen ids first, in your order (the rest follow); [hide]: ids to remove (dashboard and settings cannot go)
+  ///  - [labels]: new names (`{'shows': 'Series'}`); [icons]: icon names from [SkinIcons.names] (`{'movies': 'fire'}`)
+  ///  - [brand]: the name above the menu ('' for none); [footer]: the line under a side menu ('' for none)
+  ///  - [paint]: colours / gradient / animation of the menu buttons; [activePaint]: the selected button's, on top of [paint]
+  SkinBuilder nav({
+    NavPosition? position,
+    NavShow? show,
+    NavAlign? align,
+    ButtonShape? shape,
+    double? width,
+    double? gap,
+    List<String>? order,
+    List<String>? hide,
+    Map<String, String>? labels,
+    Map<String, String>? icons,
+    String? brand,
+    String? footer,
+    ButtonPaint? paint,
+    ButtonPaint? activePaint,
+  }) {
+    _layout = _layout.copyWith(
+      nav: _layout.nav.copyWith(
+        position: position,
+        show: show,
+        align: align,
+        shape: shape,
+        width: width,
+        gap: gap,
+        order: order,
+        hide: hide,
+        labels: labels,
+        icons: icons,
+        brand: brand,
+        footer: footer,
+        paint: paint,
+        activePaint: activePaint,
+      ),
+    );
+    return this;
+  }
+
+  /// How buttons look. Pass only what you want to change:
+  ///  - shape and size: [shape] (pill, rounded, square) or an exact corner [radius] in pixels; [size] (0.8-1.5, text and padding
+  ///    together); [padding] (0.5-2, the sides only); [borderWidth] (0-6 px); [uppercase]; [weight] (400-900); [outline] (no fill)
+  ///  - [focusScale] (1.0-1.2): how much a focused button grows
+  ///  - colours and movement: [primary] (the accent buttons) and [secondary] (the plain ones), each a [ButtonPaint]:
+  ///    `ButtonPaint(gradient: ['#ff2bd6', '#7a5cff', '#00d4ff'], anim: ButtonAnim.flow, speed: 3, glow: '#ff2bd680')`.
+  ///    Colours are `#rrggbb`, `#rrggbbaa` or a palette name like `accent`; see [ButtonPaint] for angle, text, border and when.
+  SkinBuilder buttons({
+    ButtonShape? shape,
+    double? radius,
+    double? size,
+    double? padding,
+    double? borderWidth,
+    bool? uppercase,
+    int? weight,
+    bool? outline,
+    double? focusScale,
+    ButtonPaint? primary,
+    ButtonPaint? secondary,
+  }) {
+    _layout = _layout.copyWith(
+      buttons: _layout.buttons.copyWith(
+        shape: shape,
+        radius: radius,
+        size: size,
+        padding: padding,
+        borderWidth: borderWidth,
+        uppercase: uppercase,
+        weight: weight,
+        outline: outline,
+        focusScale: focusScale,
+        primary: primary,
+        secondary: secondary,
+      ),
+    );
+    return this;
+  }
+
+  /// The dashboard, as short text in the order to show: `'weather'`, `'clock:m'` (wide), `'plugin:my-folder'`. The widget types are
+  /// the keys of `Store.dashTypes` (clock, weather, continue, recent, favorites, nowplaying, albums, playlists, shows, pinned, stats,
+  /// surprise, upnext, watched, recommend, plugin). With [locked] false it is the starting arrangement, until the person arranges
+  /// their own; with [locked] true it is always this one, and the person cannot move, add or remove widgets.
+  SkinBuilder dashboard(List<String> widgets, {bool locked = false}) {
+    _layout = _layout.copyWith(dashboard: DashSpec.of(widgets, locked: locked));
+    return this;
+  }
+
+  /// Where the mini player (the song that is playing) sits: top, bottom or hidden.
+  SkinBuilder miniPlayer(MiniZone zone) {
+    _layout = _layout.copyWith(miniPlayer: zone);
+    return this;
+  }
+
+  /// The poster size the skin starts with: 's', 'm' or 'l' (the person's own choice in Settings > Layout wins).
+  SkinBuilder posters(String size) {
+    _layout = _layout.copyWith(poster: size);
+    return this;
+  }
+
+  /// Problems with the layout, in plain words ([] = fine): the checks of [SkinLayout.problems] plus the widget types the dashboard knows.
+  List<String> layoutProblems() {
+    final out = [..._layout.problems()];
+    final seen = <String>{};
+    for (final i in _layout.dashboard.items) {
+      if (!Store.dashTypes.containsKey(i.type)) out.add('dashboard: \u201c${i.type}\u201d is not a widget (known: ${Store.dashTypes.keys.join(', ')})');
+      if (!seen.add(i.type == 'plugin' ? 'plugin:${i.folder}' : i.type)) out.add('dashboard: \u201c${i.type == 'plugin' ? 'plugin:${i.folder}' : i.type}\u201d is listed twice');
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------------ results
 
   static String _glow(PekTokens t) {
@@ -203,7 +342,9 @@ class SkinBuilder {
     if (!_force && SkinJson.unreadable(tokens)) {
       throw const SkinBuildException('the text would be hard to read on the background, the cards or the bars. Use a lighter text or a darker background, or call force().');
     }
-    return Skin(skinId, name.trim(), _description, tokens, custom: true, author: _author, version: _version, source: const {'type': 'zip'});
+    final bad = layoutProblems();
+    if (bad.isNotEmpty) throw SkinBuildException('layout: ${bad.first}');
+    return Skin(skinId, name.trim(), _description, tokens, custom: true, author: _author, version: _version, source: const {'type': 'zip'}, layout: _layout);
   }
 
   /// Applies hand-set colour tokens on top of the derived ones.
@@ -244,6 +385,7 @@ class SkinBuilder {
       'description': skin.description,
       'pek_api': 1,
       'tokens': tokens,
+      if (!_layout.isEmpty) 'layout': _layout.toJson(),
     });
   }
 
