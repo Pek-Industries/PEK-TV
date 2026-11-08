@@ -1,0 +1,52 @@
+diff -ruN a/flutter_ui/lib/src/api.dart b/flutter_ui/lib/src/api.dart
+--- a/flutter_ui/lib/src/api.dart	2026-11-08 02:04:44.063067750 +0000
++++ b/flutter_ui/lib/src/api.dart	2026-11-08 02:42:47.416502216 +0000
+@@ -92,6 +92,7 @@
+   /// A rescan changes what the library holds, so cached lookups and lists are dropped.
+   static void forgetLibrary() {
+     _details.clear();
++    _hasArt.clear();
+     _warmQueue.clear();
+     _warmLanes = 0; // lanes of the old generation stop and do not count any more
+     _warmGen++;
+@@ -108,11 +109,11 @@
+   static void _seed(String key, dynamic poster, dynamic overview) {
+     final p = '${poster ?? ''}';
+     if (p.isEmpty) return;
+-    if (_details.containsKey(key) && !_noArt.contains(key)) {
+-      debugPrint('[art-ui] list has a poster for $key but a card already asked: seed skipped');
+-      return; // already known (a card asked first); one that found no poster is replaced
+-    }
++    // A poster that is already known stays. A card's own look-up that is still running (or failed, or found nothing) is
++    // REPLACED by what the list brings: waiting for that slow look-up was the 8 s delay after a refresh.
++    if (_hasArt.contains(key)) return;
+     _noArt.remove(key);
++    _hasArt.add(key);
+     final d = Details(overview: '${overview ?? ''}', poster: abs(p));
+     _details[key] = Future<Details>.value(d);
+     _warmQueue.add(d.poster);
+@@ -298,12 +299,16 @@
+   /// Lookups that failed or came back without a poster (e.g. while offline): [forgetFailedDetails] lets them run again.
+   static final Set<String> _noArt = {};
+ 
++  /// Titles whose poster address is known (seeded from the list, or found by a look-up): see [_seed].
++  static final Set<String> _hasArt = {};
++
+   /// A lookup that fails (the server is busy scanning, the TMDb proxy is slow or rate-limiting a screenful of requests) is
+   /// tried again after 1 s, 3 s and 8 s, and one that still has nothing is forgotten after a short rest, so the next time the
+   /// screen is built it asks again. Before, the first failure was kept until Refresh, which left posters blank.
+   static const _detailRetryWaits = [Duration(seconds: 1), Duration(seconds: 3), Duration(seconds: 8)];
+ 
+   static void _forgetDetailSoon(String key, Duration after) {
++    if (_hasArt.contains(key)) return; // the list already brought a poster for it
+     _noArt.add(key);
+     Timer(after, () {
+       // Only forget it if nobody has asked again since (a poster that re-asked already replaced this entry).
+@@ -341,6 +346,7 @@
+               _forgetDetailSoon(key, const Duration(seconds: 8)); // no picture (yet): ask again soon
+             } else {
+               _noArt.remove(key);
++              _hasArt.add(key);
+               unawaited(_saveDetail(key, d));
+             }
+             return d;
