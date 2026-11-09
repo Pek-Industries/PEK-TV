@@ -10,6 +10,7 @@ import 'activity.dart';
 import 'api.dart' show Api, Details;
 import 'recs.dart' show RecFeed;
 import 'common.dart';
+import 'fav_menu.dart';
 import 'fields.dart';
 import 'live_tv.dart';
 import 'player.dart';
@@ -1299,7 +1300,7 @@ class _PluginPoster extends StatelessWidget {
 }
 
 /// "Saved from plugins" on the Favorites page: titles a plugin screen saved (pek_ui.favorite_add) or Trakt favorites, as posters.
-/// Pressing one opens the plugin on that title; holding one takes it out. They sync to PEK Cloud with the library favorites.
+/// Pressing one opens the plugin on that title; holding one offers to remove it or open it in a plugin. They sync to PEK Cloud with the library favorites.
 class PluginFavoritesSection extends StatelessWidget {
   const PluginFavoritesSection({super.key});
 
@@ -1336,18 +1337,25 @@ class PluginFavoritesSection extends StatelessWidget {
   }
 
   /// Pressing a saved title asks which plugin to open it with: the installed video plugins (one that \"provides\":
-  /// {\"stream\": true}, like Stream Media) and TMDb Discover, which ships with the app. With no video plugin installed
-  /// there is nothing to choose, so it opens in TMDb Discover straight away.
-  static Future<void> _playWith(BuildContext context, Map<String, dynamic> f) async {
+  /// {\"stream\": true}, like Stream Media) and TMDb Discover, which ships with the app and lists the title. With no video
+  /// plugin installed there is nothing to choose, so a plain press opens it in TMDb Discover straight away; the Favorites
+  /// menu ([alwaysAsk]) always shows the list.
+  static Future<void> _playWith(BuildContext context, Map<String, dynamic> f, {bool alwaysAsk = false}) async {
     await PluginHost.refreshStreamers();
     if (!context.mounted) return;
-    const discover = {'id': 'tmdb-discover', 'name': 'TMDb Discover'};
+    const discover = {'id': 'tmdb-discover', 'name': 'TMDb Discover', 'note': 'Lists it: details, cast and where to watch'};
+    final id = (f['id'] as num?)?.toInt() ?? 0;
     final players = <Map<String, String>>[
       for (final s in PluginHost.streamers ?? const <Map<String, String>>[])
-        if (s['stream'] == 'true' && s['id'] != discover['id']) s,
-      discover,
+        if (s['stream'] == 'true' && s['id'] != discover['id']) {...s, 'note': 'Can play it'},
+      // TMDb Discover opens on a TMDb id; without one it has nothing to show.
+      if (id > 0) discover,
     ];
-    final pick = players.length == 1 ? players.first : await _askPlayer(context, '${f['title']}', players);
+    if (players.isEmpty) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('No plugin can open this title right now. Check your connection and try again.')));
+      return;
+    }
+    final pick = players.length == 1 && !alwaysAsk ? players.first : await _askPlayer(context, '${f['title']}', players, heading: alwaysAsk ? 'Open in a plugin' : 'Play with\u2026');
     if (pick == null || !context.mounted) return;
     await openPluginScreen(
       context,
@@ -1357,7 +1365,16 @@ class PluginFavoritesSection extends StatelessWidget {
     );
   }
 
-  static Future<Map<String, String>?> _askPlayer(BuildContext context, String title, List<Map<String, String>> players) {
+  /// "Open in a plugin" for any favorite, a library one included: the plugins that can play the title, plus TMDb Discover, which lists it.
+  /// A library favorite may not have its TMDb id yet, so it is looked up by name first.
+  static Future<void> openInPlugin(BuildContext context, {required bool tv, required int tmdb, required String title, required int year}) async {
+    var id = tmdb;
+    if (id <= 0) id = tv ? await RecFeed.tvIdByName(title) : await RecFeed.movieIdByName(title, year: year);
+    if (!context.mounted) return;
+    await _playWith(context, {'type': tv ? 'tv' : 'movie', 'id': id, 'title': title, 'year': year}, alwaysAsk: true);
+  }
+
+  static Future<Map<String, String>?> _askPlayer(BuildContext context, String title, List<Map<String, String>> players, {String heading = 'Play with\u2026'}) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
@@ -1370,12 +1387,12 @@ class PluginFavoritesSection extends StatelessWidget {
         child: SingleChildScrollView(
           padding: EdgeInsets.all(1.25 * rem),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Play with\u2026', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.text)),
+            Text(heading, style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700, color: t.text)),
             SizedBox(height: 0.25 * rem),
             Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textMuted)),
             SizedBox(height: 0.75 * rem),
             for (var i = 0; i < players.length; i++)
-              ListRow(autofocus: i == 0, title: players[i]['name'] ?? players[i]['id'] ?? '', onTap: () => Navigator.pop(c, players[i])),
+              ListRow(autofocus: i == 0, title: players[i]['name'] ?? players[i]['id'] ?? '', subtitle: players[i]['note'] ?? '', onTap: () => Navigator.pop(c, players[i])),
           ]),
         ),
       ),
@@ -1395,8 +1412,14 @@ class PluginFavoritesSection extends StatelessWidget {
           subtitle: (f['year'] as num?) != null && (f['year'] as num) > 0 ? '${f['year']}' : ('${f['type']}' == 'tv' ? 'TV show' : 'Movie'),
           poster: _poster(f),
           onTap: () => _playWith(context, f), // asks which video plugin to play it with
-          onLongPress: () => Store.removePluginFavorite('${f['key']}'),
-          holdSelect: true, // a remote's held OK removes it, like a long press on a touch screen
+          // Long press (a remote's held OK): a menu with "Remove from favorites" (asks first) and "Open in a plugin".
+          onLongPress: () => showFavoriteMenu(
+            context,
+            title: '${f['title']}',
+            onRemove: () => Store.removePluginFavorite('${f['key']}'),
+            onOpen: () => openInPlugin(context, tv: '${f['type']}' == 'tv', tmdb: (f['id'] as num?)?.toInt() ?? 0, title: '${f['title']}', year: (f['year'] as num?)?.toInt() ?? 0),
+          ),
+          holdSelect: true,
         ),
     ];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1409,7 +1432,7 @@ class PluginFavoritesSection extends StatelessWidget {
         slivers: [PekGridSliver(count: cells.length, minWidth: p.compact ? 110 : 200, gap: p.compact ? 0.6 * rem : rem, builder: (_, i) => cells[i])],
       ),
       SizedBox(height: 0.5 * rem),
-      Text('Long-press a poster to remove it (on a remote, hold OK).', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
+      Text('Long-press a poster for options (on a remote, hold OK).', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
     ]);
   }
 }

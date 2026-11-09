@@ -25,13 +25,17 @@ class SuggestItem {
 /// It is open while the box OR one of its suggestions has the focus and there is something typed, and closes when the focus
 /// goes anywhere else.
 class SuggestAnchor extends StatefulWidget {
-  const SuggestAnchor({super.key, required this.field, required this.controller, required this.items, this.max = 6});
+  const SuggestAnchor({super.key, required this.field, required this.controller, required this.items, this.max = 6, this.onDownWithoutList});
 
   /// The text box itself (it must use [controller]).
   final Widget field;
   final TextEditingController controller;
   final List<SuggestItem> items;
   final int max;
+
+  /// Down was pressed in the box while no suggestion list is showing: lets the screen put the focus on the very next item itself
+  /// (the library's "More filters" button) instead of the geometry search, which could jump over it. true = it moved the focus.
+  final bool Function()? onDownWithoutList;
 
   /// Called by the text box when Down is pressed: puts the focus on the first suggestion. Geometry-based focus search from a
   /// text box was not reliable on a TV (it could skip the list), so this goes straight there. false = no list is showing,
@@ -59,7 +63,7 @@ class _SuggestAnchorState extends State<SuggestAnchor> {
 
   bool _focusFirst() {
     final rows = _rows();
-    if (rows.isEmpty) return false;
+    if (rows.isEmpty) return widget.onDownWithoutList?.call() ?? false;
     _back = FocusManager.instance.primaryFocus;
     rows.first.requestFocus();
     return true;

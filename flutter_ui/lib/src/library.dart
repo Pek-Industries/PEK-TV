@@ -37,6 +37,7 @@ class _LibraryPageState extends State<LibraryPage> {
   int _changeTicket = 0; // a newer _followChange() replaces an older one
   int _emptyRetries = 0; // how many times an empty list has been read again by itself
   List<Object> _items = const []; // the library as last loaded (the search box narrows from it)
+  final LibrarySearchNav _nav = LibrarySearchNav(); // keeps the remote's Up / Down from skipping "More filters"
 
   /// The chosen watched state, sort, genre and actor are kept while the app runs, so leaving the tab and coming back does not reset them.
   static final Map<String, LibraryFilters> _remembered = {};
@@ -172,6 +173,7 @@ class _LibraryPageState extends State<LibraryPage> {
     Api.libraryRevision.removeListener(_onSourcesChanged);
     Api.artRevision.removeListener(_onArtChanged);
     _artTimer?.cancel();
+    _nav.dispose();
     super.dispose();
   }
 
@@ -243,7 +245,11 @@ class _LibraryPageState extends State<LibraryPage> {
       ),
     );
 
-    return CustomScrollView(
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: _nav.onKey,
+      child: CustomScrollView(
       cacheExtent: 1200, // cards about three rows below the screen are built (and their pictures read from disk) before they scroll into view
       slivers: [
         SliverPadding(
@@ -259,7 +265,7 @@ class _LibraryPageState extends State<LibraryPage> {
         // answers with nothing and the grid below is swapped for a message.
         SliverPadding(
           padding: EdgeInsets.only(left: widget.padding.left, right: widget.padding.right),
-          sliver: SliverToBoxAdapter(child: LibrarySearchPanel(filters: _f, tab: widget.tab, library: () => _items)),
+          sliver: SliverToBoxAdapter(child: LibrarySearchPanel(filters: _f, tab: widget.tab, library: () => _items, nav: _nav)),
         ),
         FutureBuilder<List<Object>>(
           future: _data,
@@ -368,6 +374,7 @@ class _LibraryPageState extends State<LibraryPage> {
           },
         ),
       ],
+      ),
     );
   }
 

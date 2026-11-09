@@ -522,6 +522,7 @@ class _ArtImageState extends State<ArtImage> {
   Future<File?>? _pending;
   bool _fileBroken = false;
   bool _paintLogged = false;
+  bool _netShown = false; // the picture is being loaded straight from the network (an address that is not kept on disk)
   DateTime? _diskBuiltAt;
   int _wdTries = 0;
   int _retries = 0;
@@ -578,6 +579,7 @@ class _ArtImageState extends State<ArtImage> {
   Timer? _watchdog;
 
   void _resolve() {
+    _netShown = false;
     _file = ArtCache.knownFile(widget.url);
     _pending = _file == null ? ArtCache.file(widget.url) : null;
     // A picture that is still not drawn after 1 s is started over (up to 10 times), so a stuck tile never waits for the person to
@@ -586,7 +588,10 @@ class _ArtImageState extends State<ArtImage> {
     _watchdog?.cancel();
     if (_wdTries < 10 && !_paintLogged) {
       _watchdog = Timer(const Duration(seconds: 1), () {
-        if (!mounted || _paintLogged) return;
+        // A picture loaded straight from the network (a plugin's icon from the app's own server is never kept on disk) was never
+        // marked as drawn, so this started it over every second, 10 times: it flickered in sequence and then stopped.
+        // Image.network has its own retries (see _failed), so a network picture is left alone.
+        if (!mounted || _paintLogged || _netShown) return;
         _wdTries++;
         setState(() {
           _gen++;
@@ -620,10 +625,19 @@ class _ArtImageState extends State<ArtImage> {
     return widget.errorBuilder?.call(context, e, st) ?? const SizedBox.shrink();
   }
 
-  Widget _network() => Image.network(
+  Widget _network() {
+    _netShown = true;
+    return Image.network(
         widget.url,
         headers: Api.headersFor(widget.url),
         key: ValueKey('net$_gen'),
+        frameBuilder: (context, child, frame, sync) {
+          if (frame != null || sync) {
+            _paintLogged = true; // drawn: nothing left for the watchdog to restart
+            _watchdog?.cancel();
+          }
+          return child;
+        },
         fit: widget.fit,
         cacheWidth: widget.cacheWidth,
         width: widget.width,
@@ -631,6 +645,7 @@ class _ArtImageState extends State<ArtImage> {
         gaplessPlayback: true,
         errorBuilder: _failed,
       );
+  }
 
   Widget _disk(File f) {
     if (_diskBuiltAt == null) {

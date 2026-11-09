@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show KeyDownEvent, KeyEvent, KeyRepeatEvent, LogicalKeyboardKey;
 
 import 'api.dart';
 import 'detail.dart';
@@ -11,6 +12,120 @@ import 'suggest.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
 import 'widgets.dart';
+
+/// Keeps a remote's Up / Down from jumping over the "More filters" button.
+///
+/// The page is: search box, "More filters" (a short button under the long box), then whatever the list shows. The TV focus search
+/// found the long search box or the item below before the short button next to it, so Down from the box and Up from the list
+/// both skipped "More filters". This fixes the three moves by name: Down from the search box (or its last suggestion) lands on
+/// "More filters"; Up from "More filters" lands on the search box; Up from the first row under "More filters" lands on it.
+/// Every other move is left to the normal focus search.
+class LibrarySearchNav {
+  /// Around the search box and its suggestions.
+  final FocusNode searchScope = FocusNode(debugLabel: 'LibrarySearch', canRequestFocus: false, skipTraversal: true);
+
+  /// Around the "More filters" button and the filter chips beside it.
+  final FocusNode moreScope = FocusNode(debugLabel: 'LibraryMoreFilters', canRequestFocus: false, skipTraversal: true);
+
+  void dispose() {
+    searchScope.dispose();
+    moreScope.dispose();
+  }
+
+  static Rect? _rect(FocusNode n) {
+    try {
+      return n.context == null ? null : n.rect;
+    } catch (_) {
+      return null; // not laid out (yet)
+    }
+  }
+
+  static bool _within(FocusNode scope, FocusNode? n) {
+    for (var x = n; x != null; x = x.parent) {
+      if (identical(x, scope)) return true;
+    }
+    return false;
+  }
+
+  /// The top-left item of [scope] (the box / the button), or with [last] the lowest one (the last suggestion).
+  static FocusNode? _pick(FocusNode scope, {required bool last}) {
+    FocusNode? best;
+    double bestTop = 0;
+    double bestLeft = 0;
+    for (final n in scope.traversalDescendants) {
+      final r = _rect(n);
+      if (r == null) continue;
+      final bool better;
+      if (best == null) {
+        better = true;
+      } else if (last) {
+        better = r.top > bestTop + 1;
+      } else {
+        better = r.top < bestTop - 1 || ((r.top - bestTop).abs() <= 1 && r.left < bestLeft);
+      }
+      if (better) {
+        best = n;
+        bestTop = r.top;
+        bestLeft = r.left;
+      }
+    }
+    return best;
+  }
+
+  static bool _focus(FocusNode? n) {
+    if (n == null || !n.canRequestFocus) return false;
+    n.requestFocus();
+    final c = n.context;
+    if (c != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!c.mounted) return;
+        Scrollable.ensureVisible(c, duration: TvNav.scrollDuration, curve: TvNav.scrollCurve, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+        Scrollable.ensureVisible(c, duration: TvNav.scrollDuration, curve: TvNav.scrollCurve, alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart);
+      });
+    }
+    return true;
+  }
+
+  /// Puts the focus on "More filters". true = it moved.
+  bool focusMore() => _focus(_pick(moreScope, last: false));
+
+  /// Put this on a [Focus] around the whole page (it sees the keys of every item inside).
+  KeyEventResult onKey(FocusNode _, KeyEvent e) {
+    if (e is! KeyDownEvent && e is! KeyRepeatEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    if (k != LogicalKeyboardKey.arrowDown && k != LogicalKeyboardKey.arrowUp) return KeyEventResult.ignored;
+    final cur = FocusManager.instance.primaryFocus;
+    if (cur == null) return KeyEventResult.ignored;
+
+    if (k == LogicalKeyboardKey.arrowDown) {
+      if (!_within(searchScope, cur)) return KeyEventResult.ignored;
+      // Only the lowest item of the search area moves on: a middle suggestion keeps walking down the list.
+      if (!identical(_pick(searchScope, last: true), cur)) return KeyEventResult.ignored;
+      return focusMore() ? KeyEventResult.handled : KeyEventResult.ignored;
+    }
+
+    // Up
+    if (_within(moreScope, cur)) {
+      return _focus(_pick(searchScope, last: false)) ? KeyEventResult.handled : KeyEventResult.ignored;
+    }
+    if (_within(searchScope, cur)) return KeyEventResult.ignored;
+    final more = _pick(moreScope, last: false);
+    final moreR = more == null ? null : _rect(more);
+    final curR = _rect(cur);
+    final scope = cur.nearestScope;
+    if (more == null || moreR == null || curR == null || scope == null) return KeyEventResult.ignored;
+    if (curR.top <= moreR.bottom) return KeyEventResult.ignored; // not under the button
+    // Something else between the button and this item (the sort bar, a poster row above)? Then the normal move is right.
+    for (final n in scope.traversalDescendants) {
+      if (identical(n, cur) || _within(searchScope, n) || _within(moreScope, n)) continue;
+      final r = _rect(n);
+      if (r == null) continue;
+      final sameColumn = r.right > curR.left && r.left < curR.right; // the sidebar is beside the page, not above this item
+      if (sameColumn && r.top >= moreR.bottom - 2 && r.top < curR.top - 4) return KeyEventResult.ignored;
+    }
+    return _focus(more) ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+}
 
 /// The search bar of the Movies and TV Shows tabs, with its drop-down of matching titles and the "More filters" panel.
 ///
@@ -26,7 +141,7 @@ import 'widgets.dart';
 ///  * an answer that arrives late never reopens a list that was closed, and one for older text never replaces newer text;
 ///  * the grid under the box follows the typed text too, a little later, and keeps showing its last answer until the new one is there.
 class LibrarySearchPanel extends StatefulWidget {
-  const LibrarySearchPanel({super.key, required this.filters, required this.tab, required this.library});
+  const LibrarySearchPanel({super.key, required this.filters, required this.tab, required this.library, required this.nav});
 
   final LibraryFilters filters;
 
@@ -35,6 +150,9 @@ class LibrarySearchPanel extends StatefulWidget {
 
   /// The Movie / Show objects of the library as loaded now (read when needed, so it follows reloads).
   final List<Object> Function() library;
+
+  /// Marks the search box and the "More filters" row so the remote's Up / Down land on each (the page's key handler is [LibrarySearchNav.onKey]).
+  final LibrarySearchNav nav;
 
   @override
   State<LibrarySearchPanel> createState() => _LibrarySearchPanelState();
@@ -301,15 +419,21 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SuggestAnchor(
-          controller: _q,
-          items: _items(),
-          field: PekField(
-            label: movies ? 'Search your movies' : 'Search your TV shows',
+        Focus(
+          focusNode: widget.nav.searchScope,
+          canRequestFocus: false,
+          skipTraversal: true,
+          child: SuggestAnchor(
             controller: _q,
-            hint: 'Title, actor, director, genre, studio or year',
-            onChanged: _onChanged,
-            onSubmitted: _submit,
+            items: _items(),
+            onDownWithoutList: widget.nav.focusMore, // typing in the box: Down goes straight to "More filters"
+            field: PekField(
+              label: movies ? 'Search your movies' : 'Search your TV shows',
+              controller: _q,
+              hint: 'Title, actor, director, genre, studio or year',
+              onChanged: _onChanged,
+              onSubmitted: _submit,
+            ),
           ),
         ),
         SizedBox(height: 0.6 * rem),
@@ -361,7 +485,10 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
         if (f.nfo != NfoFilter.any) chip(f.nfo.label, () => f.setNfo(NfoFilter.any)),
       ],
     );
-    if (!_more) return top;
+    // Always the same widgets in the same place (a Column whose first child is this row): opening or closing the panel used to
+    // rebuild the button from scratch, and a focused button that is rebuilt loses the focus.
+    final topRow = Focus(focusNode: widget.nav.moreScope, canRequestFocus: false, skipTraversal: true, child: top);
+    if (!_more) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [topRow]);
 
     Widget field(double w, String label, Widget dropdown) => SizedBox(
           width: w,
@@ -442,7 +569,7 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
     );
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      top,
+      topRow,
       SizedBox(height: 0.75 * rem),
       panel,
       if (fa != null && fa.directors.isEmpty && fa.studios.isEmpty && fa.mpaas.isEmpty)

@@ -11,6 +11,7 @@ import 'layouts.dart';
 import 'api.dart';
 import 'common.dart';
 import 'detail.dart';
+import 'fav_menu.dart';
 import 'discord_ui.dart';
 import 'fields.dart' show PekField;
 import 'mpv.dart';
@@ -82,8 +83,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       subtitle: f.year > 0 ? '${f.year}' : '',
                       poster: m == null ? Future.value(const Details(overview: '', poster: '')) : Api.movieDetails(m.id),
                       onTap: m == null ? () => _gone(context) : () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => MovieScreen(movie: m))),
-                      onLongPress: () => Store.toggleFavorite(f),
-                      holdSelect: true, // a remote's held OK removes it, like a long press on a touch screen
+                      onLongPress: () => _menu(context, f, tv: false),
+                      holdSelect: true, // a remote's held OK opens the same menu as a long press on a touch screen
                     ));
                   } else {
                     final s = shows.where((e) => e.title == f.ref).firstOrNull;
@@ -92,8 +93,8 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       subtitle: s == null ? '' : '${s.episodeCount} episodes',
                       poster: s == null ? Future.value(const Details(overview: '', poster: '')) : Api.showDetails(s.title),
                       onTap: s == null ? () => _gone(context) : () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => ShowScreen(show: s))),
-                      onLongPress: () => Store.toggleFavorite(f),
-                      holdSelect: true, // a remote's held OK removes it, like a long press on a touch screen
+                      onLongPress: () => _menu(context, f, tv: true),
+                      holdSelect: true, // a remote's held OK opens the same menu as a long press on a touch screen
                     ));
                   }
                 }
@@ -104,7 +105,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     slivers: [PekGridSliver(count: cells.length, minWidth: p.compact ? 110 : 200, gap: p.compact ? 0.6 * rem : rem, builder: (_, i) => cells[i])],
                   ),
                   SizedBox(height: 0.5 * rem),
-                  Text('Long-press a poster to remove it (on a remote, hold OK).', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
+                  Text('Long-press a poster for options (on a remote, hold OK).', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
                 ]);
               },
             ),
@@ -114,6 +115,18 @@ class _FavoritesPageState extends State<FavoritesPage> {
       },
     );
   }
+
+  /// Long press / held OK on a library favorite: remove it (after a confirmation; the grid redraws through Store.changed) or
+  /// open it in a plugin that can play or list it.
+  Future<void> _menu(BuildContext context, Favorite f, {required bool tv}) => showFavoriteMenu(
+        context,
+        title: f.title,
+        // toggleFavorite flips the state, so only call it while the title is still a favorite (a sync may have removed it meanwhile).
+        onRemove: () async {
+          if (Store.isFavorite(f.key)) await Store.toggleFavorite(f);
+        },
+        onOpen: () => PluginFavoritesSection.openInPlugin(context, tv: tv, tmdb: f.tmdb, title: f.title, year: f.year),
+      );
 
   void _gone(BuildContext c) => ScaffoldMessenger.maybeOf(c)?.showSnackBar(const SnackBar(content: Text('That title is no longer in your library.')));
 }
