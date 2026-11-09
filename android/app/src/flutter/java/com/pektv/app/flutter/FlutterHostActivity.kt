@@ -83,6 +83,7 @@ import java.util.concurrent.Executors
 class FlutterHostActivity : FlutterActivity() {
 
     private companion object {
+        const val REQ_MIC = 4718                // request code of the microphone prompt (voice search)
         const val PICK_FILE = 4717              // request code of the .PEK / .zip file picker
         const val MAX_PICK_BYTES = 16 * 1024 * 1024 // a plugin is at most 8 MB, a skin 6 MB
     }
@@ -359,6 +360,8 @@ class FlutterHostActivity : FlutterActivity() {
         if (!fromSplash) askMediaPermissionsOnce()
     }
 
+    private var pendingMic: MethodChannel.Result? = null
+
     private fun askMediaPermissionsOnce() {
         if (permissionsAsked) return
         permissionsAsked = true
@@ -367,6 +370,11 @@ class FlutterHostActivity : FlutterActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_MIC) {
+            pendingMic?.success(grantResults.any { it == PackageManager.PERMISSION_GRANTED })
+            pendingMic = null
+            return
+        }
         // Scans that ran before the permission was given found no files: scan again so Movies and Music fill in.
         if (requestCode == MediaPermissions.REQUEST && grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
             MediaPermissions.rescan()
@@ -547,6 +555,17 @@ class FlutterHostActivity : FlutterActivity() {
         hostChannel = MethodChannel(messenger, "pek/host")
         MethodChannel(messenger, "pek/host").setMethodCallHandler { call, result ->
             when (call.method) {
+                // Microphone for voice search (voice.dart): true when allowed, asks once if not.
+                "micPermission" -> {
+                    if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        result.success(true)
+                    } else if (pendingMic != null) {
+                        result.success(false)
+                    } else {
+                        pendingMic = result
+                        requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC)
+                    }
+                }
                 "initialLink" -> {
                     result.success(pendingLink)
                     pendingLink = null

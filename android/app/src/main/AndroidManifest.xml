@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- "All files access" (Android 11+): for the in-app folder picker on a USB drive / SD card, and the fallback in-app file browser (Install from .PEK > Browse this device),
          which Android otherwise shows no .PEK / .zip files in. Installing a plugin from a .PEK or a skin from a .zip does not need it: "Choose a file"
          uses Android's own file picker (FlutterHostActivity.pickFile). Optional: never asked for up front; Media sources and the folder picker show an "Allow access to all files" button while it is off. -->
@@ -28,7 +29,8 @@
 
     <!-- Discord Social SDK (Rich Presence only, DISCORD.md): its .aar adds voice chat permissions and a voice service that PEK TV never
          uses. Removed from the merged manifest (FOREGROUND_SERVICE and FOREGROUND_SERVICE_MEDIA_PLAYBACK stay: the app declares them itself). -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
+    <!-- RECORD_AUDIO is no longer stripped: voice search (voice.dart) records short clips only after a tap, and asks first. Discord's voice
+         service still never runs. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" tools:node="remove" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" tools:node="remove" />
     <uses-permission android:name="android.permission.BLUETOOTH" tools:node="remove" />

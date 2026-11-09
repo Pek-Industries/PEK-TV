@@ -11,6 +11,8 @@ import 'library_sort.dart';
 import 'suggest.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
+import 'voice.dart' show VoiceIntent, VoiceKind;
+import 'voice_mic.dart';
 import 'widgets.dart';
 
 /// Keeps a remote's Up / Down from jumping over the "More filters" button.
@@ -272,6 +274,14 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
     setState(() {});
   }
 
+  /// A spoken request from the mic button: fill the box with the title and run the search.
+  void _onVoice(VoiceIntent i) {
+    if (i.kind != VoiceKind.play && i.kind != VoiceKind.search) return; // open / resume are handled by the shell
+    _q.text = i.text;
+    _onChanged(i.text);
+    _submit();
+  }
+
   void _closeList() {
     _typed = '';
     _typedRaw = '';
@@ -436,6 +446,8 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
             ),
           ),
         ),
+        SizedBox(height: 0.6 * rem),
+        VoiceMic(onIntent: _onVoice),
         SizedBox(height: 0.6 * rem),
         ListenableBuilder(listenable: widget.filters, builder: (context, _) => _moreFilters(context)),
         SizedBox(height: (p.isTv ? 1.25 : 1) * rem),
