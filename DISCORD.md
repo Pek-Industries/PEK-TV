@@ -1,6 +1,6 @@
 # Discord Rich Presence (shows what you are watching on your Discord profile)
 
-A profile that links Discord shows "Watching <title>" (with the elapsed time) on its Discord profile while a movie or an episode
+A profile that links Discord shows "Watching" and the title (with the elapsed time) on its Discord profile while a movie or an episode
 plays. Android only for now. Settings > Account > Discord (regular mode, not music mode):
 
 - **Phone / tablet:** a "Link Discord" button (it follows the skin). It opens Discord's approval page; tap Authorize and come back.
@@ -68,16 +68,3 @@ real SQLite database with a fake Discord. It passes.
 
 On Android, Discord says presence can also be shown **without linking** when the Discord app is installed and signed in on the same
 phone. A later option for phones; the link flow stays because it also works on TVs, which have no Discord app.
-
-## NOT verified (I had no Flutter SDK, no Android SDK and no Discord SDK here)
-
-- **The Dart code was never compiled or analysed.** Run `flutter analyze` first.
-- **The `discordpp` calls in `discord_presence.cpp`** now compile against the real `discordpp.h` (1.10.19337) and use its documented
-  names, `Watching` and millisecond timestamps. Not run against Discord itself.
-- **Android TV:** the Social SDK documents Android 7.0+ but nothing I found says leanback TV boxes are supported. Try a real box
-  before relying on the QR flow.
-- **A phone opening the link:** the link is on the worker's address, so it opens in the browser first and then goes to Discord.
-- **Presence while the app is in the background:** the connection is made when playback starts and cleared on stop; what Android does
-  to it when the app is paused is untested.
-- No poster / artwork is sent yet (Discord needs an uploaded asset or a URL it accepts).
-- Google Play wants 16 KB-aligned native libraries: check that the SDK's `.so` is.

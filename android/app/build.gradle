@@ -159,7 +159,8 @@ dependencies {
     } else {
         implementation 'dev.jdtech.mpv:libmpv:1.0.0'
     }
-    // Discord Rich Presence (DISCORD.md): only when the SDK's .aar was put in android/app/libs/ (it is not in git).
+    // Discord Rich Presence (DISCORD.md): the Discord Social SDK's .aar is committed in android/app/libs/, so CI builds include it.
+    // The guard only keeps a checkout that is missing the file building (without Discord support).
     if (file('libs/discord_partner_sdk.aar').exists()) {
         implementation files('libs/discord_partner_sdk.aar')
     }

@@ -96,9 +96,10 @@ target_compile_definitions(pek PRIVATE _FILE_OFFSET_BITS=64)
 # Google Play (apps targeting Android 15+) needs native libraries aligned for 16 KB memory pages.
 target_link_options(pek PRIVATE -Wl,-z,max-page-size=16384)
 
-# Discord Rich Presence (DISCORD.md). The Discord Social SDK is not in git: download it from the Discord developer portal and put
-# its discord_partner_sdk.aar in android/app/libs/. Gradle (build.gradle) then adds it and exposes its headers and libraries as the
-# Prefab package found below. Without the .aar the app still builds; Settings > Account > Discord then says this build has no Discord support.
+# Discord Rich Presence (DISCORD.md). The Discord Social SDK's discord_partner_sdk.aar is committed in android/app/libs/ (from the
+# Discord developer portal), so CI builds get it too. Gradle (build.gradle) adds it and exposes its headers and libraries as the
+# Prefab package found below. If the .aar is ever missing the app still builds; Settings > Account > Discord then says this build has
+# no Discord support.
 find_package(discord_partner_sdk CONFIG QUIET)
 if(discord_partner_sdk_FOUND)
     target_compile_definitions(pek PRIVATE PEK_DISCORD_SDK)

@@ -15,7 +15,7 @@ Nobody needs an OpenSubtitles account: one shared account lives in the cloud wor
 
 ## Where things are
 - cloud sync worker    /v1/subs/search, /v1/subs/get (shared account, D1 cache, daily limits)
-- backend/subtitles.h  local routes /api/subtitles/search, /fetch, /cache/<id>.srt (forwards to the worker)
+- backend/subtitles.h  local routes `/api/subtitles/search`, `/fetch`, `/cache/<id>.srt` (forwards to the worker)
 - flutter_ui/lib/src/subtitles.dart     release-name parsing, client, SRT handling, the per-player controller
 - flutter_ui/lib/src/settings_extra.dart Settings > Subtitles
 - flutter_ui/lib/src/player.dart         subtitle menu entry, on-screen message

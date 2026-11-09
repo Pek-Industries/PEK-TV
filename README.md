@@ -24,12 +24,17 @@ PEK TV running at 1920x1080.
 - **A player that stays out of the way:** libmpv. Automatic subtitles, Skip Intro / Skip Recap, and an Up Next card.
 - **Music from your own folders:** albums, artists, songs, playlists and search over the same local and network folders. Tags and cover art are read from the files; shuffle, repeat, a queue and a player bar. Songs play in libmpv on Android. Files that will not open (for example a 0-byte or damaged file) are marked "Can't be played" and skipped, and a home-screen widget shows the song that is playing (phones and tablets). See `MUSIC.md`.
 - **Built for the couch:** D-pad, remote and gamepad support, with a 10-foot look.
+- **DVD and ISO playback:** a DVD image (`.iso`) or a ripped DVD folder (`VIDEO_TS`) in your library plays as one movie, with a title picker for discs that have a menu or extras. Physical discs are not supported yet. See `DVD.md`.
+- **Discord Rich Presence:** link Discord and your profile shows what you are watching, with the elapsed time (a button on phones, a QR code on TV; titles can be hidden). Android only for now. See `DISCORD.md`.
+- **Phone remote:** pair an Android phone once with a 6-digit code and use it as the TV's remote and keyboard.
+- **Search and filters:** Movies and TV Shows search by title, actor, director, genre, studio or year, with sort and filter drop-downs. Movies split over several files show up as one title (`MULTI_PART.md`).
+- **Sound controls:** audio delay, volume boost, night mode, dialogue boost, bass / treble and a stereo downmix for video and music.
 - **A dashboard you design:** widgets you choose and order, saved per profile.
 - **Profiles and PEK Cloud:** profiles with their own history and favorites, plus optional paid cloud backup and sync (monthly, yearly or lifetime; see the Plans page on the website).
 - **Skins:** install a skin from a `.zip`. Skins cannot run code or reach the network.
 - **Sandboxed plugins:** plugins declare what they may do and run in a locked-down sandbox.
 
-See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md` and `MUSIC.md` for details.
+See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md`, `MUSIC.md`, `DVD.md`, `DISCORD.md` and `MULTI_PART.md` for details.
 
 ## Project layout
 
