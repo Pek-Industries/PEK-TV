@@ -32,7 +32,6 @@ import 'plugin_ui.dart';
 import 'skin_button.dart';
 import 'skin_layout.dart';
 import 'skins.dart' show Skins;
-import 'remote_ui.dart';
 import 'store.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
@@ -51,7 +50,6 @@ const _navItems = <(String, String)>[
   ('favorites', 'Favorites'),
   ('duplicates', 'Duplicates'),
   ('unknown', 'Unknown'),
-  ('remote', 'Remote'),
   ('plugins', 'Plugins'),
   ('settings', 'Settings'),
 ];
@@ -67,7 +65,7 @@ const _swipeIcon = {'dashboard': Icons.home_outlined, 'movies': Icons.movie_outl
 const _swipeLabel = {'dashboard': 'Home', 'movies': 'Movies', 'shows': 'Shows', 'music': 'Music', 'updates': 'Updates', 'more': 'More', 'mhome': 'Home', 'msearch': 'Search', 'mlibrary': 'Your Library', 'msettings': 'Settings'};
 
 /// Everything that is not a swipe page.
-const _moreIds = ['search', 'history', 'favorites', 'duplicates', 'unknown', 'remote', 'plugins', 'settings'];
+const _moreIds = ['search', 'history', 'favorites', 'duplicates', 'unknown', 'plugins', 'settings'];
 
 String _titleOf(String id) => _navItems.firstWhere((e) => e.$1 == id, orElse: () => ('', 'PEK TV')).$2;
 
@@ -396,8 +394,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         return DuplicatesPage(padding: pad);
       case 'unknown':
         return UnknownPage(padding: pad);
-      case 'remote':
-        return RemotePage(padding: pad);
       case 'plugins':
         return PluginsPage(padding: pad);
       case 'settings':
@@ -652,7 +648,6 @@ class _MorePage extends StatelessWidget {
     'favorites': 'Your saved movies and shows',
     'duplicates': 'Files that appear twice',
     'unknown': 'Files PEK TV could not sort',
-    'remote': 'Your phone as remote and keyboard',
     'plugins': 'Installed plugins',
     'settings': 'Sources and app options',
   };

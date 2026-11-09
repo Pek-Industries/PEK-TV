@@ -28,6 +28,7 @@ import 'store_browser.dart' show openPluginStore;
 import 'plugin_pins.dart';
 import 'plugin_updates.dart';
 import 'plugin_ui.dart';
+import 'remote_ui.dart';
 import 'settings_extra.dart';
 import 'store.dart';
 import 'tv_mode.dart';
@@ -446,6 +447,8 @@ class SettingsPage extends StatelessWidget {
         ),
       row('Appearance', 'Skins, layout and the activity display', Icons.palette_outlined, () => const _SettingsList(children: [AppearanceSection(), LayoutSection(), ActivitySection()])),
       row('Sounds', 'Navigation sounds for taps and the remote', Icons.volume_up_outlined, () => const _SettingsList(children: [NavSoundSection()])),
+      // Not inside a category: pair a phone as remote and keyboard (on a TV), or use this phone as the remote.
+      row('Remote', 'Pair your phone as a remote and keyboard', Icons.settings_remote_outlined, () => RemotePage(padding: context.pek.pagePad)),
       if (music)
         row('Playback', 'Sound, online art and lyrics', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), MusicOnlineSection()]))
       else

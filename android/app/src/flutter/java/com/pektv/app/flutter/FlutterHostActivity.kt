@@ -24,8 +24,12 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.view.InputDevice
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
@@ -63,7 +67,7 @@ import java.util.concurrent.Executors
  *   pek/mpv         (MethodChannel)  load, play, pause, seek, setAudio, setSubtitle, addSubtitle, setMiniRect,
  *                                    fullscreen, destroy
  *   pek/mpv/events  (EventChannel)   {event: time|state|tracks|ended|error, data: {...}}  - same payloads the web UI got; "error" = the file never loaded
- *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs, navSound(kind, volume)
+ *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs, navSound(kind, volume), sendKey(k)
  *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
  *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
  *                                    status {status, message} comes back from the installer
@@ -272,6 +276,26 @@ class FlutterHostActivity : FlutterActivity() {
     }
 
     // Wi-Fi drops multicast packets unless Android is told to let them through; held only while searching the network.
+    /** One key press (down, then up 40 ms later) fed into this window exactly like a button on a real remote. */
+    private fun pressRemoteKey(name: String): Boolean {
+        val code = when (name) {
+            "up" -> KeyEvent.KEYCODE_DPAD_UP
+            "down" -> KeyEvent.KEYCODE_DPAD_DOWN
+            "left" -> KeyEvent.KEYCODE_DPAD_LEFT
+            "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
+            "ok" -> KeyEvent.KEYCODE_DPAD_CENTER
+            "menu" -> KeyEvent.KEYCODE_MENU
+            else -> return false
+        }
+        val source = InputDevice.SOURCE_KEYBOARD or InputDevice.SOURCE_DPAD
+        val down = SystemClock.uptimeMillis()
+        dispatchKeyEvent(KeyEvent(down, down, KeyEvent.ACTION_DOWN, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source))
+        Handler(Looper.getMainLooper()).postDelayed({
+            dispatchKeyEvent(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source))
+        }, 40)
+        return true
+    }
+
     private fun setMulticast(on: Boolean) {
         try {
             if (on) {
@@ -571,6 +595,9 @@ class FlutterHostActivity : FlutterActivity() {
                     setMulticast(call.argument<Boolean>("on") ?: false)
                     result.success(null)
                 }
+                // The phone remote (remote_host.dart): k = up | down | left | right | ok | menu. A real Android key press, so it takes the
+                // same road as a button on the TV's own remote. false = unknown key (Dart then falls back to its own injection).
+                "sendKey" -> result.success(pressRemoteKey(call.argument<String>("k") ?: ""))
                 // Navigation sounds (nav_sound.dart): kind 0 = move, 1 = select, 2 = back; volume 0..1. NavSound plays on its own
                 // thread, so this returns at once. A device where the sound could not be set up just stays silent.
                 "navSound" -> {

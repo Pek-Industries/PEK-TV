@@ -12,7 +12,7 @@ import 'remote_pairing.dart' show RemoteProtocol;
 import 'tokens.dart';
 import 'widgets.dart';
 
-/// More > Remote. On a TV it is the place to pair phones; on a phone or tablet it is the remote itself.
+/// Settings > Remote. On a TV it is the place to pair phones; on a phone or tablet it is the remote itself.
 class RemotePage extends StatelessWidget {
   const RemotePage({super.key, required this.padding});
   final EdgeInsets padding;
@@ -93,7 +93,7 @@ class _HostPageState extends State<_HostPage> {
           ]),
           if (pin != null) ...[
             SizedBox(height: 1.2 * rem),
-            Text('On your phone open PEK TV > More > Remote, pick this TV and enter:', style: TextStyle(color: t.textMuted, fontSize: 1.0 * rem)),
+            Text('On your phone open PEK TV > Settings > Remote, pick this TV and enter:', style: TextStyle(color: t.textMuted, fontSize: 1.0 * rem)),
             SizedBox(height: 0.4 * rem),
             Text('${pin.substring(0, 3)} ${pin.substring(3)}', style: TextStyle(fontSize: 3.2 * rem, fontWeight: FontWeight.w800, letterSpacing: 0.3 * rem, color: t.accent, fontFeatures: const [FontFeature.tabularFigures()])),
             Text('Works for ${left.inMinutes}:${(left.inSeconds % 60).toString().padLeft(2, '0')} more, once.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
@@ -178,7 +178,7 @@ class _PhonePageState extends State<_PhonePage> {
     return [
       if (_c.error.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_c.error, style: const TextStyle(color: Colors.redAccent))),
       if (_c.state == RemoteState.lost) Padding(padding: const EdgeInsets.only(bottom: 8), child: PekButton(label: 'Try again', primary: true, onTap: _c.retryNow)),
-      Text('Use this phone as a remote and keyboard for PEK TV. On the TV open More > Remote > Pair a phone.', style: TextStyle(color: t.textMuted)),
+      Text('Use this phone as a remote and keyboard for PEK TV. On the TV open Settings > Remote > Pair a phone.', style: TextStyle(color: t.textMuted)),
       const SizedBox(height: 12),
       if (_c.saved.isNotEmpty) Text('Your TVs', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
       for (final s in _c.saved)
@@ -213,7 +213,7 @@ class _PhonePageState extends State<_PhonePage> {
     return [
       Text('Pair with ${_c.tvName}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
       const SizedBox(height: 6),
-      Text('On the TV open More > Remote > Pair a phone, then type the 6-digit code it shows.', style: TextStyle(color: t.textMuted)),
+      Text('On the TV open Settings > Remote > Pair a phone, then type the 6-digit code it shows.', style: TextStyle(color: t.textMuted)),
       const SizedBox(height: 12),
       TextField(
         controller: _pin,
@@ -314,6 +314,9 @@ class _PhonePageState extends State<_PhonePage> {
 // ---- buttons ------------------------------------------------------------------------------------------------
 
 /// Fires on touch, and keeps firing while held when [repeat] is set (about as fast as KeyGuard lets a held arrow go).
+///
+/// Shows the press: the button shrinks a little and a soft round highlight flashes over it, on top of the buzz. A quick tap is
+/// kept on screen for a moment ([_minShown]) so it is seen, a held button stays pressed until you let go.
 class _Hold extends StatefulWidget {
   const _Hold({required this.onFire, required this.child, this.repeat = true});
   final VoidCallback onFire;
@@ -324,7 +327,31 @@ class _Hold extends StatefulWidget {
 }
 
 class _HoldState extends State<_Hold> {
+  static const _minShown = Duration(milliseconds: 130);
   Timer? _t;
+  Timer? _release;
+  bool _pressed = false;
+  DateTime _downAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _show() {
+    _release?.cancel();
+    _downAt = DateTime.now();
+    if (!_pressed) setState(() => _pressed = true);
+  }
+
+  void _hide() {
+    _release?.cancel();
+    final left = _minShown - DateTime.now().difference(_downAt);
+    void off() {
+      if (mounted && _pressed) setState(() => _pressed = false);
+    }
+
+    if (left <= Duration.zero) {
+      off();
+    } else {
+      _release = Timer(left, off);
+    }
+  }
 
   void _fire() {
     HapticFeedback.selectionClick();
@@ -332,6 +359,7 @@ class _HoldState extends State<_Hold> {
   }
 
   void _down() {
+    _show();
     _fire();
     if (!widget.repeat) return;
     _t?.cancel();
@@ -343,22 +371,44 @@ class _HoldState extends State<_Hold> {
   void _up() {
     _t?.cancel();
     _t = null;
+    _hide();
   }
 
   @override
   void dispose() {
     _t?.cancel();
+    _release?.cancel();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: (_) => _down(),
-        onPointerUp: (_) => _up(),
-        onPointerCancel: (_) => _up(),
-        child: widget.child,
-      );
+  Widget build(BuildContext context) {
+    final glow = context.pek.tokens.text.withAlpha(64);
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (_) => _down(),
+      onPointerUp: (_) => _up(),
+      onPointerCancel: (_) => _up(),
+      // The Listener stays outside the scale, so the touch area does not shrink while you press.
+      child: AnimatedScale(
+        scale: _pressed ? 0.88 : 1.0,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOut,
+        child: Stack(alignment: Alignment.center, children: [
+          widget.child,
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: _pressed ? 1 : 0,
+                duration: const Duration(milliseconds: 90),
+                child: DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, color: glow)),
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
 }
 
 class _RoundBtn extends StatelessWidget {

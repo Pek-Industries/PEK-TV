@@ -17,8 +17,21 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/FLUTTER.md proj/FLUTTER.md
  - **Cloud account and sync** (`cloud.dart`, `account_pages.dart`): sign in with email and password (a 6-digit code is emailed on a new device), sign in with your phone on a TV (QR code, no typing), forgot password, sign out (asks first), delete account. Accounts are created on the website, not in the app (see "PEK Cloud plans in the app"). Watch history, resume points and favorites sync per profile through the existing worker; the profile list syncs too. Favorites are keyed by TMDb id, looked up once through the same TMDb worker the backend uses.
 diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt proj/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt
 --- proj_orig/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt	2026-11-09 04:07:46.447364874 +0000
-+++ proj/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt	2026-11-09 04:08:09.311451107 +0000
-@@ -35,6 +35,7 @@
++++ proj/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt	2026-11-09 04:23:21.092491557 +0000
+@@ -24,8 +24,12 @@
+ import android.os.Handler
+ import android.os.Looper
+ import android.os.Process
++import android.os.SystemClock
+ import android.provider.OpenableColumns
+ import android.provider.Settings
++import android.view.InputDevice
++import android.view.KeyCharacterMap
++import android.view.KeyEvent
+ import android.view.SurfaceView
+ import android.view.View
+ import android.widget.FrameLayout
+@@ -35,6 +39,7 @@
  import com.chaquo.python.android.AndroidPlatform
  import com.pektv.app.MpvController
  import com.pektv.app.NativeBridge
@@ -26,16 +39,16 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/flutter/java/com/p
  import com.pektv.app.Boot
  import com.pektv.app.R
  import com.pektv.app.SplashGate
-@@ -62,7 +63,7 @@
+@@ -62,7 +67,7 @@
   *   pek/mpv         (MethodChannel)  load, play, pause, seek, setAudio, setSubtitle, addSubtitle, setMiniRect,
   *                                    fullscreen, destroy
   *   pek/mpv/events  (EventChannel)   {event: time|state|tracks|ended|error, data: {...}}  - same payloads the web UI got; "error" = the file never loaded
 - *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs
-+ *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs, navSound(kind, volume)
++ *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs, navSound(kind, volume), sendKey(k)
   *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
   *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
   *                                    status {status, message} comes back from the installer
-@@ -89,6 +90,7 @@
+@@ -89,6 +94,7 @@
      private var permissionsAsked = false
  
      private var mpv: MpvController? = null
@@ -43,7 +56,34 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/flutter/java/com/p
      private var events: EventChannel.EventSink? = null
      private var music: FlutterMusic? = null
      private var musicChannel: MethodChannel? = null
-@@ -323,6 +325,7 @@
+@@ -270,6 +276,26 @@
+     }
+ 
+     // Wi-Fi drops multicast packets unless Android is told to let them through; held only while searching the network.
++    /** One key press (down, then up 40 ms later) fed into this window exactly like a button on a real remote. */
++    private fun pressRemoteKey(name: String): Boolean {
++        val code = when (name) {
++            "up" -> KeyEvent.KEYCODE_DPAD_UP
++            "down" -> KeyEvent.KEYCODE_DPAD_DOWN
++            "left" -> KeyEvent.KEYCODE_DPAD_LEFT
++            "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
++            "ok" -> KeyEvent.KEYCODE_DPAD_CENTER
++            "menu" -> KeyEvent.KEYCODE_MENU
++            else -> return false
++        }
++        val source = InputDevice.SOURCE_KEYBOARD or InputDevice.SOURCE_DPAD
++        val down = SystemClock.uptimeMillis()
++        dispatchKeyEvent(KeyEvent(down, down, KeyEvent.ACTION_DOWN, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source))
++        Handler(Looper.getMainLooper()).postDelayed({
++            dispatchKeyEvent(KeyEvent(down, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, source))
++        }, 40)
++        return true
++    }
++
+     private fun setMulticast(on: Boolean) {
+         try {
+             if (on) {
+@@ -323,6 +349,7 @@
              events?.success(mapOf("event" to event, "data" to data.toMap()))
          }
          mpv = c
@@ -51,10 +91,13 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/flutter/java/com/p
          music = FlutterMusic(this, c) { name, args ->
              runOnUiThread { musicChannel?.invokeMethod(name, args) }
          }
-@@ -568,6 +571,12 @@
+@@ -568,6 +595,15 @@
                      setMulticast(call.argument<Boolean>("on") ?: false)
                      result.success(null)
                  }
++                // The phone remote (remote_host.dart): k = up | down | left | right | ok | menu. A real Android key press, so it takes the
++                // same road as a button on the TV's own remote. false = unknown key (Dart then falls back to its own injection).
++                "sendKey" -> result.success(pressRemoteKey(call.argument<String>("k") ?: ""))
 +                // Navigation sounds (nav_sound.dart): kind 0 = move, 1 = select, 2 = back; volume 0..1. NavSound plays on its own
 +                // thread, so this returns at once. A device where the sound could not be set up just stays silent.
 +                "navSound" -> {
@@ -64,7 +107,7 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/flutter/java/com/p
                  // The phone remote (remote_host.dart): dir 1 = louder, -1 = quieter, 0 = mute / unmute. Moves the system music volume.
                  "volume" -> {
                      val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-@@ -700,6 +709,8 @@
+@@ -700,6 +736,8 @@
          setMulticast(false)
          music?.destroy()          // also stops MusicService: without this activity there is no queue to control
          music = null
@@ -357,12 +400,22 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/nav_sound.dart 
 +}
 diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/pages.dart proj/flutter_ui/lib/src/pages.dart
 --- proj_orig/flutter_ui/lib/src/pages.dart	2026-11-09 04:07:46.451748148 +0000
-+++ proj/flutter_ui/lib/src/pages.dart	2026-11-09 04:10:08.737459299 +0000
-@@ -445,6 +445,7 @@
++++ proj/flutter_ui/lib/src/pages.dart	2026-11-09 04:18:36.316219717 +0000
+@@ -28,6 +28,7 @@
+ import 'plugin_pins.dart';
+ import 'plugin_updates.dart';
+ import 'plugin_ui.dart';
++import 'remote_ui.dart';
+ import 'settings_extra.dart';
+ import 'store.dart';
+ import 'tv_mode.dart';
+@@ -445,6 +446,9 @@
            builder: (context, n, _) => row('Updates', n > 0 ? '$n new' : 'News, offers and coupon codes', Icons.campaign_outlined, () => const _SettingsList(children: [NewsSection()])),
          ),
        row('Appearance', 'Skins, layout and the activity display', Icons.palette_outlined, () => const _SettingsList(children: [AppearanceSection(), LayoutSection(), ActivitySection()])),
 +      row('Sounds', 'Navigation sounds for taps and the remote', Icons.volume_up_outlined, () => const _SettingsList(children: [NavSoundSection()])),
++      // Not inside a category: pair a phone as remote and keyboard (on a TV), or use this phone as the remote.
++      row('Remote', 'Pair your phone as a remote and keyboard', Icons.settings_remote_outlined, () => RemotePage(padding: context.pek.pagePad)),
        if (music)
          row('Playback', 'Sound, online art and lyrics', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), MusicOnlineSection()]))
        else
@@ -393,6 +446,180 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/player.dart pro
      widget.onClose?.call();
      if (Cloud.linked) Timer(const Duration(milliseconds: 800), () => Cloud.sync(light: true)); // push the new resume point
      super.dispose();
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/remote_host.dart proj/flutter_ui/lib/src/remote_host.dart
+--- proj_orig/flutter_ui/lib/src/remote_host.dart	2026-11-09 04:07:46.453284542 +0000
++++ proj/flutter_ui/lib/src/remote_host.dart	2026-11-09 04:23:29.593111237 +0000
+@@ -19,7 +19,8 @@
+ /// a UDP probe on 8767 so a phone can find the TV. A phone must pair first (remote_pairing.dart); after that it can only send
+ /// arrow / OK / Menu keys, Back, Home, text for the focused text box, and play / pause / seek / volume. Nothing else.
+ ///
+-/// Keys are fed into Flutter's own key pipeline, so the focus system, KeyGuard and TV navigation treat them exactly like a real remote.
++/// Keys are sent as real Android key presses into the app's window (`sendKey` on pek/host), so the focus system, KeyGuard and TV
++/// navigation treat them exactly like a real remote. Only if the host cannot do that are they injected into Flutter's key pipeline.
+ class RemoteHost extends ChangeNotifier {
+   RemoteHost._();
+   static final RemoteHost instance = RemoteHost._();
+@@ -262,8 +263,18 @@
+     'menu': (PhysicalKeyboardKey.contextMenu, LogicalKeyboardKey.contextMenu), // the app already reads Menu as press-and-hold
+   };
+ 
+-  /// One key press through the same path the engine uses for a real keyboard / remote.
++  /// One key press. The host sends it as a real Android key event (the road a button on the TV's own remote takes). Feeding the
++  /// engine's key callback by hand (below) did nothing on some Flutter versions: the engine waits there for a second, raw
++  /// message that a made-up key never has, so arrows and OK were lost while Back (which does not use a key) worked.
+   void _pressKey(String k) {
++    if (!_keyMap.containsKey(k)) return;
++    unawaited(_hostChannel.invokeMethod<bool>('sendKey', {'k': k}).then((ok) {
++      if (ok != true) _injectKey(k);
++    }, onError: (Object _) => _injectKey(k)));
++  }
++
++  /// Fallback: one key press through the engine's key-data callback.
++  void _injectKey(String k) {
+     final pair = _keyMap[k];
+     if (pair == null) return;
+     final d = ui.PlatformDispatcher.instance;
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/remote_ui.dart proj/flutter_ui/lib/src/remote_ui.dart
+--- proj_orig/flutter_ui/lib/src/remote_ui.dart	2026-11-09 04:07:46.453309991 +0000
++++ proj/flutter_ui/lib/src/remote_ui.dart	2026-11-09 04:25:58.998154027 +0000
+@@ -12,7 +12,7 @@
+ import 'tokens.dart';
+ import 'widgets.dart';
+ 
+-/// More > Remote. On a TV it is the place to pair phones; on a phone or tablet it is the remote itself.
++/// Settings > Remote. On a TV it is the place to pair phones; on a phone or tablet it is the remote itself.
+ class RemotePage extends StatelessWidget {
+   const RemotePage({super.key, required this.padding});
+   final EdgeInsets padding;
+@@ -93,7 +93,7 @@
+           ]),
+           if (pin != null) ...[
+             SizedBox(height: 1.2 * rem),
+-            Text('On your phone open PEK TV > More > Remote, pick this TV and enter:', style: TextStyle(color: t.textMuted, fontSize: 1.0 * rem)),
++            Text('On your phone open PEK TV > Settings > Remote, pick this TV and enter:', style: TextStyle(color: t.textMuted, fontSize: 1.0 * rem)),
+             SizedBox(height: 0.4 * rem),
+             Text('${pin.substring(0, 3)} ${pin.substring(3)}', style: TextStyle(fontSize: 3.2 * rem, fontWeight: FontWeight.w800, letterSpacing: 0.3 * rem, color: t.accent, fontFeatures: const [FontFeature.tabularFigures()])),
+             Text('Works for ${left.inMinutes}:${(left.inSeconds % 60).toString().padLeft(2, '0')} more, once.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
+@@ -178,7 +178,7 @@
+     return [
+       if (_c.error.isNotEmpty) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_c.error, style: const TextStyle(color: Colors.redAccent))),
+       if (_c.state == RemoteState.lost) Padding(padding: const EdgeInsets.only(bottom: 8), child: PekButton(label: 'Try again', primary: true, onTap: _c.retryNow)),
+-      Text('Use this phone as a remote and keyboard for PEK TV. On the TV open More > Remote > Pair a phone.', style: TextStyle(color: t.textMuted)),
++      Text('Use this phone as a remote and keyboard for PEK TV. On the TV open Settings > Remote > Pair a phone.', style: TextStyle(color: t.textMuted)),
+       const SizedBox(height: 12),
+       if (_c.saved.isNotEmpty) Text('Your TVs', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+       for (final s in _c.saved)
+@@ -213,7 +213,7 @@
+     return [
+       Text('Pair with ${_c.tvName}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+       const SizedBox(height: 6),
+-      Text('On the TV open More > Remote > Pair a phone, then type the 6-digit code it shows.', style: TextStyle(color: t.textMuted)),
++      Text('On the TV open Settings > Remote > Pair a phone, then type the 6-digit code it shows.', style: TextStyle(color: t.textMuted)),
+       const SizedBox(height: 12),
+       TextField(
+         controller: _pin,
+@@ -314,6 +314,9 @@
+ // ---- buttons ------------------------------------------------------------------------------------------------
+ 
+ /// Fires on touch, and keeps firing while held when [repeat] is set (about as fast as KeyGuard lets a held arrow go).
++///
++/// Shows the press: the button shrinks a little and a soft round highlight flashes over it, on top of the buzz. A quick tap is
++/// kept on screen for a moment ([_minShown]) so it is seen, a held button stays pressed until you let go.
+ class _Hold extends StatefulWidget {
+   const _Hold({required this.onFire, required this.child, this.repeat = true});
+   final VoidCallback onFire;
+@@ -324,7 +327,31 @@
+ }
+ 
+ class _HoldState extends State<_Hold> {
++  static const _minShown = Duration(milliseconds: 130);
+   Timer? _t;
++  Timer? _release;
++  bool _pressed = false;
++  DateTime _downAt = DateTime.fromMillisecondsSinceEpoch(0);
++
++  void _show() {
++    _release?.cancel();
++    _downAt = DateTime.now();
++    if (!_pressed) setState(() => _pressed = true);
++  }
++
++  void _hide() {
++    _release?.cancel();
++    final left = _minShown - DateTime.now().difference(_downAt);
++    void off() {
++      if (mounted && _pressed) setState(() => _pressed = false);
++    }
++
++    if (left <= Duration.zero) {
++      off();
++    } else {
++      _release = Timer(left, off);
++    }
++  }
+ 
+   void _fire() {
+     HapticFeedback.selectionClick();
+@@ -332,6 +359,7 @@
+   }
+ 
+   void _down() {
++    _show();
+     _fire();
+     if (!widget.repeat) return;
+     _t?.cancel();
+@@ -343,22 +371,44 @@
+   void _up() {
+     _t?.cancel();
+     _t = null;
++    _hide();
+   }
+ 
+   @override
+   void dispose() {
+     _t?.cancel();
++    _release?.cancel();
+     super.dispose();
+   }
+ 
+   @override
+-  Widget build(BuildContext context) => Listener(
+-        behavior: HitTestBehavior.opaque,
+-        onPointerDown: (_) => _down(),
+-        onPointerUp: (_) => _up(),
+-        onPointerCancel: (_) => _up(),
+-        child: widget.child,
+-      );
++  Widget build(BuildContext context) {
++    final glow = context.pek.tokens.text.withAlpha(64);
++    return Listener(
++      behavior: HitTestBehavior.opaque,
++      onPointerDown: (_) => _down(),
++      onPointerUp: (_) => _up(),
++      onPointerCancel: (_) => _up(),
++      // The Listener stays outside the scale, so the touch area does not shrink while you press.
++      child: AnimatedScale(
++        scale: _pressed ? 0.88 : 1.0,
++        duration: const Duration(milliseconds: 90),
++        curve: Curves.easeOut,
++        child: Stack(alignment: Alignment.center, children: [
++          widget.child,
++          Positioned.fill(
++            child: IgnorePointer(
++              child: AnimatedOpacity(
++                opacity: _pressed ? 1 : 0,
++                duration: const Duration(milliseconds: 90),
++                child: DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, color: glow)),
++              ),
++            ),
++          ),
++        ]),
++      ),
++    );
++  }
+ }
+ 
+ class _RoundBtn extends StatelessWidget {
 diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/settings_extra.dart proj/flutter_ui/lib/src/settings_extra.dart
 --- proj_orig/flutter_ui/lib/src/settings_extra.dart	2026-11-09 04:07:46.453053909 +0000
 +++ proj/flutter_ui/lib/src/settings_extra.dart	2026-11-09 04:10:08.736960638 +0000
@@ -445,6 +672,51 @@ diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/settings_extra.
  
  // ====================================================================== Settings > Video output
  
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/shell.dart proj/flutter_ui/lib/src/shell.dart
+--- proj_orig/flutter_ui/lib/src/shell.dart	2026-11-09 04:07:46.452144284 +0000
++++ proj/flutter_ui/lib/src/shell.dart	2026-11-09 04:18:36.315463143 +0000
+@@ -32,7 +32,6 @@
+ import 'skin_button.dart';
+ import 'skin_layout.dart';
+ import 'skins.dart' show Skins;
+-import 'remote_ui.dart';
+ import 'store.dart';
+ import 'tokens.dart';
+ import 'tv_nav.dart';
+@@ -51,7 +50,6 @@
+   ('favorites', 'Favorites'),
+   ('duplicates', 'Duplicates'),
+   ('unknown', 'Unknown'),
+-  ('remote', 'Remote'),
+   ('plugins', 'Plugins'),
+   ('settings', 'Settings'),
+ ];
+@@ -67,7 +65,7 @@
+ const _swipeLabel = {'dashboard': 'Home', 'movies': 'Movies', 'shows': 'Shows', 'music': 'Music', 'updates': 'Updates', 'more': 'More', 'mhome': 'Home', 'msearch': 'Search', 'mlibrary': 'Your Library', 'msettings': 'Settings'};
+ 
+ /// Everything that is not a swipe page.
+-const _moreIds = ['search', 'history', 'favorites', 'duplicates', 'unknown', 'remote', 'plugins', 'settings'];
++const _moreIds = ['search', 'history', 'favorites', 'duplicates', 'unknown', 'plugins', 'settings'];
+ 
+ String _titleOf(String id) => _navItems.firstWhere((e) => e.$1 == id, orElse: () => ('', 'PEK TV')).$2;
+ 
+@@ -396,8 +394,6 @@
+         return DuplicatesPage(padding: pad);
+       case 'unknown':
+         return UnknownPage(padding: pad);
+-      case 'remote':
+-        return RemotePage(padding: pad);
+       case 'plugins':
+         return PluginsPage(padding: pad);
+       case 'settings':
+@@ -652,7 +648,6 @@
+     'favorites': 'Your saved movies and shows',
+     'duplicates': 'Files that appear twice',
+     'unknown': 'Files PEK TV could not sort',
+-    'remote': 'Your phone as remote and keyboard',
+     'plugins': 'Installed plugins',
+     'settings': 'Sources and app options',
+   };
 diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/widgets.dart proj/flutter_ui/lib/src/widgets.dart
 --- proj_orig/flutter_ui/lib/src/widgets.dart	2026-11-09 04:07:46.452977904 +0000
 +++ proj/flutter_ui/lib/src/widgets.dart	2026-11-09 04:09:59.026127925 +0000

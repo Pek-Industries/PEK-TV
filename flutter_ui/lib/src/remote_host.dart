@@ -19,7 +19,8 @@ import 'remote_pairing.dart';
 /// a UDP probe on 8767 so a phone can find the TV. A phone must pair first (remote_pairing.dart); after that it can only send
 /// arrow / OK / Menu keys, Back, Home, text for the focused text box, and play / pause / seek / volume. Nothing else.
 ///
-/// Keys are fed into Flutter's own key pipeline, so the focus system, KeyGuard and TV navigation treat them exactly like a real remote.
+/// Keys are sent as real Android key presses into the app's window (`sendKey` on pek/host), so the focus system, KeyGuard and TV
+/// navigation treat them exactly like a real remote. Only if the host cannot do that are they injected into Flutter's key pipeline.
 class RemoteHost extends ChangeNotifier {
   RemoteHost._();
   static final RemoteHost instance = RemoteHost._();
@@ -262,8 +263,18 @@ class RemoteHost extends ChangeNotifier {
     'menu': (PhysicalKeyboardKey.contextMenu, LogicalKeyboardKey.contextMenu), // the app already reads Menu as press-and-hold
   };
 
-  /// One key press through the same path the engine uses for a real keyboard / remote.
+  /// One key press. The host sends it as a real Android key event (the road a button on the TV's own remote takes). Feeding the
+  /// engine's key callback by hand (below) did nothing on some Flutter versions: the engine waits there for a second, raw
+  /// message that a made-up key never has, so arrows and OK were lost while Back (which does not use a key) worked.
   void _pressKey(String k) {
+    if (!_keyMap.containsKey(k)) return;
+    unawaited(_hostChannel.invokeMethod<bool>('sendKey', {'k': k}).then((ok) {
+      if (ok != true) _injectKey(k);
+    }, onError: (Object _) => _injectKey(k)));
+  }
+
+  /// Fallback: one key press through the engine's key-data callback.
+  void _injectKey(String k) {
     final pair = _keyMap[k];
     if (pair == null) return;
     final d = ui.PlatformDispatcher.instance;
