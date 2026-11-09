@@ -198,6 +198,7 @@ class _AudioFxControlsState extends State<AudioFxControls> {
               value: '${fx.boost}%',
               onMinus: fx.boost > 100 ? () => set(fx.copyWith(boost: fx.boost - 10)) : null,
               onPlus: fx.boost < 200 ? () => set(fx.copyWith(boost: fx.boost + 10)) : null,
+              onReset: () => set(fx.copyWith(boost: 100)),
             ),
             ListRow(
               title: 'Night mode',
@@ -216,12 +217,14 @@ class _AudioFxControlsState extends State<AudioFxControls> {
               value: _db(fx.bass),
               onMinus: fx.bass > -10 ? () => set(fx.copyWith(bass: fx.bass - 1)) : null,
               onPlus: fx.bass < 10 ? () => set(fx.copyWith(bass: fx.bass + 1)) : null,
+              onReset: () => set(fx.copyWith(bass: 0)),
             ),
             _StepRow(
               title: 'Treble',
               value: _db(fx.treble),
               onMinus: fx.treble > -10 ? () => set(fx.copyWith(treble: fx.treble - 1)) : null,
               onPlus: fx.treble < 10 ? () => set(fx.copyWith(treble: fx.treble + 1)) : null,
+              onReset: () => set(fx.copyWith(treble: 0)),
             ),
             _StepRow(
               title: 'Audio delay',
@@ -229,6 +232,7 @@ class _AudioFxControlsState extends State<AudioFxControls> {
               value: _ms(fx.delayMs),
               onMinus: fx.delayMs > -3000 ? () => set(fx.copyWith(delayMs: fx.delayMs - 50)) : null,
               onPlus: fx.delayMs < 3000 ? () => set(fx.copyWith(delayMs: fx.delayMs + 50)) : null,
+              onReset: () => set(fx.copyWith(delayMs: 0)),
             ),
             ToggleRow(
               title: 'Stereo downmix',
@@ -247,24 +251,50 @@ class _AudioFxControlsState extends State<AudioFxControls> {
   }
 }
 
-/// A row with a value and - / + buttons. The row itself is not focusable: the D-pad goes to the two buttons.
+/// A row with a value and - / + buttons. On a touch screen the two buttons are pressed. On a remote the whole row is one focus
+/// stop (the small buttons at the far right used to be skipped by the D-pad, so Volume boost could not be reached): Left / Right
+/// change the value (hold to keep going), OK steps it up and, at the top, back to [onReset]'s value. At either end of the range
+/// a fresh Left / Right press leaves the row as usual, so focus is never trapped; a held key just stops at the end.
 class _StepRow extends StatelessWidget {
-  const _StepRow({required this.title, this.subtitle = '', required this.value, required this.onMinus, required this.onPlus});
+  const _StepRow({required this.title, this.subtitle = '', required this.value, required this.onMinus, required this.onPlus, this.onReset});
   final String title, subtitle, value;
   final VoidCallback? onMinus, onPlus;
+
+  /// What OK does when the value is already at its top (back to the normal setting).
+  final VoidCallback? onReset;
+
+  KeyEventResult _key(FocusNode node, KeyEvent e) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    final left = k == LogicalKeyboardKey.arrowLeft;
+    if (!left && k != LogicalKeyboardKey.arrowRight) return KeyEventResult.ignored;
+    final step = left ? onMinus : onPlus;
+    if (step == null) return e is KeyDownEvent ? KeyEventResult.ignored : KeyEventResult.handled;
+    step();
+    return KeyEventResult.handled;
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = context.pek;
     final rem = p.rem;
-    return ListRow(
-      title: title,
-      subtitle: subtitle,
-      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-        _StepButton(icon: Icons.remove, onTap: onMinus),
-        SizedBox(width: 5.2 * rem, child: Text(value, textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w600, fontSize: rem, fontFeatures: const [FontFeature.tabularFigures()]))),
-        _StepButton(icon: Icons.add, onTap: onPlus),
-      ]),
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: _key,
+      child: ListRow(
+        title: title,
+        subtitle: subtitle,
+        onTap: onPlus ?? onReset,
+        // The buttons are for touch; ExcludeFocus keeps them out of the D-pad's way (the row is the stop).
+        trailing: ExcludeFocus(
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            _StepButton(icon: Icons.remove, onTap: onMinus),
+            SizedBox(width: 5.2 * rem, child: Text(value, textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.w600, fontSize: rem, fontFeatures: const [FontFeature.tabularFigures()]))),
+            _StepButton(icon: Icons.add, onTap: onPlus),
+          ]),
+        ),
+      ),
     );
   }
 }

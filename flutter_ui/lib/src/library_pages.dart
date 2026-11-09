@@ -616,13 +616,16 @@ class _HistoryPageState extends State<HistoryPage> {
                 subtitle: it.duration > 0 ? '${formatTime(it.position)} of ${formatTime(it.duration)}' : 'Stopped at ${formatTime(it.position)}',
                 onTap: () => playResumeOrStart(context, it),
                 onLongPress: () => showResumePreview(context, it), // hold: picture, description, Continue / Start over
-                trailing: IconButton(
-                  tooltip: 'Remove',
-                  icon: Icon(Icons.close, color: p.tokens.textMuted),
-                  onPressed: () async {
-                    if (await confirmRemoveFromHistory(context, it.title)) await Store.removeProgress(it.id);
-                  },
-                ),
+                // Beside the row, not inside it, so Right on a remote lands on the X (see ListRow.actions).
+                actions: [
+                  RowAction(
+                    icon: Icons.close,
+                    label: 'Remove',
+                    onTap: () async {
+                      if (await confirmRemoveFromHistory(context, it.title)) await Store.removeProgress(it.id);
+                    },
+                  ),
+                ],
               ),
             SizedBox(height: rem),
             if (items.isNotEmpty) sub('Finished'),
@@ -645,28 +648,23 @@ class _HistoryPageState extends State<HistoryPage> {
                 title: e.label,
                 subtitle: '${_when(e.at)}${e.count > 1 ? ' \u00b7 watched ${e.count} times' : ''}${Ratings.ofTarget(targetOfHistory(e)) > 0 ? ' \u00b7 \u2605 ${Ratings.ofTarget(targetOfHistory(e))}/${Ratings.max}' : ''}',
                 onTap: () => showFinishedPreview(context, e), // the same page as Continue watching: picture, description, Play
-                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                  IconButton(
-                    tooltip: 'Rate',
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                    padding: EdgeInsets.zero,
-                    icon: Icon(Ratings.ofTarget(targetOfHistory(e)) > 0 ? Icons.star_rounded : Icons.star_outline_rounded),
-                    onPressed: () => showRateDialog(context, title: e.title, year: e.year, kind: e.kind, season: e.season, episode: e.episode),
+                // Beside the row, not inside it, so Right on a remote reaches Rate and then the X (see ListRow.actions).
+                actions: [
+                  RowAction(
+                    icon: Ratings.ofTarget(targetOfHistory(e)) > 0 ? Icons.star_rounded : Icons.star_outline_rounded,
+                    label: 'Rate',
+                    onTap: () => showRateDialog(context, title: e.title, year: e.year, kind: e.kind, season: e.season, episode: e.episode),
                   ),
-                  IconButton(
-                    tooltip: 'Remove',
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.close),
-                    onPressed: () async {
+                  RowAction(
+                    icon: Icons.close,
+                    label: 'Remove',
+                    onTap: () async {
                       if (!await confirmRemoveFromHistory(context, e.label)) return;
                       await Store.removeHistory(e.key);
                       Watched.syncSoon();
                     },
                   ),
-                ]),
+                ],
               ),
           ],
         ]);

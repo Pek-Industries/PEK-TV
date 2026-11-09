@@ -83,6 +83,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       poster: m == null ? Future.value(const Details(overview: '', poster: '')) : Api.movieDetails(m.id),
                       onTap: m == null ? () => _gone(context) : () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => MovieScreen(movie: m))),
                       onLongPress: () => Store.toggleFavorite(f),
+                      holdSelect: true, // a remote's held OK removes it, like a long press on a touch screen
                     ));
                   } else {
                     final s = shows.where((e) => e.title == f.ref).firstOrNull;
@@ -92,6 +93,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                       poster: s == null ? Future.value(const Details(overview: '', poster: '')) : Api.showDetails(s.title),
                       onTap: s == null ? () => _gone(context) : () => Navigator.push(context, MaterialPageRoute<void>(builder: (_) => ShowScreen(show: s))),
                       onLongPress: () => Store.toggleFavorite(f),
+                      holdSelect: true, // a remote's held OK removes it, like a long press on a touch screen
                     ));
                   }
                 }
@@ -102,7 +104,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
                     slivers: [PekGridSliver(count: cells.length, minWidth: p.compact ? 110 : 200, gap: p.compact ? 0.6 * rem : rem, builder: (_, i) => cells[i])],
                   ),
                   SizedBox(height: 0.5 * rem),
-                  Text('Long-press a poster to remove it.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
+                  Text('Long-press a poster to remove it (on a remote, hold OK).', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
                 ]);
               },
             ),

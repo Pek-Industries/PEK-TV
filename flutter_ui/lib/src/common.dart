@@ -104,8 +104,13 @@ class SubScreen extends StatelessWidget {
 
 /// `ui.listRow(title, subtitle, onTap)`.
 class ListRow extends StatelessWidget {
-  const ListRow({super.key, required this.title, this.subtitle = '', this.onTap, this.onLongPress, this.trailing, this.leading, this.autofocus = false, this.highlight = false, this.trailingBelow = false});
+  const ListRow({super.key, required this.title, this.subtitle = '', this.onTap, this.onLongPress, this.trailing, this.leading, this.autofocus = false, this.highlight = false, this.trailingBelow = false, this.actions = const []});
   final VoidCallback? onLongPress;
+
+  /// Buttons (a [RowAction]: remove, rate) drawn at the right end but NOT inside the focus box of the row. A D-pad moves focus
+  /// to the next box in the direction pressed, and a button inside the row's own box is not "to the right" of it, so a remote
+  /// could never reach it. Side by side, Right goes from the row to its buttons and Left comes back.
+  final List<Widget> actions;
   /// Put [trailing] on its own line under the text instead of beside it. For rows with several buttons on a phone,
   /// where a side-by-side layout leaves the text a sliver and the buttons overflow.
   final bool trailingBelow;
@@ -127,9 +132,7 @@ class ListRow extends StatelessWidget {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
-    return Padding(
-      padding: EdgeInsets.only(bottom: 0.1 * rem),
-      child: PekFocusable(
+    final row = PekFocusable(
         autofocus: autofocus,
         // A row whose only controls are buttons in [trailing] (the Plugins list) must not take the focus itself: it would
         // light up as a whole, do nothing on OK and hide the buttons from the D-pad.
@@ -153,6 +156,44 @@ class ListRow extends StatelessWidget {
                 Expanded(child: _text(t, rem)),
                 if (trailing != null) ...[SizedBox(width: rem), trailing!],
               ]),
+    );
+    return Padding(
+      padding: EdgeInsets.only(bottom: 0.1 * rem),
+      child: actions.isEmpty
+          ? row
+          : Row(children: [
+              Expanded(child: row),
+              SizedBox(width: 0.4 * rem),
+              ...actions,
+            ]),
+    );
+  }
+}
+
+/// A round icon button at the end of a [ListRow.actions]. It is a focus box of its own with the app's focus look, so a remote can
+/// land on it (Right from the row) and press it with OK.
+class RowAction extends StatelessWidget {
+  const RowAction({super.key, required this.icon, required this.label, required this.onTap, this.color});
+  final IconData icon;
+  final String label; // what it does, for screen readers
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final rem = p.rem;
+    return Padding(
+      padding: EdgeInsets.only(left: 0.2 * rem),
+      child: Semantics(
+        button: true,
+        label: label,
+        child: PekFocusable(
+          onTap: onTap,
+          radius: 999,
+          padding: EdgeInsets.all(0.65 * rem),
+          child: Icon(icon, size: 1.4 * rem, color: color ?? p.tokens.textMuted),
+        ),
       ),
     );
   }

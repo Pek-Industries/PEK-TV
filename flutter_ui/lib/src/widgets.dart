@@ -341,13 +341,15 @@ class BackdropHeader extends StatelessWidget {
 
 /// `ui.card(title, subtitle)`: `.empty-state.focusable.sx-card`.
 class PekCard extends StatelessWidget {
-  const PekCard({super.key, required this.title, this.subtitle, this.onTap, this.autofocus = false, this.titleMaxLines, this.subtitleMaxLines, this.leading});
+  const PekCard({super.key, required this.title, this.subtitle, this.onTap, this.onLongPress, this.holdSelect = false, this.autofocus = false, this.titleMaxLines, this.subtitleMaxLines, this.leading});
   final String title;
   final Widget? leading; // a small picture shown before the title (plugin tiles)
   final String? subtitle;
   final int? titleMaxLines; // null = no limit
   final int? subtitleMaxLines; // null = no limit; longer text ends in an ellipsis
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final bool holdSelect; // a held centre button runs onLongPress (see PekFocusable)
   final bool autofocus;
 
   @override
@@ -360,6 +362,8 @@ class PekCard extends StatelessWidget {
     return PekFocusable(
       autofocus: autofocus,
       onTap: onTap,
+      onLongPress: onLongPress,
+      holdSelect: holdSelect,
       radius: t.radius,
       background: t.surface,
       padding: EdgeInsets.all(pad),
@@ -555,7 +559,7 @@ class _PosterCardState extends State<PosterCard> {
             builder: (_, __, ___) {
               final r = _rating();
               final sub = r > 0 ? (widget.subtitle.isEmpty ? '\u2605 $r/${Ratings.max}' : '${widget.subtitle} \u00b7 \u2605 $r/${Ratings.max}') : widget.subtitle;
-              return PekCard(title: widget.title, subtitle: sub, onTap: widget.onTap, autofocus: widget.autofocus);
+              return PekCard(title: widget.title, subtitle: sub, onTap: widget.onTap, onLongPress: widget.onLongPress, holdSelect: widget.holdSelect, autofocus: widget.autofocus);
             },
           );
         }

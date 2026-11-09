@@ -1396,6 +1396,7 @@ class PluginFavoritesSection extends StatelessWidget {
           poster: _poster(f),
           onTap: () => _playWith(context, f), // asks which video plugin to play it with
           onLongPress: () => Store.removePluginFavorite('${f['key']}'),
+          holdSelect: true, // a remote's held OK removes it, like a long press on a touch screen
         ),
     ];
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1408,7 +1409,7 @@ class PluginFavoritesSection extends StatelessWidget {
         slivers: [PekGridSliver(count: cells.length, minWidth: p.compact ? 110 : 200, gap: p.compact ? 0.6 * rem : rem, builder: (_, i) => cells[i])],
       ),
       SizedBox(height: 0.5 * rem),
-      Text('Long-press a poster to remove it.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
+      Text('Long-press a poster to remove it (on a remote, hold OK).', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.8 * rem)),
     ]);
   }
 }
