@@ -28,7 +28,7 @@ class Skin {
 
   /// How the skin rearranges the app (menu, buttons, dashboard, ...), set from code or by a skin.json `layout`. null = not
   /// said: a save that does not know about layouts (the Skin maker, a plugin) keeps the layout the stored skin already has.
-  /// An empty [SkinLayout] is a skin that deliberately changes nothing. Kept on this device only (the cloud copy has colours).
+  /// An empty [SkinLayout] is a skin that deliberately changes nothing. It goes to the cloud with the colours, so a new device gets the whole skin back.
   final SkinLayout? layout;
 
   bool get fromGithub => source?['type'] == 'github';
@@ -237,7 +237,10 @@ class Skins {
   }
 
   /// A skin as the cloud stores it: the name, the details and the colours as one string of #rrggbbaa values.
-  /// The cloud keeps 2000 characters per item; this stays far under that.
+  /// The cloud keeps 20,000 characters per skin; the app keeps [syncBudget] of them (see cloud.dart). The layout goes up with the colours,
+  /// so a new device gets the whole skin back. `layout` is left out when the skin has none and when it would not fit.
+  static const syncBudget = 19000;
+
   static Map<String, dynamic> syncValue(Skin s) {
     final t = s.tokens;
     final colors = [t.bg, t.bgElevated, t.surface, t.surfaceFocused, t.border, t.borderFocus, t.text, t.textMuted, t.accent, t.accentGlow, t.overlay, t.shadow, t.glassStrong]; // = SkinJson.colorKeys
@@ -249,6 +252,7 @@ class Skins {
       'ver': _clip(s.version, 20),
       'c': [for (final c in colors) SkinJson.hex(c, alpha: true).substring(1)].join(),
       'r': s.tokens.radius.round(),
+      if (s.layout != null && !s.layout!.isEmpty) 'layout': s.layout!.toJson(),
       if (src != null)
         'src': {
           'type': src['type'] == 'github' ? 'github' : (src['type'] == 'store' ? 'store' : 'zip'),
@@ -279,8 +283,32 @@ class Skins {
           ? {'type': 'github', 'owner': _clip(sr['owner'], 60), 'repo': _clip(sr['repo'], 80), 'tag': _clip(sr['tag'], 60), 'kind': _clip(sr['kind'], 10)}
           : (sr['type'] == 'store' ? {'type': 'store', 'shelf': sr['shelf'] == 'official' ? 'official' : 'community'} : {'type': 'zip'});
     }
+    // The layout is plain data like everything else from the cloud: SkinLayout.fromJson drops what it does not know and clamps
+    // what is out of range. A copy without a `layout` key (an older app made it) says nothing about layouts: layout stays null.
+    final lay = d.containsKey('layout') ? (SkinLayout.fromJson(d['layout']) ?? SkinLayout.none) : null;
     return Skin(id, name.isEmpty ? 'My skin' : name, _clip(d['desc'], 200), tokens,
-        custom: true, author: _clip(d['author'], 80), version: _clip(d['ver'], 20), source: source, updated: updated);
+        custom: true, author: _clip(d['author'], 80), version: _clip(d['ver'], 20), source: source, updated: updated, layout: lay);
+  }
+
+  /// One time per profile: a skin that is already in the cloud as colours only is stamped again, so the next sync sends it with its layout.
+  /// Only skins that have a layout are touched.
+  static Future<void> stampLayoutsOnce() async {
+    if (Store.strGet('pek_skin_layout_cloud') == '2') return;
+    final list = [...customSkins];
+    final now = DateTime.now().millisecondsSinceEpoch;
+    var any = false;
+    for (var i = 0; i < list.length; i++) {
+      final l = list[i].layout;
+      if (l == null || l.isEmpty) continue;
+      list[i] = list[i].copyWith(updated: list[i].updated >= now ? list[i].updated + 1 : now);
+      any = true;
+    }
+    if (any) {
+      _custom = list;
+      await _saveCustom(list);
+      changes.value++;
+    }
+    await Store.strSet('pek_skin_layout_cloud', '2');
   }
 
   /// Takes in the skins the cloud sent for this profile. A skin the cloud has a newer copy of is replaced; one deleted in the
@@ -327,7 +355,8 @@ class Skins {
       final skin = cleanSync(id, r['data'], ru);
       if (skin == null) continue;
       if (i >= 0) {
-        list[i] = skin.copyWith(layout: list[i].layout); // the cloud copy has colours only: this device keeps its layout
+        // A cloud copy with a layout brings it; one without (made by an older app) leaves this device's layout alone.
+        list[i] = skin.layout != null ? skin : skin.copyWith(layout: list[i].layout);
       } else {
         list.add(skin);
         if (t.remove(id) != null) tombsChanged = true;

@@ -17,7 +17,7 @@ The server side (Cloudflare workers) is run by PEK Industries. It is proprietary
 - **Account and sync** (`cloud.dart`): `auth/login`, `auth/logout`, `auth/confirm`, `auth/verify`, `auth/resend`, `auth/forgot`, `auth/reset`, `me`, `account`, `sync`, `profiles/sync`, `device/start`, `device/poll`
 - **Discord link** (`cloud.dart`, `discord.dart`): `discord/start`, `discord/poll`, `discord/refresh`, `discord/revoke`
 - **Plugin backup** (`plugin_backup.dart`): `plugins`, `plugins/chunk`, `plugins/commit`, `plugins/delete`. Per account: every profile shares one list and one limit of 30 plugins / 60 MB.
-- **Usage** (`cloud_usage.dart`): `GET usage?profile=` returns `{plugins: {count, max, bytes, maxBytes}, skins: {count, max, bytes}}` for the progress bars (plugins for the whole account, skins for that profile). Skins are capped at 100 per profile: `sync` answers with `skinsRejected` (keys) for new skins over the cap, and the app shows the "backup has stopped" banner.
+- **Usage** (`cloud_usage.dart`): `GET usage?profile=` returns `{plugins: {count, max, bytes, maxBytes}, skins: {count, max, bytes}}` for the progress bars (plugins for the whole account, skins for that profile). A skin item (`k|<id>`) may hold up to 20,000 characters (colours, details and layout); every other item kind is capped at 2,000. Skins are capped at 100 per profile: `sync` answers with `skinsRejected` (keys) for new skins over the cap, and the app shows the "backup has stopped" banner.
 - **Plugin and skin stores** (`plugin_store.dart`): `plugins`, `app/plugins/`, `store`, `store/chunk`
 - **News** (`news.dart`): `news`, `news/post`
 - **Subtitles** (`backend/subtitles.h`): `subs/search`, `subs/get`

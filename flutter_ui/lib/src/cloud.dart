@@ -553,6 +553,7 @@ class Cloud {
         }
       }
       await _resolveFavorites();
+      await Skins.stampLayoutsOnce();
       final all = _collectPush();
       final pushed = all.history.length + all.progress.length + all.favorites.length + all.settings.length + all.skins.length + all.ratings.length;
       var anyChange = false;
@@ -842,6 +843,8 @@ class Cloud {
       if (_int(sk[key]) == k.updated) continue;
       var d = Skins.syncValue(k);
       if (jsonEncode(d).length > _skinBudget) d = {...d, 'desc': '', 'src': null}..removeWhere((_, v) => v == null);
+      // Still too big: send the colours without the layout (a device that has the skin keeps its own layout) rather than not at all.
+      if (jsonEncode(d).length > _skinBudget) d = {...d}..remove('layout');
       if (jsonEncode(d).length > _skinBudget) continue;
       skins.add({'key': key, 'data': d, 'updated': k.updated, 'deleted': 0});
     }
@@ -872,7 +875,7 @@ class Cloud {
     return _All(history, progress, favorites, settings, skins, ratings);
   }
 
-  static const _skinBudget = 1900; // the cloud keeps 2000 characters per item
+  static const _skinBudget = Skins.syncBudget; // the cloud keeps 20,000 characters per skin (2,000 for everything else)
 
   // ---------------------------------------------------------------- settings
 
@@ -1492,7 +1495,16 @@ class _All {
     favorites.removeRange(0, f.length);
     final s = settings.take(max - h.length - p.length - f.length).toList();
     settings.removeRange(0, s.length);
-    final k = skins.take(max - h.length - p.length - f.length - s.length).toList();
+    // Skins can be big now (up to 20,000 characters each, with their layout), and a request may hold 1 MB: stop at about 400,000 characters of skins.
+    final k = <Map<String, dynamic>>[];
+    var skinChars = 0;
+    for (final sk in skins) {
+      if (k.length >= max - h.length - p.length - f.length - s.length) break;
+      final n = jsonEncode(sk).length;
+      if (k.isNotEmpty && skinChars + n > 400000) break;
+      k.add(sk);
+      skinChars += n;
+    }
     skins.removeRange(0, k.length);
     final r = ratings.take(max - h.length - p.length - f.length - s.length - k.length).toList();
     ratings.removeRange(0, r.length);

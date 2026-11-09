@@ -227,7 +227,7 @@ The fields never depend on each other, so mix freely. Some ideas:
 - Layout needs colours too: a `skin.json` with a layout and no `tokens` is refused (add at least a colour).
 - Plugin screens' own buttons use the same PEK buttons, so they follow the skin; a plugin that draws its own colours does not.
 - The install screen says what a skin rearranges ("menu on the right, a fixed dashboard, ..."), so the person knows before they install.
-- Layout stays on the device (see *Skins in the cloud*). The web UI ignores a `layout` it does not know.
+- The layout is backed up with the skin (see *Skins in the cloud*). The web UI ignores a `layout` it does not know.
 
 ## Making a skin in the Flutter app
 
@@ -308,7 +308,9 @@ normal sync (at start, every 5 minutes after a change, and when a profile is ope
   unless it was changed after the delete.
 - **What is stored:** the name, author, version, description, the colours, the corner size and, for an installed skin, where it came
   from (GitHub skins stay labelled "unverified"). Up to 50 skins per profile. Nothing else from a skin zip is kept in the cloud.
-  **A skin's layout stays on the device** (the cloud copy is the colours only). A device keeps its own layout when a newer cloud copy of the
-  skin arrives, so syncing never wipes it; on a new device, install the skin's zip (or run your `SkinBuilder` code) to get the layout.
-- **Needs the new worker:** redeploy the sync worker first. Until then the skins stay on the device and are
+  **A skin's layout is backed up too** (menu, buttons, dashboard, mini player, poster size), so a new device gets the whole skin back, not only its
+  colours. One skin item holds up to 20,000 characters in the cloud (the app sends up to 19,000; every other kind of item stays at 2,000). A cloud copy
+  made by an older app has no layout: the device keeps the layout it has. If a layout were ever too big to fit, the skin still goes up with its colours and
+  every device keeps its own layout. The first sync after this update sends each skin that has a layout once more, so layouts that were only on the device are backed up.
+- **Needs the new worker:** redeploy the sync worker first (it is what allows 20,000 characters per skin). Until then the skins stay on the device and are
   sent once the worker is updated.
