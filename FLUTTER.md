@@ -68,6 +68,13 @@ Resume progress, favorites and the dashboard layout are stored on the device wit
   when it ends; for a stream a plugin started it reopens that plugin on the next episode) in the player. Settings > Skip intro and recap.
 - Lyrics in the full-screen player (`lyrics.dart`, shown by `music_fullscreen.dart`) and Settings > Music > Online art & lyrics.
 
+## Navigation sounds
+Apple TV-style interface sounds (`nav_sound.dart`, `NavSound.kt`): a soft tick when the D-pad / keyboard moves the highlight, a two-note tone for a tap or the centre button, a lower tone when a screen or dialog closes. Settings > Sounds turns them off or sets Low / Medium / High (device-wide, default on, Medium).
+- The sounds are generated in `NavSound.kt` (no audio files) and played on a low-latency `AudioTrack` through `pek/host` > `navSound(kind, volume)`, kind 0 = move, 1 = select, 2 = back. A host without it is simply silent.
+- Move: `NavSounds.install()` (called in `main.dart`) listens to Flutter's focus and only ticks while the focus ring is showing, never for touch. Select: `PekFocusable` calls `NavSounds.select()` for every tap and centre-button press; to give another control the sound, call it from its handler. Back: `NavSounds.observers` on the `MaterialApp`.
+- Held back on purpose: no tick right after a select or back (the screen that opened or closed focuses something itself), no back right after a select (a dialog closing because of the tap), nothing while the video player is open (`NavSounds.mute()` / `unmute()` in `PlayerScreen`).
+- Test: `flutter_ui/test/nav_sound_test.dart`.
+
 ## Added in phase 3
 - **Profiles** (`profiles.dart`, `profile_pages.dart`): Who's watching? picker, first-time setup, add / edit / delete, 4-digit passcode (hashed), 5 profiles max. Each profile has its own history, resume points, favorites, skip settings and skin. Profiles need a signed-in account.
 - **Cloud account and sync** (`cloud.dart`, `account_pages.dart`): sign in with email and password (a 6-digit code is emailed on a new device), sign in with your phone on a TV (QR code, no typing), forgot password, sign out (asks first), delete account. Accounts are created on the website, not in the app (see "PEK Cloud plans in the app"). Watch history, resume points and favorites sync per profile through the existing worker; the profile list syncs too. Favorites are keyed by TMDb id, looked up once through the same TMDb worker the backend uses.

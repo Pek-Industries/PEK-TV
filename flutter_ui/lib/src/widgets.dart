@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'api.dart' show Api, Details;
 import 'layouts.dart';
+import 'nav_sound.dart';
 import 'skin_button.dart';
 import 'skin_layout.dart' show ButtonShapeRadius;
 import 'tokens.dart';
@@ -100,6 +101,15 @@ class _PekFocusableState extends State<PekFocusable> {
     super.dispose();
   }
 
+  /// Every way of activating this box (a touch tap, the centre button, a short press of a held centre button) comes through here,
+  /// so each one makes the selection sound (nav_sound.dart). A box with nothing to do stays silent.
+  void _tap() {
+    final tap = widget.onTap;
+    if (tap == null) return;
+    NavSounds.select();
+    tap();
+  }
+
   KeyEventResult _holdKey(FocusNode node, KeyEvent e) {
     final long = widget.onLongPress;
     if (!widget.holdSelect || long == null || !widget.enabled) return KeyEventResult.ignored;
@@ -121,7 +131,7 @@ class _PekFocusableState extends State<PekFocusable> {
     } else if (e is KeyUpEvent) {
       final waiting = _hold?.isActive ?? false;
       _hold?.cancel();
-      if (waiting && !_heldFired) widget.onTap?.call();
+      if (waiting && !_heldFired) _tap();
     }
     return KeyEventResult.handled;
   }
@@ -178,13 +188,13 @@ class _PekFocusableState extends State<PekFocusable> {
       },
       actions: {
         ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
-          widget.onTap?.call();
+          _tap();
           return null;
         }),
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: widget.enabled ? widget.onTap : null,
+        onTap: widget.enabled && widget.onTap != null ? _tap : null,
         onLongPress: widget.enabled ? widget.onLongPress : null,
         child: widget.focusMargin > 0
             ? Stack(clipBehavior: Clip.none, fit: StackFit.passthrough, children: [

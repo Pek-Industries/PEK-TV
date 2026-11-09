@@ -445,6 +445,7 @@ class SettingsPage extends StatelessWidget {
           builder: (context, n, _) => row('Updates', n > 0 ? '$n new' : 'News, offers and coupon codes', Icons.campaign_outlined, () => const _SettingsList(children: [NewsSection()])),
         ),
       row('Appearance', 'Skins, layout and the activity display', Icons.palette_outlined, () => const _SettingsList(children: [AppearanceSection(), LayoutSection(), ActivitySection()])),
+      row('Sounds', 'Navigation sounds for taps and the remote', Icons.volume_up_outlined, () => const _SettingsList(children: [NavSoundSection()])),
       if (music)
         row('Playback', 'Sound, online art and lyrics', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), MusicOnlineSection()]))
       else

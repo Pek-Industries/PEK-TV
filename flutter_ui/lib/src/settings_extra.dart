@@ -9,6 +9,7 @@ import 'common.dart';
 import 'dev_console.dart';
 import 'fields.dart' show PekDropdown;
 import 'mpv.dart';
+import 'nav_sound.dart';
 import 'plugin_github.dart' show PekGithub;
 import 'plugin_install_ui.dart' show openGithubInstall, openZipInstall;
 import 'plugin_ui.dart' show openPluginScreen;
@@ -35,6 +36,40 @@ class ToggleRow extends StatelessWidget {
       subtitle: subtitle,
       onTap: onTap,
       trailing: Icon(on ? Icons.toggle_on : Icons.toggle_off, size: 40, color: on ? t.accent : t.textMuted),
+    );
+  }
+}
+
+// ====================================================================== Settings > Sounds
+
+/// Navigation sounds on / off and their volume (nav_sound.dart). Device-wide, like TV mode.
+class NavSoundSection extends StatelessWidget {
+  const NavSoundSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final t = p.tokens;
+    return ListenableBuilder(
+      listenable: NavSounds.changes,
+      builder: (context, _) {
+        final on = NavSounds.enabled;
+        return Section(
+          title: 'Navigation sounds',
+          hint: 'A soft tick when the highlight moves, a tone when you select something and another when you go back, like Apple TV. Silent while a video plays.',
+          children: [
+            ToggleRow(title: 'Navigation sounds', subtitle: on ? 'On' : 'Off', on: on, onTap: () => NavSounds.setEnabled(!on)),
+            if (on) ...[
+              SizedBox(height: 0.5 * p.rem),
+              Text('Volume', style: TextStyle(color: t.textMuted)),
+              SizedBox(height: 0.4 * p.rem),
+              Wrap(spacing: 0.5 * p.rem, runSpacing: 0.5 * p.rem, children: [
+                for (final l in NavSounds.levels) PekButton(label: l.$2, primary: NavSounds.level == l.$1, onTap: () => NavSounds.setLevel(l.$1)),
+              ]),
+            ],
+          ],
+        );
+      },
     );
   }
 }

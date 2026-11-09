@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'activity.dart';
 import 'api.dart';
 import 'audio_fx.dart';
+import 'nav_sound.dart';
 import 'cloud.dart';
 import 'live_tv.dart';
 import 'mpv.dart';
@@ -101,6 +102,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    NavSounds.mute(); // no ticks on top of a film's sound
     Activity.playerEnter();
     MusicController.instance.suspend();
     _player.reset();
@@ -196,6 +198,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       unawaited(_player.destroy());
       _player.reset();
     }
+    NavSounds.unmute();
     widget.onClose?.call();
     if (Cloud.linked) Timer(const Duration(milliseconds: 800), () => Cloud.sync(light: true)); // push the new resume point
     super.dispose();

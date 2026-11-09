@@ -15,6 +15,7 @@ import 'src/profiles.dart';
 import 'src/remote_host.dart';
 import 'src/skins.dart';
 import 'src/mpv.dart';
+import 'src/nav_sound.dart';
 import 'src/music_controller.dart';
 import 'src/net.dart';
 import 'src/news.dart';
@@ -37,6 +38,7 @@ Future<void> main() async {
       final phoneAsk = PekPlayer.isPhone();
       await Store.init();
       DevConsole.init();
+      NavSounds.install(); // the move sound (nav_sound.dart); select and back are hooked in PekFocusable and the navigator
       Profiles.load();
       MusicController.instance.restore(); // the song the active profile was playing when the app closed
       Net.start(); // the green / red dot and offline mode (net.js)
@@ -70,6 +72,7 @@ class PekApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           scaffoldMessengerKey: Net.messenger,
           navigatorKey: DeepLink.navKey,
+          navigatorObservers: NavSounds.observers,
           theme: pekTheme(tokens),
           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
           builder: (context, child) => PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()])))),

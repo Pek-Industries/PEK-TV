@@ -1,0 +1,617 @@
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/FLUTTER.md proj/FLUTTER.md
+--- proj_orig/FLUTTER.md	2026-11-09 04:07:46.454122823 +0000
++++ proj/FLUTTER.md	2026-11-09 04:11:03.788067465 +0000
+@@ -68,6 +68,13 @@
+   when it ends; for a stream a plugin started it reopens that plugin on the next episode) in the player. Settings > Skip intro and recap.
+ - Lyrics in the full-screen player (`lyrics.dart`, shown by `music_fullscreen.dart`) and Settings > Music > Online art & lyrics.
+ 
++## Navigation sounds
++Apple TV-style interface sounds (`nav_sound.dart`, `NavSound.kt`): a soft tick when the D-pad / keyboard moves the highlight, a two-note tone for a tap or the centre button, a lower tone when a screen or dialog closes. Settings > Sounds turns them off or sets Low / Medium / High (device-wide, default on, Medium).
++- The sounds are generated in `NavSound.kt` (no audio files) and played on a low-latency `AudioTrack` through `pek/host` > `navSound(kind, volume)`, kind 0 = move, 1 = select, 2 = back. A host without it is simply silent.
++- Move: `NavSounds.install()` (called in `main.dart`) listens to Flutter's focus and only ticks while the focus ring is showing, never for touch. Select: `PekFocusable` calls `NavSounds.select()` for every tap and centre-button press; to give another control the sound, call it from its handler. Back: `NavSounds.observers` on the `MaterialApp`.
++- Held back on purpose: no tick right after a select or back (the screen that opened or closed focuses something itself), no back right after a select (a dialog closing because of the tap), nothing while the video player is open (`NavSounds.mute()` / `unmute()` in `PlayerScreen`).
++- Test: `flutter_ui/test/nav_sound_test.dart`.
++
+ ## Added in phase 3
+ - **Profiles** (`profiles.dart`, `profile_pages.dart`): Who's watching? picker, first-time setup, add / edit / delete, 4-digit passcode (hashed), 5 profiles max. Each profile has its own history, resume points, favorites, skip settings and skin. Profiles need a signed-in account.
+ - **Cloud account and sync** (`cloud.dart`, `account_pages.dart`): sign in with email and password (a 6-digit code is emailed on a new device), sign in with your phone on a TV (QR code, no typing), forgot password, sign out (asks first), delete account. Accounts are created on the website, not in the app (see "PEK Cloud plans in the app"). Watch history, resume points and favorites sync per profile through the existing worker; the profile list syncs too. Favorites are keyed by TMDb id, looked up once through the same TMDb worker the backend uses.
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt proj/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt
+--- proj_orig/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt	2026-11-09 04:07:46.447364874 +0000
++++ proj/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt	2026-11-09 04:08:09.311451107 +0000
+@@ -35,6 +35,7 @@
+ import com.chaquo.python.android.AndroidPlatform
+ import com.pektv.app.MpvController
+ import com.pektv.app.NativeBridge
++import com.pektv.app.NavSound
+ import com.pektv.app.Boot
+ import com.pektv.app.R
+ import com.pektv.app.SplashGate
+@@ -62,7 +63,7 @@
+  *   pek/mpv         (MethodChannel)  load, play, pause, seek, setAudio, setSubtitle, addSubtitle, setMiniRect,
+  *                                    fullscreen, destroy
+  *   pek/mpv/events  (EventChannel)   {event: time|state|tracks|ended|error, data: {...}}  - same payloads the web UI got; "error" = the file never loaded
+- *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs
++ *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs, navSound(kind, volume)
+  *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
+  *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
+  *                                    status {status, message} comes back from the installer
+@@ -89,6 +90,7 @@
+     private var permissionsAsked = false
+ 
+     private var mpv: MpvController? = null
++    private var navSound: NavSound? = null     // the tick / select / back sounds (nav_sound.dart)
+     private var events: EventChannel.EventSink? = null
+     private var music: FlutterMusic? = null
+     private var musicChannel: MethodChannel? = null
+@@ -323,6 +325,7 @@
+             events?.success(mapOf("event" to event, "data" to data.toMap()))
+         }
+         mpv = c
++        navSound = NavSound()
+         music = FlutterMusic(this, c) { name, args ->
+             runOnUiThread { musicChannel?.invokeMethod(name, args) }
+         }
+@@ -568,6 +571,12 @@
+                     setMulticast(call.argument<Boolean>("on") ?: false)
+                     result.success(null)
+                 }
++                // Navigation sounds (nav_sound.dart): kind 0 = move, 1 = select, 2 = back; volume 0..1. NavSound plays on its own
++                // thread, so this returns at once. A device where the sound could not be set up just stays silent.
++                "navSound" -> {
++                    navSound?.play(call.argument<Int>("kind") ?: 0, (call.argument<Number>("volume") ?: 1.0).toFloat())
++                    result.success(null)
++                }
+                 // The phone remote (remote_host.dart): dir 1 = louder, -1 = quieter, 0 = mute / unmute. Moves the system music volume.
+                 "volume" -> {
+                     val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+@@ -700,6 +709,8 @@
+         setMulticast(false)
+         music?.destroy()          // also stops MusicService: without this activity there is no queue to control
+         music = null
++        navSound?.release()
++        navSound = null
+         mpv?.destroy()
+         super.onDestroy()
+     }
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/android/app/src/main/java/com/pektv/app/NavSound.kt proj/android/app/src/main/java/com/pektv/app/NavSound.kt
+--- proj_orig/android/app/src/main/java/com/pektv/app/NavSound.kt	2026-11-09 04:07:46.446559749 +0000
++++ proj/android/app/src/main/java/com/pektv/app/NavSound.kt	2026-11-09 04:07:57.492677411 +0000
+@@ -13,27 +13,29 @@
+ import kotlin.math.sin
+ 
+ /**
+- * Navigation "tick" / "select" sounds, played natively.
++ * Navigation sounds, played natively: a soft "tick" when the highlight moves, a two-note "select" for a tap / the centre
++ * button, and a lower "back" when a screen or dialog closes. Tuned to feel like the Apple TV interface sounds (short, round
++ * and quiet); they are generated here, no audio files are shipped.
+  *
+- * Web Audio inside a WebView goes through a big buffer and the (busy) page thread, which is why the
+- * sounds trailed the highlight on TV boxes. Here the two sounds are rendered once into static
+- * low-latency AudioTracks and a press only has to restart one. JS calls return immediately: the
+- * actual play happens on a small dedicated thread.
++ * Playing through the Flutter / WebView audio stack goes through a big buffer and the (busy) UI thread, which is why sounds
++ * trailed the highlight on TV boxes. Here the sounds are rendered once into static low-latency AudioTracks and a press only has
++ * to restart one. The Dart side (nav_sound.dart) calls `navSound` on the pek/host channel and returns immediately: the actual
++ * play happens on a small dedicated thread.
+  */
+ class NavSound {
+     private val sr = 48000
+     private val thread = HandlerThread("pek-navsound", Process.THREAD_PRIORITY_URGENT_AUDIO).apply { start() }
+     private val handler = Handler(thread.looper)
+-    private val tracks = arrayOfNulls<AudioTrack>(2)      // 0 = tick, 1 = select
++    private val tracks = arrayOfNulls<AudioTrack>(3)      // 0 = move (tick), 1 = select, 2 = back
+     @Volatile private var ready = false
+ 
+     init { handler.post { build() } }
+ 
+     fun isReady(): Boolean = ready
+ 
+-    /** kind 0 = tick, 1 = select; volume 0..1 (the web side already applied the Off/Low/Med/High level). */
++    /** kind 0 = move, 1 = select, 2 = back; volume 0..1 (the Dart side already applied the Off / Low / Medium / High level). */
+     fun play(kind: Int, volume: Float) {
+-        if (kind < 0 || kind > 1 || volume <= 0f) return
++        if (kind < 0 || kind >= tracks.size || volume <= 0f) return
+         handler.postAtFrontOfQueue {
+             val t = tracks[kind] ?: return@postAtFrontOfQueue
+             try {
+@@ -53,9 +55,10 @@
+         }
+     }
+ 
+-    private class Note(val f0: Double, val f1: Double, val start: Double, val dur: Double)
++    /** A sine that glides from [f0] to [f1] Hz. [gain] is its level (0..1); a higher [curve] makes the decay snappier. */
++    private class Note(val f0: Double, val f1: Double, val start: Double, val dur: Double, val gain: Double = 1.0, val curve: Double = 2.0)
+ 
+-    // Same enveloped sine sweeps as navsound.js, so the sound is unchanged: only the path to the speaker is.
++    // Enveloped sine sweeps: a 3 ms attack (no click from a hard start) and a power-curve decay.
+     private fun render(notes: List<Note>, total: Double): ShortArray {
+         val n = ceil(sr * total).toInt()
+         val d = FloatArray(n)
+@@ -68,8 +71,8 @@
+                 val p = i.toDouble() / len
+                 val f = nt.f0 * (nt.f1 / nt.f0).pow(p)
+                 ph += 2 * PI * f / sr
+-                val env = min(1.0, i / (sr * 0.004)) * (1 - p).pow(2.0)
+-                d[s0 + i] += (sin(ph) * env).toFloat()
++                val env = min(1.0, i / (sr * 0.003)) * (1 - p).pow(nt.curve)
++                d[s0 + i] += (sin(ph) * env * nt.gain).toFloat()
+                 i++
+             }
+         }
+@@ -104,13 +107,17 @@
+ 
+     private fun build() {
+         try {
+-            tracks[0] = makeTrack(render(listOf(Note(1850.0, 1250.0, 0.0, 0.055)), 0.07))
+-            tracks[1] = makeTrack(render(listOf(Note(880.0, 880.0, 0.0, 0.07), Note(1320.0, 1320.0, 0.055, 0.11)), 0.19))
++            // move: a short, soft tick that falls a little in pitch
++            tracks[0] = makeTrack(render(listOf(Note(1500.0, 1050.0, 0.0, 0.050, 0.55, 3.0)), 0.06))
++            // select: two quick notes, the second a fifth higher (G5 then D6)
++            tracks[1] = makeTrack(render(listOf(Note(784.0, 784.0, 0.0, 0.065, 0.60, 2.5), Note(1175.0, 1175.0, 0.045, 0.110, 0.50, 2.5)), 0.17))
++            // back: one lower note that glides down
++            tracks[2] = makeTrack(render(listOf(Note(1000.0, 680.0, 0.0, 0.085, 0.55, 2.5)), 0.10))
+             // One silent-volume play wakes the audio path so the very first real tick is not late.
+             for (t in tracks) { t?.setVolume(0f); t?.play() }
+             ready = true
+         } catch (e: Exception) {
+-            ready = false      // the web page falls back to its own Web Audio sounds
++            ready = false      // no sound on this device; play() then does nothing
+         }
+     }
+ }
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/main.dart proj/flutter_ui/lib/main.dart
+--- proj_orig/flutter_ui/lib/main.dart	2026-11-09 04:07:46.453338885 +0000
++++ proj/flutter_ui/lib/main.dart	2026-11-09 04:10:08.737994053 +0000
+@@ -15,6 +15,7 @@
+ import 'src/remote_host.dart';
+ import 'src/skins.dart';
+ import 'src/mpv.dart';
++import 'src/nav_sound.dart';
+ import 'src/music_controller.dart';
+ import 'src/net.dart';
+ import 'src/news.dart';
+@@ -37,6 +38,7 @@
+       final phoneAsk = PekPlayer.isPhone();
+       await Store.init();
+       DevConsole.init();
++      NavSounds.install(); // the move sound (nav_sound.dart); select and back are hooked in PekFocusable and the navigator
+       Profiles.load();
+       MusicController.instance.restore(); // the song the active profile was playing when the app closed
+       Net.start(); // the green / red dot and offline mode (net.js)
+@@ -70,6 +72,7 @@
+           debugShowCheckedModeBanner: false,
+           scaffoldMessengerKey: Net.messenger,
+           navigatorKey: DeepLink.navKey,
++          navigatorObservers: NavSounds.observers,
+           theme: pekTheme(tokens),
+           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
+           builder: (context, child) => PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()])))),
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/nav_sound.dart proj/flutter_ui/lib/src/nav_sound.dart
+--- proj_orig/flutter_ui/lib/src/nav_sound.dart	1970-01-01 00:00:00.000000000 +0000
++++ proj/flutter_ui/lib/src/nav_sound.dart	2026-11-09 04:09:54.070340899 +0000
+@@ -0,0 +1,165 @@
++import 'dart:async';
++
++import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
++
++import 'store.dart';
++
++/// Navigation sounds, in the style of the Apple TV interface: a soft tick when the highlight moves, a two-note tone when you
++/// select something (a tap on a phone, the centre button on a remote) and a lower tone when a screen or dialog closes.
++///
++/// - The sounds are made and played by the host (`NavSound.kt`, over `pek/host` > `navSound`) on a low-latency audio track, so
++///   they land with the highlight instead of trailing it. A host without it (or a device where it could not be set up) is silent.
++/// - **Move**: [install] listens to Flutter's focus. It only ticks while the focus ring is showing (remote / keyboard / game
++///   controller), never for a touch, and not for focus that lands by itself when a screen opens or closes.
++/// - **Select**: `PekFocusable` calls [select] for every tap and every centre-button press, so each button, row, poster and
++///   tab makes the sound, and things that do nothing do not.
++/// - **Back**: [observer] plays it when a route is popped (Back button, a closing dialog or sheet).
++/// - Nothing plays while the video player is open ([mute] / [unmute]): a tick must not sit on top of a film's sound.
++///
++/// Settings > Sounds turns them off or sets Low / Medium / High. Like TV mode this belongs to the device, not to a profile.
++class NavSounds {
++  NavSounds._();
++
++  static const _onKey = 'pek_nav_sound';
++  static const _levelKey = 'pek_nav_sound_level';
++
++  /// (id, label, volume 0..1)
++  static const levels = <(int, String, double)>[(1, 'Low', 0.35), (2, 'Medium', 0.65), (3, 'High', 1.0)];
++  static const defaultLevel = 2;
++
++  static const _host = MethodChannel('pek/host');
++  static const _move = 0, _select = 1, _back = 2; // the kinds NavSound.kt knows
++
++  /// Bumped when a setting changes; Settings > Sounds rebuilds from it.
++  static final ValueNotifier<int> changes = ValueNotifier(0);
++
++  // ---------------------------------------------------------------- settings (cached, so a press never waits for storage)
++
++  static bool? _on;
++  static int? _lvl;
++
++  /// On unless the user turned it off.
++  static bool get enabled {
++    final c = _on;
++    if (c != null) return c;
++    try {
++      return _on = Store.strGet(_onKey, scoped: false) != 'off';
++    } catch (_) {
++      return false; // storage is not ready (a test, or very early): stay quiet and ask again next time
++    }
++  }
++
++  static int get level {
++    final c = _lvl;
++    if (c != null) return c;
++    try {
++      final v = int.tryParse(Store.strGet(_levelKey, scoped: false) ?? '');
++      return _lvl = v != null && levels.any((l) => l.$1 == v) ? v : defaultLevel;
++    } catch (_) {
++      return defaultLevel;
++    }
++  }
++
++  static double get _volume => levels.firstWhere((l) => l.$1 == level, orElse: () => levels[1]).$3;
++
++  /// The change counts at once; saving to disk follows. Turning sounds on is heard right away, because the tap that did it
++  /// plays its own select sound after this has run (see [select]).
++  static Future<void> setEnabled(bool on) {
++    _on = on;
++    changes.value++;
++    return Store.strSet(_onKey, on ? 'on' : 'off', scoped: false);
++  }
++
++  static Future<void> setLevel(int id) {
++    final v = levels.any((l) => l.$1 == id) ? id : defaultLevel;
++    _lvl = v;
++    changes.value++;
++    return Store.strSet(_levelKey, '$v', scoped: false);
++  }
++
++  // ---------------------------------------------------------------- muting (the video player)
++
++  static int _mutes = 0;
++  static void mute() => _mutes++;
++  static void unmute() {
++    if (_mutes > 0) _mutes--;
++  }
++
++  // ---------------------------------------------------------------- the three sounds
++
++  static final Stopwatch _clock = Stopwatch()..start();
++  static int get _now => _clock.elapsedMilliseconds;
++  static int _lastMove = -10000, _lastSelect = -10000, _lastBack = -10000;
++
++  /// The highlight moved to another item.
++  static void move() {
++    final t = _now;
++    if (t - _lastMove < 55) return; // a held arrow key repeats fast: a ticking, not a buzz
++    // A select or back has just happened and the screen that opened or closed put focus on something by itself: no tick for that.
++    if (t - _lastSelect < 350 || t - _lastBack < 350) return;
++    if (_play(_move)) _lastMove = t;
++  }
++
++  /// A tap or a centre-button press on something that does something.
++  ///
++  /// The time is noted now (so the Back sound of a dialog that closes because of this tap stays quiet), but the sound is
++  /// started a moment later, after the tap's own handler has run: a button that turns the sounds on or off, or changes their
++  /// volume, is then heard with its new setting.
++  static void select() {
++    final t = _now;
++    if (t - _lastSelect < 90) return;
++    _lastSelect = t;
++    scheduleMicrotask(() => _play(_select));
++  }
++
++  /// A screen, dialog or sheet closed.
++  static void back() {
++    final t = _now;
++    if (t - _lastSelect < 250) return; // it closed because of a selection that already had its sound
++    if (t - _lastBack < 150) return;
++    _lastBack = t;
++    _play(_back);
++  }
++
++  static bool _play(int kind) {
++    if (_mutes > 0 || !enabled) return false;
++    // Fire and forget: the host plays on its own thread. Errors (no such channel in a test, an older host) just mean silence.
++    unawaited(_host.invokeMethod<void>('navSound', <String, Object>{'kind': kind, 'volume': _volume}).catchError((_) {}));
++    return true;
++  }
++
++  // ---------------------------------------------------------------- hooking into Flutter
++
++  static bool _installed = false;
++  static FocusNode? _lastFocus;
++
++  /// Starts listening to focus changes. Call once, after `Store.init()`.
++  static void install() {
++    if (_installed) return;
++    _installed = true;
++    FocusManager.instance.addListener(_onFocus);
++  }
++
++  static void _onFocus() {
++    final f = FocusManager.instance.primaryFocus;
++    final before = _lastFocus;
++    if (identical(f, before)) return;
++    _lastFocus = f;
++    if (f == null || before == null) return; // the first focus, or focus coming back after a screen closed
++    if (before.parent == null) return; // the item that had focus is gone (its screen closed; a removed node has no parent): that is not the user moving
++    if (f is FocusScopeNode) return;
++    // Touch and mouse show no focus ring, so there is nothing to tick for. A remote, keyboard or game controller switches it on.
++    if (FocusManager.instance.highlightMode != FocusHighlightMode.traditional) return;
++    move();
++  }
++
++  /// Pass to `MaterialApp.navigatorObservers`: plays the Back sound when a route is popped.
++  static final NavSoundObserver _obs = NavSoundObserver();
++  static final List<NavigatorObserver> observers = <NavigatorObserver>[_obs];
++}
++
++class NavSoundObserver extends NavigatorObserver {
++  @override
++  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => NavSounds.back();
++}
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/pages.dart proj/flutter_ui/lib/src/pages.dart
+--- proj_orig/flutter_ui/lib/src/pages.dart	2026-11-09 04:07:46.451748148 +0000
++++ proj/flutter_ui/lib/src/pages.dart	2026-11-09 04:10:08.737459299 +0000
+@@ -445,6 +445,7 @@
+           builder: (context, n, _) => row('Updates', n > 0 ? '$n new' : 'News, offers and coupon codes', Icons.campaign_outlined, () => const _SettingsList(children: [NewsSection()])),
+         ),
+       row('Appearance', 'Skins, layout and the activity display', Icons.palette_outlined, () => const _SettingsList(children: [AppearanceSection(), LayoutSection(), ActivitySection()])),
++      row('Sounds', 'Navigation sounds for taps and the remote', Icons.volume_up_outlined, () => const _SettingsList(children: [NavSoundSection()])),
+       if (music)
+         row('Playback', 'Sound, online art and lyrics', Icons.play_circle_outline, () => const _SettingsList(children: [AudioFxSection(), MusicOnlineSection()]))
+       else
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/player.dart proj/flutter_ui/lib/src/player.dart
+--- proj_orig/flutter_ui/lib/src/player.dart	2026-11-09 04:07:46.451569169 +0000
++++ proj/flutter_ui/lib/src/player.dart	2026-11-09 04:10:08.738610453 +0000
+@@ -7,6 +7,7 @@
+ import 'activity.dart';
+ import 'api.dart';
+ import 'audio_fx.dart';
++import 'nav_sound.dart';
+ import 'cloud.dart';
+ import 'live_tv.dart';
+ import 'mpv.dart';
+@@ -101,6 +102,7 @@
+   @override
+   void initState() {
+     super.initState();
++    NavSounds.mute(); // no ticks on top of a film's sound
+     Activity.playerEnter();
+     MusicController.instance.suspend();
+     _player.reset();
+@@ -196,6 +198,7 @@
+       unawaited(_player.destroy());
+       _player.reset();
+     }
++    NavSounds.unmute();
+     widget.onClose?.call();
+     if (Cloud.linked) Timer(const Duration(milliseconds: 800), () => Cloud.sync(light: true)); // push the new resume point
+     super.dispose();
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/settings_extra.dart proj/flutter_ui/lib/src/settings_extra.dart
+--- proj_orig/flutter_ui/lib/src/settings_extra.dart	2026-11-09 04:07:46.453053909 +0000
++++ proj/flutter_ui/lib/src/settings_extra.dart	2026-11-09 04:10:08.736960638 +0000
+@@ -9,6 +9,7 @@
+ import 'dev_console.dart';
+ import 'fields.dart' show PekDropdown;
+ import 'mpv.dart';
++import 'nav_sound.dart';
+ import 'plugin_github.dart' show PekGithub;
+ import 'plugin_install_ui.dart' show openGithubInstall, openZipInstall;
+ import 'plugin_ui.dart' show openPluginScreen;
+@@ -38,6 +39,40 @@
+     );
+   }
+ }
++
++// ====================================================================== Settings > Sounds
++
++/// Navigation sounds on / off and their volume (nav_sound.dart). Device-wide, like TV mode.
++class NavSoundSection extends StatelessWidget {
++  const NavSoundSection({super.key});
++
++  @override
++  Widget build(BuildContext context) {
++    final p = context.pek;
++    final t = p.tokens;
++    return ListenableBuilder(
++      listenable: NavSounds.changes,
++      builder: (context, _) {
++        final on = NavSounds.enabled;
++        return Section(
++          title: 'Navigation sounds',
++          hint: 'A soft tick when the highlight moves, a tone when you select something and another when you go back, like Apple TV. Silent while a video plays.',
++          children: [
++            ToggleRow(title: 'Navigation sounds', subtitle: on ? 'On' : 'Off', on: on, onTap: () => NavSounds.setEnabled(!on)),
++            if (on) ...[
++              SizedBox(height: 0.5 * p.rem),
++              Text('Volume', style: TextStyle(color: t.textMuted)),
++              SizedBox(height: 0.4 * p.rem),
++              Wrap(spacing: 0.5 * p.rem, runSpacing: 0.5 * p.rem, children: [
++                for (final l in NavSounds.levels) PekButton(label: l.$2, primary: NavSounds.level == l.$1, onTap: () => NavSounds.setLevel(l.$1)),
++              ]),
++            ],
++          ],
++        );
++      },
++    );
++  }
++}
+ 
+ // ====================================================================== Settings > Video output
+ 
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/lib/src/widgets.dart proj/flutter_ui/lib/src/widgets.dart
+--- proj_orig/flutter_ui/lib/src/widgets.dart	2026-11-09 04:07:46.452977904 +0000
++++ proj/flutter_ui/lib/src/widgets.dart	2026-11-09 04:09:59.026127925 +0000
+@@ -6,6 +6,7 @@
+ 
+ import 'api.dart' show Api, Details;
+ import 'layouts.dart';
++import 'nav_sound.dart';
+ import 'skin_button.dart';
+ import 'skin_layout.dart' show ButtonShapeRadius;
+ import 'tokens.dart';
+@@ -100,6 +101,15 @@
+     super.dispose();
+   }
+ 
++  /// Every way of activating this box (a touch tap, the centre button, a short press of a held centre button) comes through here,
++  /// so each one makes the selection sound (nav_sound.dart). A box with nothing to do stays silent.
++  void _tap() {
++    final tap = widget.onTap;
++    if (tap == null) return;
++    NavSounds.select();
++    tap();
++  }
++
+   KeyEventResult _holdKey(FocusNode node, KeyEvent e) {
+     final long = widget.onLongPress;
+     if (!widget.holdSelect || long == null || !widget.enabled) return KeyEventResult.ignored;
+@@ -121,7 +131,7 @@
+     } else if (e is KeyUpEvent) {
+       final waiting = _hold?.isActive ?? false;
+       _hold?.cancel();
+-      if (waiting && !_heldFired) widget.onTap?.call();
++      if (waiting && !_heldFired) _tap();
+     }
+     return KeyEventResult.handled;
+   }
+@@ -178,13 +188,13 @@
+       },
+       actions: {
+         ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+-          widget.onTap?.call();
++          _tap();
+           return null;
+         }),
+       },
+       child: GestureDetector(
+         behavior: HitTestBehavior.opaque,
+-        onTap: widget.enabled ? widget.onTap : null,
++        onTap: widget.enabled && widget.onTap != null ? _tap : null,
+         onLongPress: widget.enabled ? widget.onLongPress : null,
+         child: widget.focusMargin > 0
+             ? Stack(clipBehavior: Clip.none, fit: StackFit.passthrough, children: [
+diff -ruN -x '*.pyc' -x __pycache__ proj_orig/flutter_ui/test/nav_sound_test.dart proj/flutter_ui/test/nav_sound_test.dart
+--- proj_orig/flutter_ui/test/nav_sound_test.dart	1970-01-01 00:00:00.000000000 +0000
++++ proj/flutter_ui/test/nav_sound_test.dart	2026-11-09 04:10:44.823216395 +0000
+@@ -0,0 +1,114 @@
++import 'package:flutter/services.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:pek_tv_ui/src/nav_sound.dart';
++import 'package:pek_tv_ui/src/store.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++
++/// The navigation sounds (nav_sound.dart): what is sent to the host, and when it is held back. The host is replaced by a
++/// recorder on the `pek/host` channel, so no audio is involved. The limits are in real milliseconds, hence the short waits.
++void main() {
++  TestWidgetsFlutterBinding.ensureInitialized();
++
++  final sent = <Map<Object?, Object?>>[];
++  const wait = Duration(milliseconds: 30); // lets the channel call and the microtask of select() finish
++  const apart = Duration(milliseconds: 400); // longer than every "too soon" window in NavSounds
++
++  Future<void> settle() => Future<void>.delayed(wait);
++
++  setUpAll(() async {
++    SharedPreferences.setMockInitialValues(<String, Object>{});
++    await Store.init();
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(const MethodChannel('pek/host'), (call) async {
++      if (call.method == 'navSound') sent.add(Map<Object?, Object?>.from(call.arguments as Map));
++      return null;
++    });
++  });
++
++  setUp(() async {
++    sent.clear();
++    await Future<void>.delayed(apart); // so the previous test's sounds cannot hold this one back
++  });
++
++  test('on by default, at Medium', () {
++    expect(NavSounds.enabled, isTrue);
++    expect(NavSounds.level, NavSounds.defaultLevel);
++  });
++
++  test('select sends the select sound at the chosen volume', () async {
++    await NavSounds.setLevel(3);
++    NavSounds.select();
++    await settle();
++    expect(sent, hasLength(1));
++    expect(sent.single['kind'], 1);
++    expect(sent.single['volume'], 1.0);
++    await NavSounds.setLevel(NavSounds.defaultLevel);
++  });
++
++  test('the volume that is set by the tap itself is the one heard', () async {
++    NavSounds.select(); // what PekFocusable does first ...
++    await NavSounds.setLevel(1); // ... and then the button's own handler runs
++    await settle();
++    expect(sent.single['volume'], 0.35);
++    await NavSounds.setLevel(NavSounds.defaultLevel);
++  });
++
++  test('a back straight after a select stays quiet, a lone back plays', () async {
++    NavSounds.select();
++    NavSounds.back(); // a dialog closing because of the tap
++    await settle();
++    expect(sent.map((m) => m['kind']), [1]);
++
++    sent.clear();
++    await Future<void>.delayed(apart);
++    NavSounds.back();
++    await settle();
++    expect(sent.map((m) => m['kind']), [2]);
++  });
++
++  test('a move is not played right after a select (the new screen focusing itself)', () async {
++    NavSounds.select();
++    NavSounds.move();
++    await settle();
++    expect(sent.map((m) => m['kind']), [1]);
++
++    sent.clear();
++    await Future<void>.delayed(apart);
++    NavSounds.move();
++    await settle();
++    expect(sent.map((m) => m['kind']), [0]);
++  });
++
++  test('a held arrow key does not buzz', () async {
++    NavSounds.move();
++    NavSounds.move();
++    NavSounds.move();
++    await settle();
++    expect(sent, hasLength(1));
++  });
++
++  test('nothing plays while muted (the video player), and again once it is unmuted', () async {
++    NavSounds.mute();
++    NavSounds.select();
++    await settle();
++    expect(sent, isEmpty);
++    NavSounds.unmute();
++
++    await Future<void>.delayed(apart);
++    NavSounds.select();
++    await settle();
++    expect(sent, hasLength(1));
++  });
++
++  test('nothing plays when turned off, and the choice is kept', () async {
++    await NavSounds.setEnabled(false);
++    expect(Store.strGet('pek_nav_sound', scoped: false), 'off');
++    NavSounds.select();
++    NavSounds.move();
++    NavSounds.back();
++    await settle();
++    expect(sent, isEmpty);
++
++    await NavSounds.setEnabled(true);
++    expect(Store.strGet('pek_nav_sound', scoped: false), 'on');
++  });
++}

@@ -35,6 +35,7 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.pektv.app.MpvController
 import com.pektv.app.NativeBridge
+import com.pektv.app.NavSound
 import com.pektv.app.Boot
 import com.pektv.app.R
 import com.pektv.app.SplashGate
@@ -62,7 +63,7 @@ import java.util.concurrent.Executors
  *   pek/mpv         (MethodChannel)  load, play, pause, seek, setAudio, setSubtitle, addSubtitle, setMiniRect,
  *                                    fullscreen, destroy
  *   pek/mpv/events  (EventChannel)   {event: time|state|tracks|ended|error, data: {...}}  - same payloads the web UI got; "error" = the file never loaded
- *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs
+ *   pek/host        (MethodChannel)  exit, isPhone, setMulticast, volume, dirs, navSound(kind, volume)
  *   pek/pip         (MethodChannel)  Picture in picture: supported, set(allowed, playing), enter  /  host -> Dart: state, toggle
  *   pek/update      (MethodChannel)  info, install(path), openInstallSettings -> AppUpdater (app_update.dart: the "new version" screen);
  *                                    status {status, message} comes back from the installer
@@ -89,6 +90,7 @@ class FlutterHostActivity : FlutterActivity() {
     private var permissionsAsked = false
 
     private var mpv: MpvController? = null
+    private var navSound: NavSound? = null     // the tick / select / back sounds (nav_sound.dart)
     private var events: EventChannel.EventSink? = null
     private var music: FlutterMusic? = null
     private var musicChannel: MethodChannel? = null
@@ -323,6 +325,7 @@ class FlutterHostActivity : FlutterActivity() {
             events?.success(mapOf("event" to event, "data" to data.toMap()))
         }
         mpv = c
+        navSound = NavSound()
         music = FlutterMusic(this, c) { name, args ->
             runOnUiThread { musicChannel?.invokeMethod(name, args) }
         }
@@ -568,6 +571,12 @@ class FlutterHostActivity : FlutterActivity() {
                     setMulticast(call.argument<Boolean>("on") ?: false)
                     result.success(null)
                 }
+                // Navigation sounds (nav_sound.dart): kind 0 = move, 1 = select, 2 = back; volume 0..1. NavSound plays on its own
+                // thread, so this returns at once. A device where the sound could not be set up just stays silent.
+                "navSound" -> {
+                    navSound?.play(call.argument<Int>("kind") ?: 0, (call.argument<Number>("volume") ?: 1.0).toFloat())
+                    result.success(null)
+                }
                 // The phone remote (remote_host.dart): dir 1 = louder, -1 = quieter, 0 = mute / unmute. Moves the system music volume.
                 "volume" -> {
                     val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -700,6 +709,8 @@ class FlutterHostActivity : FlutterActivity() {
         setMulticast(false)
         music?.destroy()          // also stops MusicService: without this activity there is no queue to control
         music = null
+        navSound?.release()
+        navSound = null
         mpv?.destroy()
         super.onDestroy()
     }
