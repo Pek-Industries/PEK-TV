@@ -44,4 +44,22 @@ void main() {
     expect(i.text, 'the matrix');
     expect(i.season, 0);
   });
+  test('season and episode but no title: the app has to ask', () {
+    final i = parseVoice('Play season 1 episode 2');
+    expect(i.kind, VoiceKind.play);
+    expect(i.text, '');
+    expect(i.season, 1);
+    expect(i.episode, 2);
+    expect(i.missingTitle, isTrue);
+  });
+  test('a bare verb also asks', () {
+    expect(parseVoice('play').missingTitle, isTrue);
+    expect(parseVoice('search').missingTitle, isTrue);
+    expect(parseVoice('play the bear').missingTitle, isFalse);
+  });
+  test('the answer to "what series?"', () {
+    expect(titleFromAnswer("It's The Bear"), 'the bear');
+    expect(titleFromAnswer('The series is Severance.'), 'severance');
+    expect(titleFromAnswer('the bear'), 'the bear');
+  });
 }

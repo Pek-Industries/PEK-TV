@@ -26,6 +26,9 @@ class VoiceIntent {
   final int season, episode;
   final String? _full;
 
+  /// A play / search with no title yet ("play season 1 episode 2", or just "play"): the app should ask what it is about.
+  bool get missingTitle => (kind == VoiceKind.play || kind == VoiceKind.search) && text.isEmpty;
+
   /// [text] exactly as spoken, season and episode words included. A movie called "Star Wars Episode 1" needs this one.
   String get full => _full ?? text;
   @override
@@ -63,10 +66,20 @@ int _numOf(String s) => int.tryParse(s) ?? _numberWords[s] ?? 0;
   return (title: t, season: season, episode: episode);
 }
 
+/// The answer to "What series are you referring to?": "it's The Bear", "the series is severance" -> 'the bear', 'severance'.
+String titleFromAnswer(String heard) {
+  var t = heard.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  t = t.replaceFirst(RegExp(r"^(?:(?:it'?s|it is|i mean|i meant|that'?s|that is|the (?:series|show|one) (?:is|called)|the (?:series|show)|series|show|called|um|uh|well|so)\s+)+"), '');
+  return t.trim();
+}
+
 VoiceIntent _titleIntent(VoiceKind kind, String raw) {
   final r = raw.trim();
   final s = splitSeasonEpisode(r);
-  if (s.title.isEmpty) return VoiceIntent(kind, r); // only "season 2" was said: keep it as spoken
+  if (s.title.isEmpty) {
+    // Only "season 1 episode 2" was said: no title yet, the app asks which series.
+    return (s.season > 0 || s.episode > 0) ? VoiceIntent(kind, '', s.season, s.episode, r) : VoiceIntent(kind, r);
+  }
   return VoiceIntent(kind, s.title, s.season, s.episode, r);
 }
 
@@ -83,6 +96,11 @@ VoiceIntent parseVoice(String heard) {
     if (w == 'tv shows') w = 'shows';
     if (w == 'favourites') w = 'favorites';
     return VoiceIntent(VoiceKind.open, w);
+  }
+  final bare = RegExp(r'^(play|watch|start|put on|search|search for|find|look for|look up)( something| a movie| a show| a film| it)?$').firstMatch(t);
+  if (bare != null) {
+    final w = bare.group(1)!;
+    return VoiceIntent(w == 'play' || w == 'watch' || w == 'start' || w == 'put on' ? VoiceKind.play : VoiceKind.search); // no title: the app asks for one
   }
   final play = RegExp(r'^(play|watch|start|put on) (the movie |the show |the film |some )?(.+)$').firstMatch(t);
   if (play != null) return _titleIntent(VoiceKind.play, play.group(3)!);
@@ -292,9 +310,17 @@ class Voice {
     });
   }
 
-  /// Says [text] out loud with the Piper voice. Keep it to a sentence.
+  /// Says [text] out loud: the Piper voice if it was downloaded, otherwise the phone's own. Keep it to a sentence.
   Future<void> speak(String text) async {
-    if (text.trim().isEmpty || !await VoiceModels.ttsReady()) return; // spoken replies are optional: silent until the voice is downloaded
+    if (text.trim().isEmpty) return;
+    if (!await VoiceModels.ttsReady()) {
+      // No Piper voice downloaded: use the phone's own text-to-speech (nothing to download). Waits until it has finished talking,
+      // so the microphone never hears the app itself.
+      try {
+        await _sys.invokeMethod<bool>('speak', {'text': text}).timeout(const Duration(seconds: 10));
+      } catch (_) {}
+      return;
+    }
     final model = await VoiceModels.path(VoiceModels.ttsModel);
     final tokens = await VoiceModels.path(VoiceModels.ttsTokens);
     final data = await VoiceModels.path(VoiceModels.ttsEspeak);

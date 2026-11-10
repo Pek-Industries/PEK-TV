@@ -4,6 +4,13 @@
 on the first tap, offline, with no download. **Spoken replies are optional**: a Piper voice is downloaded from Cloudflare only if you
 offer it; until then the app answers silently (it still searches / opens).
 
+## Follow-up questions and talking back
+
+If a request has no title ("play season 1 episode 2", or just "play"), `VoiceMic` asks "What series are you referring to?" (shown on the
+dimmed screen and spoken), listens again and combines the answer with the first request. Plain rules in `voice.dart` (`missingTitle`,
+`titleFromAnswer`), no AI service, works offline. Replies are spoken with the Piper voice if it was downloaded, otherwise with the
+phone's own text-to-speech (`speakSystem` in `FlutterHostActivity`, nothing to download; silent on devices with no speech engine).
+
 ## Which recognizer runs
 
 1. **The phone's own recognizer** (the engine behind the Google keyboard's mic), through `SpeechRecognizer` in `FlutterHostActivity.setupSystemVoice`

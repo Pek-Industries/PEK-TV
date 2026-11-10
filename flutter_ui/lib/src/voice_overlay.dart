@@ -12,14 +12,16 @@ class VoiceUi {
   final level = ValueNotifier<double>(0); // 0..1, how loud the person is right now
   final words = ValueNotifier<List<String>>(const []);
   final status = ValueNotifier<String>('');
+  final prompt = ValueNotifier<String>(''); // a question the app is asking ("What series are you referring to?"), shown until the answer's words start
 
-  Listenable get all => Listenable.merge([phase, level, words, status]);
+  Listenable get all => Listenable.merge([phase, level, words, status, prompt]);
 
   void dispose() {
     phase.dispose();
     level.dispose();
     words.dispose();
     status.dispose();
+    prompt.dispose();
   }
 }
 
@@ -80,7 +82,7 @@ class VoiceOverlay extends StatelessWidget {
                               child: Align(
                                 alignment: Alignment.bottomCenter,
                                 child: words.isEmpty
-                                    ? Text(listening ? 'Listening\u2026' : '', style: big.copyWith(color: Colors.white70), textAlign: TextAlign.center)
+                                    ? Text(ui.prompt.value.isNotEmpty ? ui.prompt.value : (listening ? 'Listening\u2026' : ''), style: big.copyWith(color: ui.prompt.value.isNotEmpty ? Colors.white : Colors.white70), textAlign: TextAlign.center)
                                     : Wrap(
                                         alignment: WrapAlignment.center,
                                         children: [for (var i = 0; i < words.length; i++) _Word(key: ValueKey(i), word: words[i], style: big, rem: rem)],

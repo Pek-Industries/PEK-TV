@@ -377,7 +377,44 @@ class FlutterHostActivity : FlutterActivity() {
                 "start" -> startSystemListen(call.argument<List<String>>("bias") ?: emptyList(), result)
                 "stop" -> { runOnUiThread { try { sysRecognizer?.stopListening() } catch (_: Exception) {} }; result.success(null) }
                 "cancel" -> { runOnUiThread { sysReply?.invoke("", null); releaseSystemListen() }; result.success(null) }
+                "speak" -> speakSystem(call.argument<String>("text") ?: "", result)
+                "stopSpeak" -> { runOnUiThread { try { tts?.stop() } catch (_: Exception) {} }; result.success(null) }
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    // The phone's own text-to-speech: lets the app talk back with nothing to download. Replies true when it finished speaking.
+    private var tts: android.speech.tts.TextToSpeech? = null
+    private var ttsReady = false
+
+    private fun speakSystem(text: String, result: MethodChannel.Result) {
+        runOnUiThread {
+            fun go(t: android.speech.tts.TextToSpeech) {
+                val id = "pek-" + System.nanoTime()
+                t.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(u: String?) {}
+                    override fun onDone(u: String?) { if (u == id) runOnUiThread { result.success(true) } }
+                    @Deprecated("Replaced by onError(String, Int)")
+                    override fun onError(u: String?) { if (u == id) runOnUiThread { result.success(false) } }
+                    override fun onError(u: String?, code: Int) { if (u == id) runOnUiThread { result.success(false) } }
+                })
+                if (t.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, id) != android.speech.tts.TextToSpeech.SUCCESS) result.success(false)
+            }
+            val existing = tts
+            if (existing != null) {
+                if (ttsReady) go(existing) else result.success(false) // still starting up: skip this one
+                return@runOnUiThread
+            }
+            tts = android.speech.tts.TextToSpeech(this) { status ->
+                val t = tts
+                if (status == android.speech.tts.TextToSpeech.SUCCESS && t != null) {
+                    ttsReady = true
+                    go(t)
+                } else {
+                    tts = null // no speech engine on this device: stay silent, try again next time
+                    result.success(false)
+                }
             }
         }
     }
@@ -866,6 +903,8 @@ class FlutterHostActivity : FlutterActivity() {
 
     override fun onDestroy() {
         releaseSystemListen()
+        try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
         unregisterPipReceiver()
         pipChannel = null
         pluginPool.shutdown()

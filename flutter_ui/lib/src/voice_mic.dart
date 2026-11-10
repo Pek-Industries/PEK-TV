@@ -8,10 +8,9 @@ import 'voice_models.dart';
 import 'voice_overlay.dart';
 import 'widgets.dart' show PekFocusable;
 
-/// The mic: a round icon button that sits beside the search box (like YouTube). Tap: the screen dims ([VoiceOverlay]), it listens, the words appear one by one, then it acts on them
-/// through [onIntent]. The speech model is bundled, so there is no download and no wait. Says a short answer out loud when
-/// [speakBack] is on and the optional spoken-reply voice has been downloaded.
-///
+/// The mic: a round icon button that sits beside the search box (like YouTube). Tap: the screen dims ([VoiceOverlay]), it
+/// listens, the words appear, then it acts on them through [onIntent]. If something is missing ("play season 1 episode 2":
+/// which series?) it asks out loud and on screen, listens again, and puts the answer together with the first request.
 /// Where the phone has its own speech recognizer (the one behind the Google keyboard's mic) the words appear live as you speak.
 /// Otherwise the bundled model (Moonshine) hears the whole sentence first, and the words are revealed right after you stop.
 ///
@@ -45,16 +44,58 @@ class _VoiceMicState extends State<VoiceMic> {
     VoiceModels.ensureBundled(); // copies the bundled model out of the APK now (first run only), so the first tap does not wait
   }
 
-  String _where(VoiceIntent i) =>
-      [if (i.season > 0) 'season ${i.season}', if (i.episode > 0) 'episode ${i.episode}'].join(' ');
+  String _where(VoiceIntent i) => [if (i.season > 0) 'season ${i.season}', if (i.episode > 0) 'episode ${i.episode}'].join(' ');
 
-  String _describe(VoiceIntent i) => switch (i.kind) {
-        VoiceKind.play => 'Searching for "${i.text}"${_where(i).isEmpty ? '' : ' (${_where(i)})'} \u2014 pick it to play',
-        VoiceKind.search => 'Searching for "${i.text}"${_where(i).isEmpty ? '' : ' (${_where(i)})'}',
-        VoiceKind.open => 'Open ${i.text}',
-        VoiceKind.resume => 'Resume watching',
-        VoiceKind.unknown => '',
-      };
+  String _describe(VoiceIntent i) {
+    final w = _where(i).isEmpty ? '' : ' (${_where(i)})';
+    return switch (i.kind) {
+      VoiceKind.play => 'Searching for "${i.text}"$w \u2014 pick it to play',
+      VoiceKind.search => 'Searching for "${i.text}"$w',
+      VoiceKind.open => 'Open ${i.text}',
+      VoiceKind.resume => 'Resume watching',
+      VoiceKind.unknown => '',
+    };
+  }
+
+  String _question(VoiceIntent i) {
+    if (i.season > 0 || i.episode > 0) return 'What series are you referring to?';
+    return i.kind == VoiceKind.play ? 'What would you like to watch?' : 'What should I search for?';
+  }
+
+  /// One round of listening: shows the words as they come, returns what was said (null = nothing heard, or dismissed).
+  Future<String?> _hear(VoiceUi ui) async {
+    var live = false; // words already shown while speaking
+    final heard = await Voice.instance.listen(
+      bias: widget.bias,
+      onLevel: (l) => ui.level.value = l,
+      onPartial: (t) {
+        if (!_open || t.trim().isEmpty) return;
+        live = true;
+        ui.words.value = t.trim().split(RegExp(r'\s+'));
+      },
+    );
+    if (!_open) return null; // dismissed
+    ui.level.value = 0;
+    if (heard.isEmpty) {
+      ui.phase.value = VoicePhase.done;
+      ui.status.value = "I didn't catch that \u2014 tap the mic and speak right away";
+      if (widget.speakBack) await Voice.instance.speak("I didn't catch that.");
+      await Future<void>.delayed(const Duration(milliseconds: 1600));
+      return null;
+    }
+    ui.phase.value = VoicePhase.thinking;
+    final ws = heard.trim().split(RegExp(r'\s+'));
+    if (live) {
+      ui.words.value = ws; // the final wording, in place of the last live guess
+    } else {
+      for (var i = 1; i <= ws.length; i++) {
+        if (!_open) return null;
+        ui.words.value = ws.sublist(0, i);
+        await Future<void>.delayed(const Duration(milliseconds: 110));
+      }
+    }
+    return heard;
+  }
 
   Future<void> _tap() async {
     if (_working) return;
@@ -77,37 +118,33 @@ class _VoiceMicState extends State<VoiceMic> {
       }
     }));
     try {
-      var live = false; // words already shown while speaking
-      final heard = await Voice.instance.listen(
-        bias: widget.bias,
-        onLevel: (l) => ui.level.value = l,
-        onPartial: (t) {
-          if (!_open || t.trim().isEmpty) return;
-          live = true;
-          ui.words.value = t.trim().split(RegExp(r'\s+'));
-        },
-      );
-      if (!_open) return; // dismissed
-      ui.level.value = 0;
-      if (heard.isEmpty) {
-        ui.phase.value = VoicePhase.done;
-        ui.status.value = "I didn't catch that \u2014 tap the mic and speak right away";
-        if (widget.speakBack) await Voice.instance.speak("I didn't catch that.");
-        await Future<void>.delayed(const Duration(milliseconds: 1600));
-        return;
-      }
-      ui.phase.value = VoicePhase.thinking;
-      final ws = heard.trim().split(RegExp(r'\s+'));
-      if (live) {
-        ui.words.value = ws; // the final wording, in place of the last live guess
-      } else {
-        for (var i = 1; i <= ws.length; i++) {
-          if (!_open) return;
-          ui.words.value = ws.sublist(0, i);
-          await Future<void>.delayed(const Duration(milliseconds: 110));
+      final heard = await _hear(ui);
+      if (heard == null) return;
+      var intent = parseVoice(heard);
+
+      // Something is missing ("play season 1 episode 2"): ask, listen again, put the two together.
+      if (intent.missingTitle) {
+        final q = _question(intent);
+        ui.words.value = const [];
+        ui.status.value = '';
+        ui.prompt.value = q;
+        ui.phase.value = VoicePhase.listening;
+        if (widget.speakBack) await Voice.instance.speak(q); // waits until it has finished talking, so it does not hear itself
+        if (!_open) return;
+        final answer = await _hear(ui);
+        if (answer == null) return;
+        if (RegExp(r"^(never ?mind|cancel|stop|forget it)\b").hasMatch(answer.toLowerCase())) return;
+        final a = splitSeasonEpisode(titleFromAnswer(answer));
+        if (a.title.isEmpty) {
+          ui.phase.value = VoicePhase.done;
+          ui.status.value = "I still don't know the title \u2014 try again";
+          await Future<void>.delayed(const Duration(milliseconds: 1800));
+          return;
         }
+        intent = VoiceIntent(intent.kind, a.title, intent.season > 0 ? intent.season : a.season, intent.episode > 0 ? intent.episode : a.episode, answer);
+        ui.prompt.value = '';
       }
-      final intent = parseVoice(heard);
+
       ui.phase.value = VoicePhase.done;
       if (!widget.supports.contains(intent.kind)) {
         ui.status.value = "I understood that, but I can't ${intent.kind == VoiceKind.open ? 'open pages' : 'do that'} from here yet";
@@ -119,9 +156,10 @@ class _VoiceMicState extends State<VoiceMic> {
       if (!_open) return;
       widget.onIntent(intent);
       if (widget.speakBack && intent.kind != VoiceKind.unknown) {
+        final w = _where(intent).isEmpty ? '' : ', ${_where(intent)}';
         unawaited(Voice.instance.speak(switch (intent.kind) {
-          VoiceKind.play => 'Looking for ${intent.text}.',
-          VoiceKind.search => 'Searching for ${intent.text}.',
+          VoiceKind.play => 'Looking for ${intent.text}$w.',
+          VoiceKind.search => 'Searching for ${intent.text}$w.',
           VoiceKind.open => 'Opening ${intent.text}.',
           VoiceKind.resume => 'Resuming.',
           VoiceKind.unknown => '',
