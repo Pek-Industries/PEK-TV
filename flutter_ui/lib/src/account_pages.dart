@@ -87,7 +87,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
   /// What this plan costs, as listed on the website.
   static String _planPrice(String plan) => switch (plan) {
         'monthly' => '\$${PlanPrices.monthly} a month',
-        'yearly' => '\$${PlanPrices.yearly.toStringAsFixed(0)} a year',
+        'yearly' => '\$${PlanPrices.yearly.toStringAsFixed(2)} a year',
         'lifetime' => '\$${PlanPrices.lifetime.toStringAsFixed(0)} once (lifetime)',
         'grandfathered' => 'Nothing to pay, included with your account',
         _ => 'Free',

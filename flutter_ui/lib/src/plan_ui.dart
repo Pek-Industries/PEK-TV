@@ -13,13 +13,13 @@ import 'widgets.dart';
 /// The PEK Cloud prices, shown in the app. The real prices live on the website (Stripe); keep these in step with it.
 class PlanPrices {
   static const monthly = 5.99;
-  static const yearly = 48.0;
-  static const lifetime = 199.0;
+  static const yearly = 59.99;
+  static const lifetime = 399.0;
 
   /// What twelve monthly payments cost minus the yearly price.
-  static double get yearlySaving => monthly * 12 - yearly; // 23.88
-  static int get yearlySavingPercent => (yearlySaving / (monthly * 12) * 100).round(); // 33
-  static String get yearlyPerMonth => (yearly / 12).toStringAsFixed(2); // 4.00
+  static double get yearlySaving => monthly * 12 - yearly; // 11.89
+  static int get yearlySavingPercent => (yearlySaving / (monthly * 12) * 100).round(); // 17
+  static String get yearlyPerMonth => (yearly / 12).toStringAsFixed(2); // 5.00
 }
 
 /// "Free" or "Paid" for the Account page, with the plan's name and, for monthly / yearly, when the period ends.
@@ -156,7 +156,7 @@ class _SubscribeBoxState extends State<SubscribeBox> with WidgetsBindingObserver
       SizedBox(height: 0.6 * rem),
       Text('\$${PlanPrices.monthly} a month', style: price),
       SizedBox(height: 0.15 * rem),
-      Text('\$${PlanPrices.yearly.toStringAsFixed(0)} a year \u00b7 just \$${PlanPrices.yearlyPerMonth} a month', style: price),
+      Text('\$${PlanPrices.yearly.toStringAsFixed(2)} a year \u00b7 just \$${PlanPrices.yearlyPerMonth} a month', style: price),
       Text('Save \$${PlanPrices.yearlySaving.toStringAsFixed(2)} a year (${PlanPrices.yearlySavingPercent}% off) vs paying monthly', style: TextStyle(color: t.accent, fontWeight: FontWeight.w600, fontSize: 0.9 * rem)),
       SizedBox(height: 0.15 * rem),
       Text('\$${PlanPrices.lifetime.toStringAsFixed(0)} once (lifetime)', style: price),
