@@ -363,7 +363,7 @@ class FlutterHostActivity : FlutterActivity() {
     private var pendingMic: MethodChannel.Result? = null
 
     /**
-     * Copies the bundled speech model (APK assets voice/stt/*, from the repo's assets/bundled/) into [out]/stt so sherpa-onnx can open it by path.
+     * Copies the bundled speech model (the voice/stt folder in the APK assets, from the repo folder assets/bundled) into [out]/stt so sherpa-onnx can open it by path.
      * Skips the copy when [out]/stt-ready.json already names [version]. Returns false when the model is not in this build.
      * Files are written as *.part and renamed, so a killed copy never leaves a half file behind.
      */
