@@ -11,6 +11,13 @@ dimmed screen and spoken), listens again and combines the answer with the first 
 `titleFromAnswer`), no AI service, works offline. Replies are spoken with the Piper voice if it was downloaded, otherwise with the
 phone's own text-to-speech (`speakSystem` in `FlutterHostActivity`, nothing to download; silent on devices with no speech engine).
 
+## Matching against the library
+
+`voice_match.dart` compares what was heard with the real titles of the tab (Movies or Shows): capitals, accents and a leading "the" are
+ignored, one wrong letter is forgiven ("the beer" -> "The Bear"), and words run together or apart match ("open her mer" -> "Oppenheimer").
+Two equally close titles are not guessed: the spoken words are kept and the search list shows the choices. The same titles are given to the
+phone's recognizer (Android 13+) as words to expect. Works offline, no model, no download. `VoiceMic(titles: ...)` turns it on.
+
 ## Which recognizer runs
 
 1. **The phone's own recognizer** (the engine behind the Google keyboard's mic), through `SpeechRecognizer` in `FlutterHostActivity.setupSystemVoice`

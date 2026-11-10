@@ -284,6 +284,12 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
     _submit();
   }
 
+  /// The titles of this tab (movies or shows) as loaded now: the mic matches what it heard against them.
+  List<String> _titles() {
+    _index();
+    return widget.tab == 'movies' ? [for (final m in _movies.values) m.title] : [for (final s in _shows.values) s.title];
+  }
+
   void _closeList() {
     _typed = '';
     _typedRaw = '';
@@ -454,7 +460,7 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
                 ),
             ),
             SizedBox(width: 0.6 * rem),
-            VoiceMic(onIntent: _onVoice),
+            VoiceMic(onIntent: _onVoice, titles: _titles),
           ],
         ),
         SizedBox(height: 0.6 * rem),

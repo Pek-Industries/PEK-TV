@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 import 'voice.dart';
+import 'voice_match.dart';
 import 'voice_models.dart';
 import 'voice_overlay.dart';
 import 'widgets.dart' show PekFocusable;
@@ -22,6 +23,7 @@ class VoiceMic extends StatefulWidget {
     this.speakBack = true,
     this.supports = const {VoiceKind.play, VoiceKind.search},
     this.bias = const [],
+    this.titles,
   });
   final void Function(VoiceIntent intent) onIntent;
   final bool speakBack;
@@ -29,6 +31,10 @@ class VoiceMic extends StatefulWidget {
 
   /// Titles worth expecting (library names): the phone's recognizer hears them better. Optional.
   final List<String> bias;
+
+  /// The titles in the library tab this mic belongs to (read when the mic is tapped). What was heard is matched against them
+  /// ("the beer" -> "The Bear"), and they are given to the phone's recognizer as words to expect.
+  final List<String> Function()? titles;
 
   @override
   State<VoiceMic> createState() => _VoiceMicState();
@@ -62,11 +68,32 @@ class _VoiceMicState extends State<VoiceMic> {
     return i.kind == VoiceKind.play ? 'What would you like to watch?' : 'What should I search for?';
   }
 
+  /// The library's own spelling of a title that was heard a little wrong; the intent is returned unchanged when nothing fits well.
+  VoiceIntent _fit(VoiceIntent i) {
+    final get = widget.titles;
+    if (get == null || i.text.isEmpty) return i;
+    final lib = get();
+    if (lib.isEmpty) return i;
+    final a = bestTitle(i.text, lib);
+    final b = i.full != i.text ? bestTitle(i.full, lib) : null; // a movie called "Star Wars Episode 1" is matched as said
+    final m = (b != null && (a == null || b.score > a.score)) ? b : a;
+    if (m == null) return i;
+    return VoiceIntent(i.kind, m.title, i.season, i.episode, m.title);
+  }
+
+  List<String> _bias() {
+    if (widget.bias.isNotEmpty) return widget.bias;
+    final get = widget.titles;
+    if (get == null) return const [];
+    final all = get();
+    return all.length > 200 ? all.sublist(0, 200) : all;
+  }
+
   /// One round of listening: shows the words as they come, returns what was said (null = nothing heard, or dismissed).
   Future<String?> _hear(VoiceUi ui) async {
     var live = false; // words already shown while speaking
     final heard = await Voice.instance.listen(
-      bias: widget.bias,
+      bias: _bias(),
       onLevel: (l) => ui.level.value = l,
       onPartial: (t) {
         if (!_open || t.trim().isEmpty) return;
@@ -145,6 +172,7 @@ class _VoiceMicState extends State<VoiceMic> {
         ui.prompt.value = '';
       }
 
+      intent = _fit(intent); // "the beer" -> "The Bear"
       ui.phase.value = VoicePhase.done;
       if (!widget.supports.contains(intent.kind)) {
         ui.status.value = "I understood that, but I can't ${intent.kind == VoiceKind.open ? 'open pages' : 'do that'} from here yet";
