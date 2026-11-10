@@ -188,6 +188,16 @@ jobs:
           done
           grep -m1 '#define SQLITE_VERSION ' android/sqlite/sqlite3.h
 
+      - name: Cache voice model (bundled speech to text)
+        uses: actions/cache@v4
+        with:
+          path: assets/bundled/voice
+          key: voice-stt-${{ hashFiles('tools/fetch-voice-model.sh') }}
+
+      # No-op when all five files are already there.
+      - name: Ensure voice model (bundled in the APK)
+        run: bash tools/fetch-voice-model.sh
+
       - name: Clone libsmb2 (SMB shares)
         continue-on-error: true
         run: git clone --depth 1 https://github.com/sahlberg/libsmb2 android/libsmb2

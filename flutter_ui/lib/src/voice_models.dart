@@ -4,27 +4,37 @@ import 'dart:io';
 
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 /// Where the voice models come from and where they live on the device.
 ///
-/// Nothing is bundled in the APK. The first time someone taps the mic, [VoiceModels.download] fetches
-/// `<base>/manifest.json` from Cloudflare (R2), downloads each file it lists, checks its SHA-256 and unpacks zips.
-/// See VOICE.md for the manifest format and the files to upload.
+/// Speech to text (Moonshine tiny, int8) is BUNDLED in the app (repo: assets/bundled/voice/stt/, fetched by tools/fetch-voice-model.sh) and copied here on first use
+/// ([ensureBundled]), so voice search works at once, offline, with no download.
+/// The spoken replies (Piper) are optional: [download] fetches `<base>/manifest.json` from Cloudflare (R2), keeps the
+/// `tts/` files it lists, checks their SHA-256 and unpacks zips. See VOICE.md.
 class VoiceModels {
   /// An R2 bucket behind a custom domain (or a Worker in front of it). Change it here only.
   static const base = 'https://models.pekindustries.com/voice/v1';
 
   /// Fixed names inside the voice folder. The manifest must produce exactly these.
-  static const sttEncoder = 'stt/tiny.en-encoder.int8.onnx';
-  static const sttDecoder = 'stt/tiny.en-decoder.int8.onnx';
-  static const sttTokens = 'stt/tiny.en-tokens.txt';
+  static const sttPreprocess = 'stt/preprocess.onnx';
+  static const sttEncoder = 'stt/encode.int8.onnx';
+  static const sttUncachedDecoder = 'stt/uncached_decode.int8.onnx';
+  static const sttCachedDecoder = 'stt/cached_decode.int8.onnx';
+  static const sttTokens = 'stt/tokens.txt';
+  static const _sttFiles = [sttPreprocess, sttEncoder, sttUncachedDecoder, sttCachedDecoder, sttTokens];
+
+  /// Bump when the bundled model changes: the copy on the device is replaced when this differs.
+  static const bundledVersion = 'moonshine-tiny-en-int8-1';
+  static const _host = MethodChannel('pek/host');
+  static Future<bool>? _installing;
   static const ttsModel = 'tts/voice.onnx';
   static const ttsTokens = 'tts/tokens.txt';
   static const ttsEspeak = 'tts/espeak-ng-data'; // a folder, made from tts/espeak-ng-data.zip
 
-  static const _marker = 'ready.json';
+  static const _marker = 'ready.json'; // written after the optional spoken-reply download
 
   static Future<Directory> root() async {
     final d = Directory('${(await getApplicationSupportDirectory()).path}/voice');
@@ -35,12 +45,38 @@ class VoiceModels {
   /// Absolute path of one of the names above.
   static Future<String> path(String rel) async => '${(await root()).path}/$rel';
 
-  /// True when every model file is there and was fully downloaded.
-  static Future<bool> ready() async {
+  /// True when the bundled speech model has been copied out of the APK and is complete.
+  static Future<bool> sttReady() async {
     try {
-      final m = File(await path(_marker));
-      if (!await m.exists()) return false;
-      for (final f in [sttEncoder, sttDecoder, sttTokens, ttsModel, ttsTokens]) {
+      final m = File(await path('stt-ready.json'));
+      if (!await m.exists() || !(await m.readAsString()).contains(bundledVersion)) return false;
+      for (final f in _sttFiles) {
+        if (await File(await path(f)).length() == 0) return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Makes sure the speech model is on disk: copies it from the APK (a second or two, once). False = this build does not contain it.
+  static Future<bool> ensureBundled() {
+    return _installing ??= () async {
+      try {
+        if (await sttReady()) return true;
+        final ok = await _host.invokeMethod<bool>('installVoice', {'dir': (await root()).path, 'version': bundledVersion}) ?? false;
+        return ok && await sttReady();
+      } catch (_) {
+        return false;
+      }
+    }().whenComplete(() => _installing = null);
+  }
+
+  /// True when the optional spoken-reply voice (Piper) was fully downloaded.
+  static Future<bool> ttsReady() async {
+    try {
+      if (!await File(await path(_marker)).exists()) return false;
+      for (final f in [ttsModel, ttsTokens]) {
         if (!await File(await path(f)).exists()) return false;
       }
       return await Directory(await path(ttsEspeak)).exists();
@@ -49,13 +85,16 @@ class VoiceModels {
     }
   }
 
-  /// Removes the models (Settings > "Delete voice models").
+  /// Removes the downloaded spoken-reply voice (Settings > "Delete voice models"). The bundled speech model stays.
   static Future<void> delete() async {
     final d = await root();
-    if (await d.exists()) await d.delete(recursive: true);
+    for (final n in ['tts', _marker]) {
+      final t = FileSystemEntity.typeSync('${d.path}/$n') == FileSystemEntityType.directory ? Directory('${d.path}/$n') : File('${d.path}/$n');
+      if (await t.exists()) await t.delete(recursive: true);
+    }
   }
 
-  /// Downloads everything. [onProgress] gets 0..1. Throws [VoiceDownloadException] with a message fit to show.
+  /// Downloads the optional spoken-reply voice (the manifest's tts/ files). [onProgress] gets 0..1. Throws [VoiceDownloadException] with a message fit to show.
   /// A failed or cancelled download leaves nothing half-installed: files are written as *.part and renamed after the hash matches.
   static Future<void> download({void Function(double)? onProgress, http.Client? client}) async {
     final c = client ?? http.Client();
@@ -63,7 +102,7 @@ class VoiceModels {
       final res = await c.get(Uri.parse('$base/manifest.json')).timeout(const Duration(seconds: 20));
       if (res.statusCode != 200) throw VoiceDownloadException('The voice download is not available right now (${res.statusCode}).');
       final m = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-      final files = [for (final f in (m['files'] as List)) VoiceFile.fromJson(f as Map<String, dynamic>)];
+      final files = [for (final f in (m['files'] as List)) VoiceFile.fromJson(f as Map<String, dynamic>)].where((f) => f.path.startsWith('tts/')).toList();
       final total = files.fold<int>(0, (a, f) => a + f.size);
       var done = 0;
       final root = await VoiceModels.root();

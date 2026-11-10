@@ -362,6 +362,30 @@ class FlutterHostActivity : FlutterActivity() {
 
     private var pendingMic: MethodChannel.Result? = null
 
+    /**
+     * Copies the bundled speech model (APK assets voice/stt/*, from the repo's assets/bundled/) into [out]/stt so sherpa-onnx can open it by path.
+     * Skips the copy when [out]/stt-ready.json already names [version]. Returns false when the model is not in this build.
+     * Files are written as *.part and renamed, so a killed copy never leaves a half file behind.
+     */
+    private fun copyBundledVoice(out: java.io.File, version: String): Boolean {
+        val names = assets.list("voice/stt") ?: return false
+        if (names.isEmpty()) return false
+        val marker = java.io.File(out, "stt-ready.json")
+        val dst = java.io.File(out, "stt")
+        if (marker.exists() && marker.readText().contains(version) && names.all { java.io.File(dst, it).length() > 0 }) return true
+        dst.mkdirs()
+        marker.delete()
+        for (n in names) {
+            val part = java.io.File(dst, "$n.part")
+            assets.open("voice/stt/$n").use { input -> part.outputStream().use { input.copyTo(it, 256 * 1024) } }
+            val target = java.io.File(dst, n)
+            target.delete()
+            if (!part.renameTo(target)) return false
+        }
+        marker.writeText("{\"version\":\"$version\"}")
+        return true
+    }
+
     private fun askMediaPermissionsOnce() {
         if (permissionsAsked) return
         permissionsAsked = true
@@ -564,6 +588,19 @@ class FlutterHostActivity : FlutterActivity() {
                     } else {
                         pendingMic = result
                         requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC)
+                    }
+                }
+                // Bundled speech model (voice.dart / voice_models.dart): copy the bundled voice/stt assets into the app's voice folder, off the UI thread.
+                "installVoice" -> {
+                    val dir = call.argument<String>("dir")
+                    val version = call.argument<String>("version")
+                    if (dir == null || version == null) {
+                        result.success(false)
+                    } else {
+                        Thread {
+                            val ok = try { copyBundledVoice(java.io.File(dir), version) } catch (_: Exception) { false }
+                            runOnUiThread { result.success(ok) }
+                        }.start()
                     }
                 }
                 "initialLink" -> {

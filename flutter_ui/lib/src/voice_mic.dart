@@ -4,8 +4,8 @@ import 'voice.dart';
 import 'voice_models.dart';
 import 'widgets.dart' show PekButton;
 
-/// The mic button. First tap: asks before downloading the voice models (from Cloudflare, not bundled). After that:
-/// listen -> understand -> [onIntent]. Says a short answer out loud when [speakBack] is on.
+/// The mic button. Tap: listen -> understand -> [onIntent]. The speech model is bundled, so there is no download and no wait.
+/// Says a short answer out loud when [speakBack] is on and the optional spoken-reply voice has been downloaded.
 class VoiceMic extends StatefulWidget {
   const VoiceMic({super.key, required this.onIntent, this.speakBack = true});
   final void Function(VoiceIntent intent) onIntent;
@@ -19,23 +19,14 @@ class _VoiceMicState extends State<VoiceMic> {
   String _label = 'Voice search';
   bool _working = false;
 
-  void _say(String s) {
-    if (mounted) setState(() => _label = s);
+  @override
+  void initState() {
+    super.initState();
+    VoiceModels.ensureBundled(); // copies the bundled model out of the APK now (first run only), so the first tap does not wait
   }
 
-  Future<bool> _confirmDownload() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Download voice?'),
-        content: const Text('Voice search and the spoken replies need a one-time download. It is stored on this device and can be deleted in Settings.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Not now')),
-          TextButton(autofocus: true, onPressed: () => Navigator.pop(c, true), child: const Text('Download')),
-        ],
-      ),
-    );
-    return ok == true;
+  void _say(String s) {
+    if (mounted) setState(() => _label = s);
   }
 
   Future<void> _tap() async {
@@ -45,11 +36,6 @@ class _VoiceMicState extends State<VoiceMic> {
     }
     setState(() => _working = true);
     try {
-      if (!await VoiceModels.ready()) {
-        if (!await _confirmDownload()) return;
-        _say('Downloading 0%');
-        await VoiceModels.download(onProgress: (p) => _say('Downloading ${(p * 100).round()}%'));
-      }
       _say('Listening\u2026');
       final heard = await Voice.instance.listen();
       if (heard.isEmpty) {
@@ -69,8 +55,6 @@ class _VoiceMicState extends State<VoiceMic> {
           VoiceKind.unknown => '',
         });
       }
-    } on VoiceDownloadException catch (e) {
-      _toast(e.message);
     } on VoiceException catch (e) {
       _toast(e.message);
     } catch (_) {

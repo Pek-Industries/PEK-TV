@@ -24,7 +24,7 @@ class VoiceIntent {
   String toString() => 'VoiceIntent($kind, "$text")';
 }
 
-/// Turns the words Whisper heard into an [VoiceIntent]. Pure: no I/O, easy to test.
+/// Turns the words the speech model heard into an [VoiceIntent]. Pure: no I/O, easy to test.
 VoiceIntent parseVoice(String heard) {
   var t = heard.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
   if (t.isEmpty) return const VoiceIntent(VoiceKind.unknown);
@@ -45,9 +45,9 @@ VoiceIntent parseVoice(String heard) {
   return VoiceIntent(VoiceKind.search, t); // anything else is treated as something to look for
 }
 
-/// Record -> Whisper tiny.en -> intent, and Piper -> speaker. Models come from [VoiceModels]; nothing is loaded until used.
+/// Record -> Moonshine tiny (bundled) -> intent, and Piper (optional download) -> speaker. Models come from [VoiceModels]; nothing is loaded until used.
 ///
-/// Whisper and Piper run in a short-lived isolate each call (Isolate.run), so the UI never stutters. The model files are
+/// Moonshine and Piper run in a short-lived isolate each call (Isolate.run), so the UI never stutters. The model files are
 /// read again every call (tiny is quick); keep one isolate alive instead if this turns out too slow on a weak box.
 class Voice {
   Voice._();
@@ -76,6 +76,7 @@ class Voice {
     _busy = true;
     try {
       if (!await micAllowed()) throw VoiceException('Allow the microphone to use voice search.');
+      if (!await VoiceModels.ensureBundled()) throw VoiceException('Voice search is not included in this build.');
       final stream = await _rec.startStream(const RecordConfig(encoder: AudioEncoder.pcm16bits, sampleRate: _rate, numChannels: 1));
       final pcm = BytesBuilder(copy: false);
       var spoke = false;
@@ -129,8 +130,10 @@ class Voice {
   }
 
   Future<String> _transcribe(Uint8List pcm16) async {
+    final pre = await VoiceModels.path(VoiceModels.sttPreprocess);
     final enc = await VoiceModels.path(VoiceModels.sttEncoder);
-    final dec = await VoiceModels.path(VoiceModels.sttDecoder);
+    final unc = await VoiceModels.path(VoiceModels.sttUncachedDecoder);
+    final cac = await VoiceModels.path(VoiceModels.sttCachedDecoder);
     final tok = await VoiceModels.path(VoiceModels.sttTokens);
     return Isolate.run(() {
       sherpa.initBindings();
@@ -141,9 +144,8 @@ class Voice {
       }
       final rec = sherpa.OfflineRecognizer(sherpa.OfflineRecognizerConfig(
         model: sherpa.OfflineModelConfig(
-          whisper: sherpa.OfflineWhisperModelConfig(encoder: enc, decoder: dec, language: 'en', task: 'transcribe'),
+          moonshine: sherpa.OfflineMoonshineModelConfig(preprocessor: pre, encoder: enc, uncachedDecoder: unc, cachedDecoder: cac),
           tokens: tok,
-          modelType: 'whisper',
           numThreads: 2,
           debug: false,
         ),
@@ -160,7 +162,7 @@ class Voice {
 
   /// Says [text] out loud with the Piper voice. Keep it to a sentence.
   Future<void> speak(String text) async {
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty || !await VoiceModels.ttsReady()) return; // spoken replies are optional: silent until the voice is downloaded
     final model = await VoiceModels.path(VoiceModels.ttsModel);
     final tokens = await VoiceModels.path(VoiceModels.ttsTokens);
     final data = await VoiceModels.path(VoiceModels.ttsEspeak);

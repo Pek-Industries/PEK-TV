@@ -140,6 +140,15 @@ tasks.matching { it.name ==~ /merge.*PythonSources/ }.configureEach {
 // Branding artwork (launcher icon, TV banner, splash videos) lives in the repo's top-level assets/ folder.
 android.sourceSets.main.res.srcDir new File(rootDir, '../assets/android/res')
 
+// Voice search: the speech-to-text model (Moonshine tiny int8) lives in the repo's top-level assets/bundled/voice/stt/ (shared by
+// all platforms, fetched by tools/fetch-voice-model.sh) and is added to the APK's assets/ as voice/stt/*.
+// .onnx stays uncompressed in the APK (it barely shrinks, and this makes install and the first-run copy faster).
+android.sourceSets.main.assets.srcDir new File(rootDir, '../assets/bundled')
+android.androidResources { noCompress 'onnx' }
+if (!new File(rootDir, '../assets/bundled/voice/stt/encode.int8.onnx').exists()) {
+    logger.warn('WARNING: voice model not bundled - run tools/fetch-voice-model.sh. Voice search will say the model is missing.')
+}
+
 // Flutter UI: only wired in when the module has been generated (see settings.gradle).
 def flutterOn = new File(rootDir, '../flutter_ui/.android/include_flutter.groovy').exists()
 if (flutterOn) {

@@ -46,3 +46,6 @@ keystore.b64
 
 # Built .PEK plugin packages
 dist/
+
+# speech-to-text model bundled in every build; fetched by tools/fetch-voice-model.sh (never commit the model files)
+assets/bundled/voice/

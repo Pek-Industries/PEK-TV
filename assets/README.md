@@ -9,6 +9,7 @@ assets/
 │   ├── drawable-nodpi/     launcher icon: ic_launcher_foreground.png, ic_launcher_bg_silk.png
 │   ├── drawable-xhdpi/     tv_banner.png (Android TV home screen)
 │   └── mipmap-anydpi-v26/  ic_launcher.xml, ic_launcher_round.xml (adaptive icon)
+├── bundled/voice/stt/      speech-to-text model shipped inside every build (NOT committed: tools/fetch-voice-model.sh fills it; Gradle adds assets/bundled as APK assets)
 ├── screenshots/            the images the main README shows
 └── favicon.png
 ```
