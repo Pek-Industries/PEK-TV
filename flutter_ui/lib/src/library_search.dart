@@ -277,8 +277,10 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
   /// A spoken request from the mic button: fill the box with the title and run the search.
   void _onVoice(VoiceIntent i) {
     if (i.kind != VoiceKind.play && i.kind != VoiceKind.search) return; // open / resume are handled by the shell
-    _q.text = i.text;
-    _onChanged(i.text);
+    // A show is searched by its title alone ("lioness season 2 episode 1" -> "lioness"); a movie may have "Episode 1" in its name.
+    final title = widget.tab == 'movies' ? i.full : i.text;
+    _q.text = title;
+    _onChanged(title);
     _submit();
   }
 
@@ -429,25 +431,32 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Focus(
-          focusNode: widget.nav.searchScope,
-          canRequestFocus: false,
-          skipTraversal: true,
-          child: SuggestAnchor(
-            controller: _q,
-            items: _items(),
-            onDownWithoutList: widget.nav.focusMore, // typing in the box: Down goes straight to "More filters"
-            field: PekField(
-              label: movies ? 'Search your movies' : 'Search your TV shows',
-              controller: _q,
-              hint: 'Title, actor, director, genre, studio or year',
-              onChanged: _onChanged,
-              onSubmitted: _submit,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end, // the mic lines up with the box, not with the label above it
+          children: [
+            Expanded(
+              child: Focus(
+                  focusNode: widget.nav.searchScope,
+                  canRequestFocus: false,
+                  skipTraversal: true,
+                  child: SuggestAnchor(
+                    controller: _q,
+                    items: _items(),
+                    onDownWithoutList: widget.nav.focusMore, // typing in the box: Down goes straight to "More filters"
+                    field: PekField(
+                      label: movies ? 'Search your movies' : 'Search your TV shows',
+                      controller: _q,
+                      hint: 'Title, actor, director, genre, studio or year',
+                      onChanged: _onChanged,
+                      onSubmitted: _submit,
+                    ),
+                  ),
+                ),
             ),
-          ),
+            SizedBox(width: 0.6 * rem),
+            VoiceMic(onIntent: _onVoice),
+          ],
         ),
-        SizedBox(height: 0.6 * rem),
-        VoiceMic(onIntent: _onVoice),
         SizedBox(height: 0.6 * rem),
         ListenableBuilder(listenable: widget.filters, builder: (context, _) => _moreFilters(context)),
         SizedBox(height: (p.isTv ? 1.25 : 1) * rem),

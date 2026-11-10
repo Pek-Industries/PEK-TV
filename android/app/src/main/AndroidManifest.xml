@@ -42,6 +42,8 @@
 
     <!-- Lets resolveActivity() see file pickers on Android 11+ -->
     <queries>
+        <!-- So voice search can see the phone's speech recognizer (Android 11+ hides other apps unless listed) -->
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
         <intent><action android:name="android.intent.action.GET_CONTENT" /><data android:mimeType="*/*" /></intent>
         <intent><action android:name="android.intent.action.OPEN_DOCUMENT" /><data android:mimeType="*/*" /></intent>
         <!-- Streaming apps the "Watch on ..." buttons can open (generated from tools/providers.json: node tools/sync_providers.js) -->

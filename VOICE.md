@@ -4,6 +4,13 @@
 on the first tap, offline, with no download. **Spoken replies are optional**: a Piper voice is downloaded from Cloudflare only if you
 offer it; until then the app answers silently (it still searches / opens).
 
+## Which recognizer runs
+
+1. **The phone's own recognizer** (the engine behind the Google keyboard's mic), through `SpeechRecognizer` in `FlutterHostActivity.setupSystemVoice`
+   and channel `pek/voice`. Best accuracy, live words, nothing to ship. Needs Google's speech service on the device (Google TV and most phones
+   have it; some TV boxes do not). Audio may go to Google unless the device has its offline language pack, so mention it in your privacy text.
+2. **The bundled Moonshine model** when 1 is missing or errors (for example offline without a language pack): lower accuracy, no live words.
+
 ## Bundled speech model
 
 Shared by all platforms. Fetched at build time (not committed) by `tools/fetch-voice-model.sh`, which the GitHub workflow runs and caches.

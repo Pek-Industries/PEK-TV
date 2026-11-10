@@ -362,6 +362,87 @@ class FlutterHostActivity : FlutterActivity() {
 
     private var pendingMic: MethodChannel.Result? = null
 
+    // ---- The phone's own speech recognizer (the engine behind the Google keyboard's mic) for voice search (voice.dart) ----
+    // Live partial words, no model to ship. Where the device has none (some TV boxes) or it errors, Dart falls back to the bundled model.
+    private var voiceChannel: MethodChannel? = null
+    private var sysRecognizer: android.speech.SpeechRecognizer? = null
+    private var sysReply: ((String?, String?) -> Unit)? = null
+
+    private fun setupSystemVoice(messenger: io.flutter.plugin.common.BinaryMessenger) {
+        val ch = MethodChannel(messenger, "pek/voice")
+        voiceChannel = ch
+        ch.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "available" -> result.success(android.speech.SpeechRecognizer.isRecognitionAvailable(this))
+                "start" -> startSystemListen(call.argument<List<String>>("bias") ?: emptyList(), result)
+                "stop" -> { runOnUiThread { try { sysRecognizer?.stopListening() } catch (_: Exception) {} }; result.success(null) }
+                "cancel" -> { runOnUiThread { sysReply?.invoke("", null); releaseSystemListen() }; result.success(null) }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun releaseSystemListen() {
+        sysReply = null
+        try { sysRecognizer?.cancel() } catch (_: Exception) {}
+        try { sysRecognizer?.destroy() } catch (_: Exception) {}
+        sysRecognizer = null
+    }
+
+    private fun startSystemListen(bias: List<String>, result: MethodChannel.Result) {
+        runOnUiThread {
+            releaseSystemListen()
+            if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) {
+                result.error("unavailable", "No speech recognizer on this device", null)
+                return@runOnUiThread
+            }
+            var replied = false
+            val reply: (String?, String?) -> Unit = { text, code ->
+                if (!replied) {
+                    replied = true
+                    if (code != null) result.error(code, "speech recognizer error $code", null) else result.success(text ?: "")
+                    android.os.Handler(mainLooper).post { releaseSystemListen() }
+                }
+            }
+            sysReply = reply
+            val r = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+            sysRecognizer = r
+            r.setRecognitionListener(object : android.speech.RecognitionListener {
+                override fun onReadyForSpeech(p: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rms: Float) {
+                    voiceChannel?.invokeMethod("level", ((rms + 2f) / 12f).coerceIn(0f, 1f).toDouble())
+                }
+                override fun onBufferReceived(b: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {
+                    // 6 = nothing said, 7 = nothing matched: a normal "did not hear". Anything else is an engine problem, so Dart uses the bundled model.
+                    if (error == 6 || error == 7) reply("", null) else reply(null, "sr_$error")
+                }
+                override fun onResults(b: Bundle?) {
+                    reply(b?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: "", null)
+                }
+                override fun onPartialResults(b: Bundle?) {
+                    val t = b?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
+                    if (t.isNotBlank()) voiceChannel?.invokeMethod("partial", t)
+                }
+                override fun onEvent(type: Int, p: Bundle?) {}
+            })
+            val i = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 700L)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 500L)
+            // Titles to expect (Android 13+): helps it hear "Oppenheimer" instead of "open her mer".
+            if (android.os.Build.VERSION.SDK_INT >= 33 && bias.isNotEmpty()) {
+                i.putStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(bias))
+            }
+            try { r.startListening(i) } catch (e: Exception) { reply(null, "start_failed") }
+        }
+    }
+
     /**
      * Copies the bundled speech model (the voice/stt folder in the APK assets, from the repo folder assets/bundled) into [out]/stt so sherpa-onnx can open it by path.
      * Skips the copy when [out]/stt-ready.json already names [version]. Returns false when the model is not in this build.
@@ -576,6 +657,7 @@ class FlutterHostActivity : FlutterActivity() {
                 }
             }
         }
+        setupSystemVoice(messenger)
         hostChannel = MethodChannel(messenger, "pek/host")
         MethodChannel(messenger, "pek/host").setMethodCallHandler { call, result ->
             when (call.method) {
@@ -783,6 +865,7 @@ class FlutterHostActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        releaseSystemListen()
         unregisterPipReceiver()
         pipChannel = null
         pluginPool.shutdown()

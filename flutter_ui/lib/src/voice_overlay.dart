@@ -108,7 +108,7 @@ class VoiceOverlay extends StatelessWidget {
                               ),
                             ),
                             SizedBox(height: 0.8 * rem),
-                            Text(listening ? 'OK to finish \u00B7 Back to cancel' : '', style: TextStyle(fontSize: 0.85 * rem, color: Colors.white38)),
+                            Text(listening ? 'Tap the mic to finish \u00B7 Back to cancel' : '', style: TextStyle(fontSize: 0.85 * rem, color: Colors.white38)),
                           ],
                         ),
                       ),

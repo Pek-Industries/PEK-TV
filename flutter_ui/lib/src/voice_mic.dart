@@ -2,17 +2,18 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'tokens.dart';
 import 'voice.dart';
 import 'voice_models.dart';
 import 'voice_overlay.dart';
-import 'widgets.dart' show PekButton;
+import 'widgets.dart' show PekFocusable;
 
-/// The mic button. Tap: the screen dims ([VoiceOverlay]), it listens, the words appear one by one, then it acts on them
+/// The mic: a round icon button that sits beside the search box (like YouTube). Tap: the screen dims ([VoiceOverlay]), it listens, the words appear one by one, then it acts on them
 /// through [onIntent]. The speech model is bundled, so there is no download and no wait. Says a short answer out loud when
 /// [speakBack] is on and the optional spoken-reply voice has been downloaded.
 ///
-/// The speech model (Moonshine) hears the whole sentence first, so the words are revealed smoothly right after you stop
-/// talking, not while you are still speaking. Live words need a streaming model: [VoiceUi.words] already takes them one at a time.
+/// Where the phone has its own speech recognizer (the one behind the Google keyboard's mic) the words appear live as you speak.
+/// Otherwise the bundled model (Moonshine) hears the whole sentence first, and the words are revealed right after you stop.
 ///
 /// [supports] lists what the screen can act on. Anything else it understood is reported instead of being dropped silently.
 class VoiceMic extends StatefulWidget {
@@ -21,10 +22,14 @@ class VoiceMic extends StatefulWidget {
     required this.onIntent,
     this.speakBack = true,
     this.supports = const {VoiceKind.play, VoiceKind.search},
+    this.bias = const [],
   });
   final void Function(VoiceIntent intent) onIntent;
   final bool speakBack;
   final Set<VoiceKind> supports;
+
+  /// Titles worth expecting (library names): the phone's recognizer hears them better. Optional.
+  final List<String> bias;
 
   @override
   State<VoiceMic> createState() => _VoiceMicState();
@@ -40,9 +45,12 @@ class _VoiceMicState extends State<VoiceMic> {
     VoiceModels.ensureBundled(); // copies the bundled model out of the APK now (first run only), so the first tap does not wait
   }
 
+  String _where(VoiceIntent i) =>
+      [if (i.season > 0) 'season ${i.season}', if (i.episode > 0) 'episode ${i.episode}'].join(' ');
+
   String _describe(VoiceIntent i) => switch (i.kind) {
-        VoiceKind.play => 'Searching for "${i.text}" \u2014 pick it to play',
-        VoiceKind.search => 'Searching for "${i.text}"',
+        VoiceKind.play => 'Searching for "${i.text}"${_where(i).isEmpty ? '' : ' (${_where(i)})'} \u2014 pick it to play',
+        VoiceKind.search => 'Searching for "${i.text}"${_where(i).isEmpty ? '' : ' (${_where(i)})'}',
         VoiceKind.open => 'Open ${i.text}',
         VoiceKind.resume => 'Resume watching',
         VoiceKind.unknown => '',
@@ -69,7 +77,16 @@ class _VoiceMicState extends State<VoiceMic> {
       }
     }));
     try {
-      final heard = await Voice.instance.listen(onLevel: (l) => ui.level.value = (l * 8).clamp(0.0, 1.0));
+      var live = false; // words already shown while speaking
+      final heard = await Voice.instance.listen(
+        bias: widget.bias,
+        onLevel: (l) => ui.level.value = l,
+        onPartial: (t) {
+          if (!_open || t.trim().isEmpty) return;
+          live = true;
+          ui.words.value = t.trim().split(RegExp(r'\s+'));
+        },
+      );
       if (!_open) return; // dismissed
       ui.level.value = 0;
       if (heard.isEmpty) {
@@ -81,10 +98,14 @@ class _VoiceMicState extends State<VoiceMic> {
       }
       ui.phase.value = VoicePhase.thinking;
       final ws = heard.trim().split(RegExp(r'\s+'));
-      for (var i = 1; i <= ws.length; i++) {
-        if (!_open) return;
-        ui.words.value = ws.sublist(0, i);
-        await Future<void>.delayed(const Duration(milliseconds: 110));
+      if (live) {
+        ui.words.value = ws; // the final wording, in place of the last live guess
+      } else {
+        for (var i = 1; i <= ws.length; i++) {
+          if (!_open) return;
+          ui.words.value = ws.sublist(0, i);
+          await Future<void>.delayed(const Duration(milliseconds: 110));
+        }
       }
       final intent = parseVoice(heard);
       ui.phase.value = VoicePhase.done;
@@ -125,5 +146,24 @@ class _VoiceMicState extends State<VoiceMic> {
   }
 
   @override
-  Widget build(BuildContext context) => PekButton(compact: true, primary: false, label: '\uD83C\uDFA4 Voice search', onTap: _tap);
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final t = p.tokens;
+    final size = 2.75 * p.rem; // the height of the search box next to it
+    return Semantics(
+      button: true,
+      label: 'Voice search',
+      child: PekFocusable(
+        onTap: _tap,
+        radius: 999,
+        background: t.surface,
+        borderColor: t.border,
+        focusScale: p.isTv ? 1.05 : 1.0,
+        minHeight: size,
+        alignment: Alignment.center,
+        padding: EdgeInsets.symmetric(horizontal: 0.7 * p.rem),
+        child: Icon(Icons.mic, color: t.text, size: 1.35 * p.rem),
+      ),
+    );
+  }
 }
