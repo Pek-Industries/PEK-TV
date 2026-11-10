@@ -59,6 +59,8 @@ class Voice {
   final AudioRecorder _rec = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   bool _busy = false;
+  bool _cancelled = false;
+  Completer<void>? _done;
   bool get busy => _busy;
 
   /// Asks Android for the microphone (the first time only shows the system box).
@@ -74,6 +76,7 @@ class Voice {
   Future<String> listen({int maxSeconds = 7, void Function(double level)? onLevel}) async {
     if (_busy) return '';
     _busy = true;
+    _cancelled = false;
     try {
       if (!await micAllowed()) throw VoiceException('Allow the microphone to use voice search.');
       if (!await VoiceModels.ensureBundled()) throw VoiceException('Voice search is not included in this build.');
@@ -83,6 +86,7 @@ class Voice {
       var quietMs = 0;
       var totalMs = 0;
       final done = Completer<void>();
+      _done = done;
       late StreamSubscription<Uint8List> sub;
       sub = stream.listen((chunk) {
         pcm.add(chunk);
@@ -99,19 +103,30 @@ class Voice {
         final noSpeech = !spoke && totalMs > 4000;
         final finished = spoke && quietMs > 900;
         if ((noSpeech || finished || totalMs > maxSeconds * 1000) && !done.isCompleted) done.complete();
+      }, onDone: () {
+        if (!done.isCompleted) done.complete();
       });
       await done.future;
       await sub.cancel();
       await _rec.stop();
-      if (!spoke) return '';
+      if (_cancelled || !spoke) return '';
       return await _transcribe(pcm.takeBytes());
     } finally {
+      _done = null;
       _busy = false;
     }
   }
 
-  /// Stops a listen() that is running.
+  /// Ends the listening now and still works out what was said (the person tapped OK / the orb).
+  void finish() {
+    final d = _done;
+    if (d != null && !d.isCompleted) d.complete();
+  }
+
+  /// Stops a listen() that is running and throws the recording away.
   Future<void> cancel() async {
+    _cancelled = true;
+    finish();
     try {
       await _rec.stop();
     } catch (_) {}
