@@ -12,6 +12,7 @@ import 'suggest.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
 import 'voice.dart' show VoiceIntent, VoiceKind;
+import 'voice_match.dart' show bestTitle;
 import 'voice_mic.dart';
 import 'widgets.dart';
 
@@ -274,9 +275,44 @@ class _LibrarySearchPanelState extends State<LibrarySearchPanel> {
     setState(() {});
   }
 
-  /// A spoken request from the mic button: fill the box with the title and run the search.
+  /// The show a spoken title means (the mic has already put it in the library's own spelling, a close match is taken otherwise).
+  Show? _showFor(String text) {
+    final direct = _shows[text.toLowerCase().trim()];
+    if (direct != null) return direct;
+    final m = bestTitle(text, [for (final s in _shows.values) s.title]);
+    if (m == null) return null;
+    return _shows.values.where((s) => s.title == m.title).firstOrNull;
+  }
+
+  /// "play severance season 1 episode 2": straight into that episode (from [VoiceIntent.secs] when "skip to 3 minutes in" was said too).
+  /// false = the show or the episode is not in the library (or no season was said and there are several): the caller searches instead.
+  bool _playEpisode(VoiceIntent i) {
+    _index();
+    final show = _showFor(i.text);
+    if (show == null) return false;
+    Season? season;
+    if (i.season > 0) {
+      season = show.seasons.where((s) => s.number == i.season).firstOrNull;
+    } else if (show.seasons.length == 1) {
+      season = show.seasons.first;
+    } else {
+      return false; // "episode 4 of severance" with several seasons: the show's page lets the person choose
+    }
+    final ep = season?.episodes.where((e) => e.episode == i.episode).firstOrNull;
+    if (ep == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('${show.title} season ${season?.number ?? i.season} episode ${i.episode} is not in your library')),
+      );
+      return false;
+    }
+    unawaited(playMedia(context, episodeItem(show, ep), startSec: i.secs));
+    return true;
+  }
+
+  /// A spoken request from the mic button: an episode starts playing; anything else fills the box with the title and runs the search.
   void _onVoice(VoiceIntent i) {
     if (i.kind != VoiceKind.play && i.kind != VoiceKind.search) return; // open / resume are handled by the shell
+    if (i.kind == VoiceKind.play && widget.tab != 'movies' && i.episode > 0 && _playEpisode(i)) return;
     // A show is searched by its title alone ("lioness season 2 episode 1" -> "lioness"); a movie may have "Episode 1" in its name.
     final title = widget.tab == 'movies' ? i.full : i.text;
     _q.text = title;

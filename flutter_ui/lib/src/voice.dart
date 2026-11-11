@@ -12,10 +12,12 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import 'voice_models.dart';
 
 /// What a spoken sentence asks for.
-enum VoiceKind { play, search, open, resume, unknown }
+/// play / search / open / resume: the library. seek / skip / pause: the player ("skip to 3 minutes in", "back 30 seconds").
+/// scene: "skip to where the guy gets slapped", which needs the online assistant.
+enum VoiceKind { play, search, open, resume, seek, skip, pause, scene, unknown }
 
 class VoiceIntent {
-  const VoiceIntent(this.kind, [this.text = '', this.season = 0, this.episode = 0, this._full]);
+  const VoiceIntent(this.kind, [this.text = '', this.season = 0, this.episode = 0, this._full, this.secs = 0, this.scene = '', this.guess = false]);
   final VoiceKind kind;
 
   /// The title for play / search, the place for open ('movies', 'shows', 'music', 'settings', 'home').
@@ -25,6 +27,20 @@ class VoiceIntent {
   /// The season / episode that was spoken, 0 = not said.
   final int season, episode;
   final String? _full;
+
+  /// seek: the time to jump to. skip: how far to jump (negative = back). play: where to start ("play it and skip to 3 minutes in").
+  final double secs;
+
+  /// A scene that was described ("where the guy gets slapped"). Finding it needs the online assistant.
+  final String scene;
+
+  /// The sentence had no command word and is only treated as something to search for. The online assistant gets these later.
+  final bool guess;
+
+  bool get needsOnline => kind == VoiceKind.scene || scene.isNotEmpty;
+
+  VoiceIntent copyWith({String? text, int? season, int? episode, String? full}) =>
+      VoiceIntent(kind, text ?? this.text, season ?? this.season, episode ?? this.episode, full ?? _full, secs, scene, guess);
 
   /// A play / search with no title yet ("play season 1 episode 2", or just "play"): the app should ask what it is about.
   bool get missingTitle => (kind == VoiceKind.play || kind == VoiceKind.search) && text.isEmpty;
@@ -44,9 +60,82 @@ const _numberWords = {
 const _numPat = r'(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)';
 int _numOf(String s) => int.tryParse(s) ?? _numberWords[s] ?? 0;
 
+const _tensWords = {'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90};
+// 0..999 as digits, or words up to ninety-nine. The longer words come first (sixteen before six).
+const _countPat = r'(?:\d{1,3}|(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?: (?:one|two|three|four|five|six|seven|eight|nine))?|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|zero|one|two|three|four|five|six|seven|eight|nine|ten)';
+const _unitPat = r'(hours?|hrs?|minutes?|mins?|seconds?|secs?)';
+
+int _countOf(String s) {
+  s = s.trim();
+  if (s == 'a' || s == 'an') return 1;
+  final n = int.tryParse(s);
+  if (n != null) return n;
+  final parts = s.split(' ');
+  if (parts.length == 2 && _tensWords.containsKey(parts[0])) return _tensWords[parts[0]]! + (_numberWords[parts[1]] ?? 0);
+  return _tensWords[s] ?? _numberWords[s] ?? 0;
+}
+
+double _unitSecs(String u) => u.startsWith('h') ? 3600.0 : (u.startsWith('m') ? 60.0 : 1.0);
+
+/// "3 minutes", "ninety seconds", "1 hour 20 minutes", "an hour and a half", "two and a half minutes" -> seconds. null = no time in it.
+double? parseDuration(String s) {
+  var t = ' ${s.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim()} ';
+  var total = 0.0;
+  var any = false;
+  t = t.replaceAllMapped(RegExp(' half an? $_unitPat(?= )'), (m) {
+    total += 0.5 * _unitSecs(m[1]!);
+    any = true;
+    return ' ';
+  });
+  t = t.replaceAllMapped(RegExp(' ((?:$_countPat|an?)) $_unitPat and a half(?= )'), (m) {
+    total += (_countOf(m[1]!) + 0.5) * _unitSecs(m[2]!);
+    any = true;
+    return ' ';
+  });
+  t = t.replaceAllMapped(RegExp(' ((?:$_countPat|an?))( and a half)? $_unitPat(?= )'), (m) {
+    total += (_countOf(m[1]!) + (m[2] != null ? 0.5 : 0.0)) * _unitSecs(m[3]!);
+    any = true;
+    return ' ';
+  });
+  return any ? total : null;
+}
+
+/// 185 -> "3:05", 3725 -> "1:02:05".
+String voiceTime(double secs) {
+  final s = secs.round();
+  final h = s ~/ 3600, m = (s % 3600) ~/ 60, x = s % 60;
+  final xx = x.toString().padLeft(2, '0');
+  return h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$xx' : '$m:$xx';
+}
+
+/// 30 -> "30 seconds", 90 -> "1 minute 30 seconds".
+String voiceSpan(double secs) {
+  final s = secs.abs().round();
+  if (s < 60) return '$s second${s == 1 ? '' : 's'}';
+  final m = s ~/ 60, r = s % 60;
+  final mm = '$m minute${m == 1 ? '' : 's'}';
+  return r == 0 ? mm : '$mm $r second${r == 1 ? '' : 's'}';
+}
+
+const _homophones = {'to': 2, 'too': 2, 'for': 4, 'fore': 4, 'won': 1, 'ate': 8};
+
+/// What speech models make of "season one" and "episode two": "see someone", "season won", "episode to".
+String _hearSeasons(String t) {
+  t = t.replaceAllMapped(
+    RegExp(r'\b(?:see someone|sea son one|sees one|seasons one|season won|seasoned one)\b(?=\s+(?:episode|ep)\b|\s*$)'),
+    (_) => 'season 1',
+  );
+  t = t.replaceAllMapped(
+    RegExp(r'\b(season|series|episode|ep) (to|too|for|fore|won|ate)\b(?=\s+(?:episode|ep|season|series|of|in|from)\b|\s*$)'),
+    (m) => '${m[1]} ${_homophones[m[2]]}',
+  );
+  return t;
+}
+
 /// "lioness episode 1 season 2" -> ('lioness', 2, 1). Also "season two", "s2 e1", "episode 3 of lioness".
 ({String title, int season, int episode}) splitSeasonEpisode(String t) {
   var season = 0, episode = 0;
+  t = _hearSeasons(t);
   t = t.replaceFirstMapped(RegExp(r'\bs(\d{1,2}) ?e(\d{1,3})\b'), (m) {
     season = int.parse(m.group(1)!);
     episode = int.parse(m.group(2)!);
@@ -62,7 +151,7 @@ int _numOf(String s) => int.tryParse(s) ?? _numberWords[s] ?? 0;
   });
   if (season == 0 && episode == 0) return (title: t, season: 0, episode: 0);
   t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
-  t = t.replaceFirst(RegExp(r'^(of|in|from|for) '), '').replaceFirst(RegExp(r' (of|in|from|for)$'), '').trim();
+  t = t.replaceFirst(RegExp(r'^(of|in|from|for) '), '').replaceFirst(RegExp(r' (of|in|from|for|and)$'), '').trim();
   return (title: t, season: season, episode: episode);
 }
 
@@ -83,12 +172,50 @@ VoiceIntent _titleIntent(VoiceKind kind, String raw) {
   return VoiceIntent(kind, s.title, s.season, s.episode, r);
 }
 
+const _polite = r'(?: for me)?(?: please)?';
+const _intoIt = r'(?: in| into it| into this| into the (?:movie|show|video|film|episode))?';
+
+/// Player commands: pause, "skip to 3 minutes in", "back 30 seconds", "start over", "skip to where he gets slapped".
+/// null = not one of them.
+VoiceIntent? _transport(String t) {
+  if (RegExp(r'^(pause|hold on|freeze)( it| the (movie|video|show|film|episode))?' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.pause);
+  if (RegExp(r'^(start over|restart|from the (beginning|start)|(skip|go|jump|take me|rewind) (back )?to the (beginning|start)|back to the (beginning|start))' + _polite + r'$').hasMatch(t)) {
+    return const VoiceIntent(VoiceKind.seek); // 0 s
+  }
+  final scene = RegExp(r'^(?:skip|go|jump|take me|seek|fast forward) to (?:the )?(?:(?:part|scene|bit|moment) )?((?:where|when|with) .+)$').firstMatch(t);
+  if (scene != null) return VoiceIntent(VoiceKind.scene, '', 0, 0, null, 0.0, scene.group(1)!);
+  final to = RegExp(r'^(?:skip|go|jump|seek|take me|move|fast forward|forward|play|start|resume|begin) (?:ahead |forward )?(?:to|at|from) (.+?)' + _intoIt + _polite + r'$').firstMatch(t);
+  if (to != null) {
+    final s = parseDuration(to.group(1)!);
+    if (s != null) return VoiceIntent(VoiceKind.seek, '', 0, 0, null, s);
+  }
+  if (RegExp(r'^(rewind|go back|back up|skip back|jump back)' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.skip, '', 0, 0, null, -10.0);
+  if (RegExp(r'^(forward|fast forward|skip ahead|skip forward)' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.skip, '', 0, 0, null, 10.0);
+  final back = RegExp(r'^(?:go |skip |jump |step |move )?(?:back|backwards?|rewind)(?: up)?(?: by)? (.+?)' + _polite + r'$').firstMatch(t);
+  if (back != null) {
+    final s = parseDuration(back.group(1)!);
+    if (s != null) return VoiceIntent(VoiceKind.skip, '', 0, 0, null, -s);
+  }
+  final fwd = RegExp(r'^(?:fast forward|skip ahead|skip forward|skip|forward|go forward|go ahead|jump ahead|jump forward|jump|move forward|move ahead)(?: by)? (.+?)' + _polite + r'$').firstMatch(t);
+  if (fwd != null) {
+    final s = parseDuration(fwd.group(1)!);
+    if (s != null) return VoiceIntent(VoiceKind.skip, '', 0, 0, null, s);
+  }
+  return null;
+}
+
 /// Turns the words the speech model heard into an [VoiceIntent]. Pure: no I/O, easy to test.
-VoiceIntent parseVoice(String heard) {
+/// [player]: the mic is in the player, where a bare "play" / "resume" means unpause (in the library a bare "play" asks what to watch).
+VoiceIntent parseVoice(String heard, {bool player = false}) {
   var t = heard.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
   if (t.isEmpty) return const VoiceIntent(VoiceKind.unknown);
   t = t.replaceFirst(RegExp(r'^(hey |ok |okay )?(pek|peck|pec|pet)( tv)?[, ]*'), '');
   t = t.replaceFirst(RegExp(r'^(please |can you |could you )+'), '').trim();
+  final move = _transport(t);
+  if (move != null) return move;
+  if (player && RegExp(r'^(play|resume|continue|unpause|keep going|go on)( it| playing| watching| the (movie|video|show|film|episode))?$').hasMatch(t)) {
+    return const VoiceIntent(VoiceKind.resume);
+  }
   if (RegExp(r'^(resume|continue)( watching| playing| where i left off)?$').hasMatch(t)) return const VoiceIntent(VoiceKind.resume);
   final open = RegExp(r'^(open|go to|show me|show) (the )?(my )?(movies|shows|tv shows|music|settings|home|favorites|favourites)$').firstMatch(t);
   if (open != null) {
@@ -102,11 +229,30 @@ VoiceIntent parseVoice(String heard) {
     final w = bare.group(1)!;
     return VoiceIntent(w == 'play' || w == 'watch' || w == 'start' || w == 'put on' ? VoiceKind.play : VoiceKind.search); // no title: the app asks for one
   }
+
+  // "play severance season 1 episode 2 and skip to 3 minutes in" / "... and skip to where the guy gets slapped":
+  // what follows the request is cut off first, so the title is left alone.
+  var secs = 0.0;
+  var scene = '';
+  final sc = RegExp(r'\s(?:and |then )?(?:skip|go|jump|take me|seek|fast forward) to (?:the )?(?:(?:part|scene|bit|moment) )?((?:where|when|with) .+)$').firstMatch(t);
+  if (sc != null) {
+    scene = sc.group(1)!;
+    t = t.substring(0, sc.start).trim();
+  } else {
+    final tm = RegExp(r'\s(?:and |then )?(?:skip|go|jump|seek|start|begin) (?:ahead |forward )?(?:to|at|from) (.+?)' + _intoIt + _polite + r'$').firstMatch(t);
+    final d = tm == null ? null : parseDuration(tm.group(1)!);
+    if (d != null) {
+      secs = d;
+      t = t.substring(0, tm!.start).trim();
+    }
+  }
+  VoiceIntent tail(VoiceIntent i, {bool guess = false}) => VoiceIntent(i.kind, i.text, i.season, i.episode, i._full, secs, scene, guess);
+
   final play = RegExp(r'^(play|watch|start|put on) (the movie |the show |the film |some )?(.+)$').firstMatch(t);
-  if (play != null) return _titleIntent(VoiceKind.play, play.group(3)!);
+  if (play != null) return tail(_titleIntent(VoiceKind.play, play.group(3)!));
   final find = RegExp(r'^(search for|search|find|look for|look up) (the )?(.+)$').firstMatch(t);
-  if (find != null) return _titleIntent(VoiceKind.search, find.group(3)!);
-  return _titleIntent(VoiceKind.search, t); // anything else is treated as something to look for
+  if (find != null) return tail(_titleIntent(VoiceKind.search, find.group(3)!));
+  return tail(_titleIntent(VoiceKind.search, t), guess: true); // anything else is treated as something to look for
 }
 
 /// Record -> Moonshine tiny (bundled) -> intent, and Piper (optional download) -> speaker. Models come from [VoiceModels]; nothing is loaded until used.
@@ -134,6 +280,16 @@ class Voice {
   Completer<void>? _done;
   bool _sysActive = false;
   bool get busy => _busy;
+
+  /// Is there a connection right now? A quick look-up; the online assistant is only tried when this is true.
+  static Future<bool> online() async {
+    try {
+      final r = await InternetAddress.lookup('one.one.one.one').timeout(const Duration(seconds: 2));
+      return r.isNotEmpty && r.first.rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Asks Android for the microphone (the first time only shows the system box).
   Future<bool> micAllowed() async {

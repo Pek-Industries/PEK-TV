@@ -24,6 +24,10 @@ class VoiceMic extends StatefulWidget {
     this.supports = const {VoiceKind.play, VoiceKind.search},
     this.bias = const [],
     this.titles,
+    this.inPlayer = false,
+    this.button,
+    this.onStart,
+    this.onEnd,
   });
   final void Function(VoiceIntent intent) onIntent;
   final bool speakBack;
@@ -35,6 +39,15 @@ class VoiceMic extends StatefulWidget {
   /// The titles in the library tab this mic belongs to (read when the mic is tapped). What was heard is matched against them
   /// ("the beer" -> "The Bear"), and they are given to the phone's recognizer as words to expect.
   final List<String> Function()? titles;
+
+  /// The mic sits in the player: a bare "play" / "resume" means unpause there.
+  final bool inPlayer;
+
+  /// Draws the button instead of the round one; it gets the function to call when pressed (the player uses its own button style).
+  final Widget Function(VoidCallback onTap)? button;
+
+  /// Listening has started / the whole thing is over (the player pauses the film meanwhile, so the mic does not hear it).
+  final VoidCallback? onStart, onEnd;
 
   @override
   State<VoiceMic> createState() => _VoiceMicState();
@@ -54,14 +67,23 @@ class _VoiceMicState extends State<VoiceMic> {
 
   String _describe(VoiceIntent i) {
     final w = _where(i).isEmpty ? '' : ' (${_where(i)})';
+    final from = i.secs > 0 ? ' from ${voiceTime(i.secs)}' : '';
     return switch (i.kind) {
-      VoiceKind.play => 'Searching for "${i.text}"$w \u2014 pick it to play',
+      VoiceKind.play => i.episode > 0 ? 'Playing "${i.text}"$w$from' : 'Searching for "${i.text}"$w \u2014 pick it to play',
       VoiceKind.search => 'Searching for "${i.text}"$w',
       VoiceKind.open => 'Open ${i.text}',
-      VoiceKind.resume => 'Resume watching',
+      VoiceKind.resume => widget.inPlayer ? 'Playing' : 'Resume watching',
+      VoiceKind.seek => 'Skipping to ${voiceTime(i.secs)}',
+      VoiceKind.skip => '${i.secs < 0 ? 'Back' : 'Forward'} ${voiceSpan(i.secs)}',
+      VoiceKind.pause => 'Paused',
+      VoiceKind.scene => 'Finding the scene ${i.scene}',
       VoiceKind.unknown => '',
     };
   }
+
+  /// What to say when a scene was asked for: finding it needs the online assistant. (When that is built, only the online
+  /// branch changes.)
+  Future<String> _sceneNote() async => await Voice.online() ? "Finding a scene isn't available yet" : 'Finding a scene needs an internet connection';
 
   String _question(VoiceIntent i) {
     if (i.season > 0 || i.episode > 0) return 'What series are you referring to?';
@@ -78,7 +100,7 @@ class _VoiceMicState extends State<VoiceMic> {
     final b = i.full != i.text ? bestTitle(i.full, lib) : null; // a movie called "Star Wars Episode 1" is matched as said
     final m = (b != null && (a == null || b.score > a.score)) ? b : a;
     if (m == null) return i;
-    return VoiceIntent(i.kind, m.title, i.season, i.episode, m.title);
+    return i.copyWith(text: m.title, full: m.title);
   }
 
   List<String> _bias() {
@@ -130,6 +152,7 @@ class _VoiceMicState extends State<VoiceMic> {
     final ui = VoiceUi();
     final nav = Navigator.of(context, rootNavigator: true);
     _open = true;
+    widget.onStart?.call();
     // The overlay is dismissed with Back or a tap outside: that cancels the recording.
     unawaited(showGeneralDialog<void>(
       context: context,
@@ -147,7 +170,7 @@ class _VoiceMicState extends State<VoiceMic> {
     try {
       final heard = await _hear(ui);
       if (heard == null) return;
-      var intent = parseVoice(heard);
+      var intent = parseVoice(heard, player: widget.inPlayer);
 
       // Something is missing ("play season 1 episode 2"): ask, listen again, put the two together.
       if (intent.missingTitle) {
@@ -168,20 +191,32 @@ class _VoiceMicState extends State<VoiceMic> {
           await Future<void>.delayed(const Duration(milliseconds: 1800));
           return;
         }
-        intent = VoiceIntent(intent.kind, a.title, intent.season > 0 ? intent.season : a.season, intent.episode > 0 ? intent.episode : a.episode, answer);
+        intent = intent.copyWith(text: a.title, season: intent.season > 0 ? intent.season : a.season, episode: intent.episode > 0 ? intent.episode : a.episode, full: answer);
         ui.prompt.value = '';
       }
 
       intent = _fit(intent); // "the beer" -> "The Bear"
       ui.phase.value = VoicePhase.done;
+      // A scene ("skip to where the guy gets slapped") needs the online assistant: say so instead of guessing.
+      String? sceneNote;
+      if (intent.needsOnline) sceneNote = await _sceneNote();
+      if (!_open) return;
+      if (intent.kind == VoiceKind.scene) {
+        ui.status.value = sceneNote ?? '';
+        await Future<void>.delayed(const Duration(milliseconds: 2200));
+        return;
+      }
       if (!widget.supports.contains(intent.kind)) {
         ui.status.value = "I understood that, but I can't ${intent.kind == VoiceKind.open ? 'open pages' : 'do that'} from here yet";
         await Future<void>.delayed(const Duration(milliseconds: 1800));
         return;
       }
-      ui.status.value = _describe(intent);
-      await Future<void>.delayed(const Duration(milliseconds: 700)); // let the words be read before the screen changes
+      ui.status.value = _describe(intent) + (sceneNote == null ? '' : ' \u2014 ${sceneNote.toLowerCase()}');
+      await Future<void>.delayed(Duration(milliseconds: sceneNote == null ? 700 : 2000)); // let the words be read before the screen changes
       if (!_open) return;
+      // Close the overlay first: the action may open a screen of its own (the player), and the pop below must not take that one.
+      _open = false;
+      if (nav.mounted) nav.pop();
       widget.onIntent(intent);
       if (widget.speakBack && intent.kind != VoiceKind.unknown) {
         final w = _where(intent).isEmpty ? '' : ', ${_where(intent)}';
@@ -190,7 +225,7 @@ class _VoiceMicState extends State<VoiceMic> {
           VoiceKind.search => 'Searching for ${intent.text}$w.',
           VoiceKind.open => 'Opening ${intent.text}.',
           VoiceKind.resume => 'Resuming.',
-          VoiceKind.unknown => '',
+          VoiceKind.seek || VoiceKind.skip || VoiceKind.pause || VoiceKind.scene || VoiceKind.unknown => '',
         }));
       }
     } on VoiceException catch (e) {
@@ -204,6 +239,7 @@ class _VoiceMicState extends State<VoiceMic> {
       }
       _working = false;
       ui.dispose();
+      widget.onEnd?.call();
     }
   }
 
@@ -213,6 +249,8 @@ class _VoiceMicState extends State<VoiceMic> {
 
   @override
   Widget build(BuildContext context) {
+    final custom = widget.button;
+    if (custom != null) return custom(_tap);
     final p = context.pek;
     final t = p.tokens;
     final size = 2.75 * p.rem; // the height of the search box next to it

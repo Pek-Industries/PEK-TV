@@ -21,6 +21,8 @@ import 'subtitles.dart';
 import 'theme.dart';
 import 'tokens.dart';
 import 'torrent.dart';
+import 'voice.dart' show VoiceIntent, VoiceKind, voiceSpan;
+import 'voice_mic.dart';
 
 /// Full-screen player. The picture is a native libmpv surface behind Flutter, so this screen is transparent and only
 /// draws the controls.
@@ -411,6 +413,64 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _seekReset = Timer(const Duration(milliseconds: 1500), () => _seekBase = null);
     _player.seek(t);
   }
+
+  // ---------------------------------------------------------------- voice
+
+  bool _micPaused = false; // the film was playing when the mic opened (it is paused so the mic does not hear it)
+  bool _micKeepPaused = false; // the spoken command was "pause": do not start it again when the mic closes
+
+  void _onMicStart() {
+    _micKeepPaused = false;
+    _micPaused = _player.playing.value;
+    if (_micPaused) _player.pause();
+    _poke();
+  }
+
+  void _onMicEnd() {
+    if (_micPaused && !_micKeepPaused && mounted) _player.play();
+    _micPaused = false;
+  }
+
+  /// "skip to 3 minutes in", "back 30 seconds", "pause", "resume". A scene ("where he gets slapped") is answered by the mic itself.
+  void _onVoice(VoiceIntent i) {
+    switch (i.kind) {
+      case VoiceKind.seek:
+        var t = i.secs;
+        final d = _player.duration.value;
+        if (d > 0 && t > d - 1) t = d - 1;
+        if (t < 0) t = 0;
+        _seekBase = t;
+        _seekReset?.cancel();
+        _seekReset = Timer(const Duration(milliseconds: 1500), () => _seekBase = null);
+        _player.seek(t);
+        _toast('Skipped to ${_fmt(t)}');
+      case VoiceKind.skip:
+        _seekBy(i.secs);
+        _toast('${i.secs < 0 ? 'Back' : 'Forward'} ${voiceSpan(i.secs)}');
+      case VoiceKind.pause:
+        _micKeepPaused = true;
+        _toast('Paused');
+      case VoiceKind.resume:
+        _micKeepPaused = false;
+        if (!_micPaused) _player.play(); // it was paused before the mic opened; otherwise _onMicEnd starts it
+      default:
+        break;
+    }
+    _poke();
+  }
+
+  Widget _mic() => VoiceMic(
+        inPlayer: true,
+        speakBack: false,
+        supports: const {VoiceKind.seek, VoiceKind.skip, VoiceKind.pause, VoiceKind.resume, VoiceKind.scene},
+        onIntent: _onVoice,
+        onStart: _onMicStart,
+        onEnd: _onMicEnd,
+        button: (tap) => _glassBtn(Icons.mic, () {
+          tap();
+          _poke();
+        }),
+      );
 
   // The root listens for the remote when no button has the focus; _playNode is the play / pause button, where Down from the
   // video lands. Left / Right / Up / Down then move between the buttons and OK presses the one that is lit.
@@ -984,6 +1044,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         if (_live && (_tv?.available ?? false)) ...[
                           _glassBtn(Icons.view_list, _openGuide),
+                          const SizedBox(width: 12),
+                        ],
+                        if (!_live) ...[
+                          _mic(),
                           const SizedBox(width: 12),
                         ],
                         _glassBtn(Icons.subtitles_outlined, _tracks),
