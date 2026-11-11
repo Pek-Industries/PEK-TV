@@ -1,0 +1,712 @@
+diff -ruN a/flutter_ui/lib/src/library_search.dart b/flutter_ui/lib/src/library_search.dart
+--- a/flutter_ui/lib/src/library_search.dart	2026-11-11 16:36:32.752059210 +0000
++++ b/flutter_ui/lib/src/library_search.dart	2026-11-11 16:36:32.747115775 +0000
+@@ -12,6 +12,7 @@
+ import 'tokens.dart';
+ import 'tv_nav.dart';
+ import 'voice.dart' show VoiceIntent, VoiceKind;
++import 'voice_match.dart' show bestTitle;
+ import 'voice_mic.dart';
+ import 'widgets.dart';
+ 
+@@ -274,9 +275,44 @@
+     setState(() {});
+   }
+ 
+-  /// A spoken request from the mic button: fill the box with the title and run the search.
++  /// The show a spoken title means (the mic has already put it in the library's own spelling, a close match is taken otherwise).
++  Show? _showFor(String text) {
++    final direct = _shows[text.toLowerCase().trim()];
++    if (direct != null) return direct;
++    final m = bestTitle(text, [for (final s in _shows.values) s.title]);
++    if (m == null) return null;
++    return _shows.values.where((s) => s.title == m.title).firstOrNull;
++  }
++
++  /// "play severance season 1 episode 2": straight into that episode (from [VoiceIntent.secs] when "skip to 3 minutes in" was said too).
++  /// false = the show or the episode is not in the library (or no season was said and there are several): the caller searches instead.
++  bool _playEpisode(VoiceIntent i) {
++    _index();
++    final show = _showFor(i.text);
++    if (show == null) return false;
++    Season? season;
++    if (i.season > 0) {
++      season = show.seasons.where((s) => s.number == i.season).firstOrNull;
++    } else if (show.seasons.length == 1) {
++      season = show.seasons.first;
++    } else {
++      return false; // "episode 4 of severance" with several seasons: the show's page lets the person choose
++    }
++    final ep = season?.episodes.where((e) => e.episode == i.episode).firstOrNull;
++    if (ep == null) {
++      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
++        SnackBar(content: Text('${show.title} season ${season?.number ?? i.season} episode ${i.episode} is not in your library')),
++      );
++      return false;
++    }
++    unawaited(playMedia(context, episodeItem(show, ep), startSec: i.secs));
++    return true;
++  }
++
++  /// A spoken request from the mic button: an episode starts playing; anything else fills the box with the title and runs the search.
+   void _onVoice(VoiceIntent i) {
+     if (i.kind != VoiceKind.play && i.kind != VoiceKind.search) return; // open / resume are handled by the shell
++    if (i.kind == VoiceKind.play && widget.tab != 'movies' && i.episode > 0 && _playEpisode(i)) return;
+     // A show is searched by its title alone ("lioness season 2 episode 1" -> "lioness"); a movie may have "Episode 1" in its name.
+     final title = widget.tab == 'movies' ? i.full : i.text;
+     _q.text = title;
+diff -ruN a/flutter_ui/lib/src/player.dart b/flutter_ui/lib/src/player.dart
+--- a/flutter_ui/lib/src/player.dart	2026-11-11 16:36:32.750697946 +0000
++++ b/flutter_ui/lib/src/player.dart	2026-11-11 16:36:32.747133420 +0000
+@@ -21,6 +21,8 @@
+ import 'theme.dart';
+ import 'tokens.dart';
+ import 'torrent.dart';
++import 'voice.dart' show VoiceIntent, VoiceKind, voiceSpan;
++import 'voice_mic.dart';
+ 
+ /// Full-screen player. The picture is a native libmpv surface behind Flutter, so this screen is transparent and only
+ /// draws the controls.
+@@ -412,6 +414,69 @@
+     _player.seek(t);
+   }
+ 
++  // ---------------------------------------------------------------- voice
++
++  bool _micPaused = false; // the film was playing when the mic opened (it is paused so the mic does not hear it)
++  bool _micKeepPaused = false; // the spoken command was "pause": do not start it again when the mic closes
++
++  void _onMicStart() {
++    _micKeepPaused = false;
++    _micPaused = _player.playing.value;
++    if (_micPaused) _player.pause();
++    _poke();
++  }
++
++  void _onMicEnd() {
++    if (_micPaused && !_micKeepPaused && mounted) _player.play();
++    _micPaused = false;
++  }
++
++  /// "skip to 3 minutes in", "back 30 seconds", "pause", "resume". A scene ("where he gets slapped") is answered by the mic itself.
++  void _onVoice(VoiceIntent i) {
++    switch (i.kind) {
++      case VoiceKind.seek:
++        var t = i.secs;
++        final d = _player.duration.value;
++        if (d > 0 && t > d - 1) t = d - 1;
++        if (t < 0) t = 0;
++        _seekBase = t;
++        _seekReset?.cancel();
++        _seekReset = Timer(const Duration(milliseconds: 1500), () => _seekBase = null);
++        _player.seek(t);
++        _toast('Skipped to ${_fmt(t)}');
++      case VoiceKind.skip:
++        _seekBy(i.secs);
++        _toast('${i.secs < 0 ? 'Back' : 'Forward'} ${voiceSpan(i.secs)}');
++      case VoiceKind.skipSpan:
++        final what = i.text; // 'intro' | 'recap' | '' = whatever the Skip button offers now
++        final spanDone = what.isEmpty ? _skip.cur != null : _skip.skipKind(what);
++        if (what.isEmpty && spanDone) _skip.skip();
++        _toast(spanDone ? 'Skipped' : (what.isEmpty ? 'Nothing to skip right now' : 'No $what found for this episode'));
++      case VoiceKind.pause:
++        _micKeepPaused = true;
++        _toast('Paused');
++      case VoiceKind.resume:
++        _micKeepPaused = false;
++        if (!_micPaused) _player.play(); // it was paused before the mic opened; otherwise _onMicEnd starts it
++      default:
++        break;
++    }
++    _poke();
++  }
++
++  Widget _mic() => VoiceMic(
++        inPlayer: true,
++        speakBack: false,
++        supports: const {VoiceKind.seek, VoiceKind.skip, VoiceKind.skipSpan, VoiceKind.pause, VoiceKind.resume, VoiceKind.scene},
++        onIntent: _onVoice,
++        onStart: _onMicStart,
++        onEnd: _onMicEnd,
++        button: (tap) => _glassBtn(Icons.mic, () {
++          tap();
++          _poke();
++        }),
++      );
++
+   // The root listens for the remote when no button has the focus; _playNode is the play / pause button, where Down from the
+   // video lands. Left / Right / Up / Down then move between the buttons and OK presses the one that is lit.
+   final FocusNode _rootNode = FocusNode(debugLabel: 'player');
+@@ -986,6 +1051,10 @@
+                           _glassBtn(Icons.view_list, _openGuide),
+                           const SizedBox(width: 12),
+                         ],
++                        if (!_live) ...[
++                          _mic(),
++                          const SizedBox(width: 12),
++                        ],
+                         _glassBtn(Icons.subtitles_outlined, _tracks),
+                       ]),
+                     ),
+diff -ruN a/flutter_ui/lib/src/skip.dart b/flutter_ui/lib/src/skip.dart
+--- a/flutter_ui/lib/src/skip.dart	2026-11-11 16:36:32.753109188 +0000
++++ b/flutter_ui/lib/src/skip.dart	2026-11-11 16:36:32.747169267 +0000
+@@ -209,4 +209,18 @@
+     _autoDone.add(c.id);
+     player.seek(c.end);
+   }
++
++  /// By voice: "skip the intro" / "skip the recap". Jumps to the end of that span when it is playing now or still ahead, so it
++  /// works before the Skip button has appeared too. false = there is none (nothing known for this episode, or it is over).
++  bool skipKind(String kind) {
++    final pos = player.position.value;
++    for (final s in [...spans, ...remote]) {
++      if (s.kind == kind && pos < s.end - _endMargin) {
++        _autoDone.add(s.id);
++        player.seek(s.end);
++        return true;
++      }
++    }
++    return false;
++  }
+ }
+diff -ruN a/flutter_ui/lib/src/voice.dart b/flutter_ui/lib/src/voice.dart
+--- a/flutter_ui/lib/src/voice.dart	2026-11-11 16:36:32.748513428 +0000
++++ b/flutter_ui/lib/src/voice.dart	2026-11-11 16:36:32.747053174 +0000
+@@ -12,10 +12,13 @@
+ import 'voice_models.dart';
+ 
+ /// What a spoken sentence asks for.
+-enum VoiceKind { play, search, open, resume, unknown }
++/// play / search / open / resume: the library. seek / skip / pause: the player ("skip to 3 minutes in", "back 30 seconds").
++/// skipSpan: "skip the intro" / "skip the recap" (text 'intro' | 'recap'), or a bare "skip" for whatever the Skip button offers.
++/// scene: "skip to where the guy gets slapped", which needs the online assistant.
++enum VoiceKind { play, search, open, resume, seek, skip, skipSpan, pause, scene, unknown }
+ 
+ class VoiceIntent {
+-  const VoiceIntent(this.kind, [this.text = '', this.season = 0, this.episode = 0, this._full]);
++  const VoiceIntent(this.kind, [this.text = '', this.season = 0, this.episode = 0, this._full, this.secs = 0, this.scene = '', this.guess = false]);
+   final VoiceKind kind;
+ 
+   /// The title for play / search, the place for open ('movies', 'shows', 'music', 'settings', 'home').
+@@ -26,6 +29,20 @@
+   final int season, episode;
+   final String? _full;
+ 
++  /// seek: the time to jump to. skip: how far to jump (negative = back). play: where to start ("play it and skip to 3 minutes in").
++  final double secs;
++
++  /// A scene that was described ("where the guy gets slapped"). Finding it needs the online assistant.
++  final String scene;
++
++  /// The sentence had no command word and is only treated as something to search for. The online assistant gets these later.
++  final bool guess;
++
++  bool get needsOnline => kind == VoiceKind.scene || scene.isNotEmpty;
++
++  VoiceIntent copyWith({String? text, int? season, int? episode, String? full}) =>
++      VoiceIntent(kind, text ?? this.text, season ?? this.season, episode ?? this.episode, full ?? _full, secs, scene, guess);
++
+   /// A play / search with no title yet ("play season 1 episode 2", or just "play"): the app should ask what it is about.
+   bool get missingTitle => (kind == VoiceKind.play || kind == VoiceKind.search) && text.isEmpty;
+ 
+@@ -44,9 +61,82 @@
+ const _numPat = r'(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)';
+ int _numOf(String s) => int.tryParse(s) ?? _numberWords[s] ?? 0;
+ 
++const _tensWords = {'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90};
++// 0..999 as digits, or words up to ninety-nine. The longer words come first (sixteen before six).
++const _countPat = r'(?:\d{1,3}|(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?: (?:one|two|three|four|five|six|seven|eight|nine))?|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|zero|one|two|three|four|five|six|seven|eight|nine|ten)';
++const _unitPat = r'(hours?|hrs?|minutes?|mins?|seconds?|secs?)';
++
++int _countOf(String s) {
++  s = s.trim();
++  if (s == 'a' || s == 'an') return 1;
++  final n = int.tryParse(s);
++  if (n != null) return n;
++  final parts = s.split(' ');
++  if (parts.length == 2 && _tensWords.containsKey(parts[0])) return _tensWords[parts[0]]! + (_numberWords[parts[1]] ?? 0);
++  return _tensWords[s] ?? _numberWords[s] ?? 0;
++}
++
++double _unitSecs(String u) => u.startsWith('h') ? 3600.0 : (u.startsWith('m') ? 60.0 : 1.0);
++
++/// "3 minutes", "ninety seconds", "1 hour 20 minutes", "an hour and a half", "two and a half minutes" -> seconds. null = no time in it.
++double? parseDuration(String s) {
++  var t = ' ${s.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim()} ';
++  var total = 0.0;
++  var any = false;
++  t = t.replaceAllMapped(RegExp(' half an? $_unitPat(?= )'), (m) {
++    total += 0.5 * _unitSecs(m[1]!);
++    any = true;
++    return ' ';
++  });
++  t = t.replaceAllMapped(RegExp(' ((?:$_countPat|an?)) $_unitPat and a half(?= )'), (m) {
++    total += (_countOf(m[1]!) + 0.5) * _unitSecs(m[2]!);
++    any = true;
++    return ' ';
++  });
++  t = t.replaceAllMapped(RegExp(' ((?:$_countPat|an?))( and a half)? $_unitPat(?= )'), (m) {
++    total += (_countOf(m[1]!) + (m[2] != null ? 0.5 : 0.0)) * _unitSecs(m[3]!);
++    any = true;
++    return ' ';
++  });
++  return any ? total : null;
++}
++
++/// 185 -> "3:05", 3725 -> "1:02:05".
++String voiceTime(double secs) {
++  final s = secs.round();
++  final h = s ~/ 3600, m = (s % 3600) ~/ 60, x = s % 60;
++  final xx = x.toString().padLeft(2, '0');
++  return h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$xx' : '$m:$xx';
++}
++
++/// 30 -> "30 seconds", 90 -> "1 minute 30 seconds".
++String voiceSpan(double secs) {
++  final s = secs.abs().round();
++  if (s < 60) return '$s second${s == 1 ? '' : 's'}';
++  final m = s ~/ 60, r = s % 60;
++  final mm = '$m minute${m == 1 ? '' : 's'}';
++  return r == 0 ? mm : '$mm $r second${r == 1 ? '' : 's'}';
++}
++
++const _homophones = {'to': 2, 'too': 2, 'for': 4, 'fore': 4, 'won': 1, 'ate': 8};
++
++/// What speech models make of "season one" and "episode two": "see someone", "season won", "episode to".
++String _hearSeasons(String t) {
++  t = t.replaceAllMapped(
++    RegExp(r'\b(?:see someone|sea son one|sees one|seasons one|season won|seasoned one)\b(?=\s+(?:episode|ep)\b|\s*$)'),
++    (_) => 'season 1',
++  );
++  t = t.replaceAllMapped(
++    RegExp(r'\b(season|series|episode|ep) (to|too|for|fore|won|ate)\b(?=\s+(?:episode|ep|season|series|of|in|from)\b|\s*$)'),
++    (m) => '${m[1]} ${_homophones[m[2]]}',
++  );
++  return t;
++}
++
+ /// "lioness episode 1 season 2" -> ('lioness', 2, 1). Also "season two", "s2 e1", "episode 3 of lioness".
+ ({String title, int season, int episode}) splitSeasonEpisode(String t) {
+   var season = 0, episode = 0;
++  t = _hearSeasons(t);
+   t = t.replaceFirstMapped(RegExp(r'\bs(\d{1,2}) ?e(\d{1,3})\b'), (m) {
+     season = int.parse(m.group(1)!);
+     episode = int.parse(m.group(2)!);
+@@ -62,7 +152,7 @@
+   });
+   if (season == 0 && episode == 0) return (title: t, season: 0, episode: 0);
+   t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+-  t = t.replaceFirst(RegExp(r'^(of|in|from|for) '), '').replaceFirst(RegExp(r' (of|in|from|for)$'), '').trim();
++  t = t.replaceFirst(RegExp(r'^(of|in|from|for) '), '').replaceFirst(RegExp(r' (of|in|from|for|and)$'), '').trim();
+   return (title: t, season: season, episode: episode);
+ }
+ 
+@@ -83,12 +173,54 @@
+   return VoiceIntent(kind, s.title, s.season, s.episode, r);
+ }
+ 
++const _polite = r'(?: for me)?(?: please)?';
++const _intoIt = r'(?: in| into it| into this| into the (?:movie|show|video|film|episode))?';
++
++/// Player commands: pause, "skip to 3 minutes in", "back 30 seconds", "start over", "skip to where he gets slapped".
++/// null = not one of them.
++VoiceIntent? _transport(String t) {
++  if (RegExp(r'^(pause|hold on|freeze)( it| the (movie|video|show|film|episode))?' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.pause);
++  // "skip the intro" / "skip recap" / "skip the opening credits"; a bare "skip" is whatever the Skip button offers right now.
++  if (RegExp(r'^skip( it| this| that)?' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.skipSpan);
++  final span = RegExp(r'^(?:skip|skip past|pass|go past|jump past|get past) (?:the |this |that |my )?(intro|into|in tro|opening|opening credits|opening titles|opening sequence|title sequence|titles|main titles|theme|theme song|recap|previously on|previously|story so far)' + _polite + r'$').firstMatch(t);
++  if (span != null) return VoiceIntent(VoiceKind.skipSpan, RegExp(r'recap|previous|story').hasMatch(span.group(1)!) ? 'recap' : 'intro');
++  if (RegExp(r'^(start over|restart|from the (beginning|start)|(skip|go|jump|take me|rewind) (back )?to the (beginning|start)|back to the (beginning|start))' + _polite + r'$').hasMatch(t)) {
++    return const VoiceIntent(VoiceKind.seek); // 0 s
++  }
++  final scene = RegExp(r'^(?:skip|go|jump|take me|seek|fast forward) to (?:the )?(?:(?:part|scene|bit|moment) )?((?:where|when|with) .+)$').firstMatch(t);
++  if (scene != null) return VoiceIntent(VoiceKind.scene, '', 0, 0, null, 0.0, scene.group(1)!);
++  final to = RegExp(r'^(?:skip|go|jump|seek|take me|move|fast forward|forward|play|start|resume|begin) (?:ahead |forward )?(?:to|at|from) (.+?)' + _intoIt + _polite + r'$').firstMatch(t);
++  if (to != null) {
++    final s = parseDuration(to.group(1)!);
++    if (s != null) return VoiceIntent(VoiceKind.seek, '', 0, 0, null, s);
++  }
++  if (RegExp(r'^(rewind|go back|back up|skip back|jump back)' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.skip, '', 0, 0, null, -10.0);
++  if (RegExp(r'^(forward|fast forward|skip ahead|skip forward)' + _polite + r'$').hasMatch(t)) return const VoiceIntent(VoiceKind.skip, '', 0, 0, null, 10.0);
++  final back = RegExp(r'^(?:go |skip |jump |step |move )?(?:back|backwards?|rewind)(?: up)?(?: by)? (.+?)' + _polite + r'$').firstMatch(t);
++  if (back != null) {
++    final s = parseDuration(back.group(1)!);
++    if (s != null) return VoiceIntent(VoiceKind.skip, '', 0, 0, null, -s);
++  }
++  final fwd = RegExp(r'^(?:fast forward|skip ahead|skip forward|skip|forward|go forward|go ahead|jump ahead|jump forward|jump|move forward|move ahead)(?: by)? (.+?)' + _polite + r'$').firstMatch(t);
++  if (fwd != null) {
++    final s = parseDuration(fwd.group(1)!);
++    if (s != null) return VoiceIntent(VoiceKind.skip, '', 0, 0, null, s);
++  }
++  return null;
++}
++
+ /// Turns the words the speech model heard into an [VoiceIntent]. Pure: no I/O, easy to test.
+-VoiceIntent parseVoice(String heard) {
++/// [player]: the mic is in the player, where a bare "play" / "resume" means unpause (in the library a bare "play" asks what to watch).
++VoiceIntent parseVoice(String heard, {bool player = false}) {
+   var t = heard.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+   if (t.isEmpty) return const VoiceIntent(VoiceKind.unknown);
+   t = t.replaceFirst(RegExp(r'^(hey |ok |okay )?(pek|peck|pec|pet)( tv)?[, ]*'), '');
+   t = t.replaceFirst(RegExp(r'^(please |can you |could you )+'), '').trim();
++  final move = _transport(t);
++  if (move != null) return move;
++  if (player && RegExp(r'^(play|resume|continue|unpause|keep going|go on)( it| playing| watching| the (movie|video|show|film|episode))?$').hasMatch(t)) {
++    return const VoiceIntent(VoiceKind.resume);
++  }
+   if (RegExp(r'^(resume|continue)( watching| playing| where i left off)?$').hasMatch(t)) return const VoiceIntent(VoiceKind.resume);
+   final open = RegExp(r'^(open|go to|show me|show) (the )?(my )?(movies|shows|tv shows|music|settings|home|favorites|favourites)$').firstMatch(t);
+   if (open != null) {
+@@ -102,11 +234,30 @@
+     final w = bare.group(1)!;
+     return VoiceIntent(w == 'play' || w == 'watch' || w == 'start' || w == 'put on' ? VoiceKind.play : VoiceKind.search); // no title: the app asks for one
+   }
++
++  // "play severance season 1 episode 2 and skip to 3 minutes in" / "... and skip to where the guy gets slapped":
++  // what follows the request is cut off first, so the title is left alone.
++  var secs = 0.0;
++  var scene = '';
++  final sc = RegExp(r'\s(?:and |then )?(?:skip|go|jump|take me|seek|fast forward) to (?:the )?(?:(?:part|scene|bit|moment) )?((?:where|when|with) .+)$').firstMatch(t);
++  if (sc != null) {
++    scene = sc.group(1)!;
++    t = t.substring(0, sc.start).trim();
++  } else {
++    final tm = RegExp(r'\s(?:and |then )?(?:skip|go|jump|seek|start|begin) (?:ahead |forward )?(?:to|at|from) (.+?)' + _intoIt + _polite + r'$').firstMatch(t);
++    final d = tm == null ? null : parseDuration(tm.group(1)!);
++    if (d != null) {
++      secs = d;
++      t = t.substring(0, tm!.start).trim();
++    }
++  }
++  VoiceIntent tail(VoiceIntent i, {bool guess = false}) => VoiceIntent(i.kind, i.text, i.season, i.episode, i._full, secs, scene, guess);
++
+   final play = RegExp(r'^(play|watch|start|put on) (the movie |the show |the film |some )?(.+)$').firstMatch(t);
+-  if (play != null) return _titleIntent(VoiceKind.play, play.group(3)!);
++  if (play != null) return tail(_titleIntent(VoiceKind.play, play.group(3)!));
+   final find = RegExp(r'^(search for|search|find|look for|look up) (the )?(.+)$').firstMatch(t);
+-  if (find != null) return _titleIntent(VoiceKind.search, find.group(3)!);
+-  return _titleIntent(VoiceKind.search, t); // anything else is treated as something to look for
++  if (find != null) return tail(_titleIntent(VoiceKind.search, find.group(3)!));
++  return tail(_titleIntent(VoiceKind.search, t), guess: true); // anything else is treated as something to look for
+ }
+ 
+ /// Record -> Moonshine tiny (bundled) -> intent, and Piper (optional download) -> speaker. Models come from [VoiceModels]; nothing is loaded until used.
+@@ -135,6 +286,16 @@
+   bool _sysActive = false;
+   bool get busy => _busy;
+ 
++  /// Is there a connection right now? A quick look-up; the online assistant is only tried when this is true.
++  static Future<bool> online() async {
++    try {
++      final r = await InternetAddress.lookup('one.one.one.one').timeout(const Duration(seconds: 2));
++      return r.isNotEmpty && r.first.rawAddress.isNotEmpty;
++    } catch (_) {
++      return false;
++    }
++  }
++
+   /// Asks Android for the microphone (the first time only shows the system box).
+   Future<bool> micAllowed() async {
+     try {
+diff -ruN a/flutter_ui/lib/src/voice_mic.dart b/flutter_ui/lib/src/voice_mic.dart
+--- a/flutter_ui/lib/src/voice_mic.dart	2026-11-11 16:36:32.749732006 +0000
++++ b/flutter_ui/lib/src/voice_mic.dart	2026-11-11 16:36:32.747101602 +0000
+@@ -24,6 +24,10 @@
+     this.supports = const {VoiceKind.play, VoiceKind.search},
+     this.bias = const [],
+     this.titles,
++    this.inPlayer = false,
++    this.button,
++    this.onStart,
++    this.onEnd,
+   });
+   final void Function(VoiceIntent intent) onIntent;
+   final bool speakBack;
+@@ -36,6 +40,15 @@
+   /// ("the beer" -> "The Bear"), and they are given to the phone's recognizer as words to expect.
+   final List<String> Function()? titles;
+ 
++  /// The mic sits in the player: a bare "play" / "resume" means unpause there.
++  final bool inPlayer;
++
++  /// Draws the button instead of the round one; it gets the function to call when pressed (the player uses its own button style).
++  final Widget Function(VoidCallback onTap)? button;
++
++  /// Listening has started / the whole thing is over (the player pauses the film meanwhile, so the mic does not hear it).
++  final VoidCallback? onStart, onEnd;
++
+   @override
+   State<VoiceMic> createState() => _VoiceMicState();
+ }
+@@ -54,15 +67,25 @@
+ 
+   String _describe(VoiceIntent i) {
+     final w = _where(i).isEmpty ? '' : ' (${_where(i)})';
++    final from = i.secs > 0 ? ' from ${voiceTime(i.secs)}' : '';
+     return switch (i.kind) {
+-      VoiceKind.play => 'Searching for "${i.text}"$w \u2014 pick it to play',
++      VoiceKind.play => i.episode > 0 ? 'Playing "${i.text}"$w$from' : 'Searching for "${i.text}"$w \u2014 pick it to play',
+       VoiceKind.search => 'Searching for "${i.text}"$w',
+       VoiceKind.open => 'Open ${i.text}',
+-      VoiceKind.resume => 'Resume watching',
++      VoiceKind.resume => widget.inPlayer ? 'Playing' : 'Resume watching',
++      VoiceKind.seek => 'Skipping to ${voiceTime(i.secs)}',
++      VoiceKind.skip => '${i.secs < 0 ? 'Back' : 'Forward'} ${voiceSpan(i.secs)}',
++      VoiceKind.skipSpan => i.text == 'recap' ? 'Skipping the recap' : (i.text == 'intro' ? 'Skipping the intro' : 'Skipping'),
++      VoiceKind.pause => 'Paused',
++      VoiceKind.scene => 'Finding the scene ${i.scene}',
+       VoiceKind.unknown => '',
+     };
+   }
+ 
++  /// What to say when a scene was asked for: finding it needs the online assistant. (When that is built, only the online
++  /// branch changes.)
++  Future<String> _sceneNote() async => await Voice.online() ? "Finding a scene isn't available yet" : 'Finding a scene needs an internet connection';
++
+   String _question(VoiceIntent i) {
+     if (i.season > 0 || i.episode > 0) return 'What series are you referring to?';
+     return i.kind == VoiceKind.play ? 'What would you like to watch?' : 'What should I search for?';
+@@ -71,14 +94,14 @@
+   /// The library's own spelling of a title that was heard a little wrong; the intent is returned unchanged when nothing fits well.
+   VoiceIntent _fit(VoiceIntent i) {
+     final get = widget.titles;
+-    if (get == null || i.text.isEmpty) return i;
++    if (get == null || i.text.isEmpty || (i.kind != VoiceKind.play && i.kind != VoiceKind.search)) return i;
+     final lib = get();
+     if (lib.isEmpty) return i;
+     final a = bestTitle(i.text, lib);
+     final b = i.full != i.text ? bestTitle(i.full, lib) : null; // a movie called "Star Wars Episode 1" is matched as said
+     final m = (b != null && (a == null || b.score > a.score)) ? b : a;
+     if (m == null) return i;
+-    return VoiceIntent(i.kind, m.title, i.season, i.episode, m.title);
++    return i.copyWith(text: m.title, full: m.title);
+   }
+ 
+   List<String> _bias() {
+@@ -130,6 +153,7 @@
+     final ui = VoiceUi();
+     final nav = Navigator.of(context, rootNavigator: true);
+     _open = true;
++    widget.onStart?.call();
+     // The overlay is dismissed with Back or a tap outside: that cancels the recording.
+     unawaited(showGeneralDialog<void>(
+       context: context,
+@@ -147,7 +171,7 @@
+     try {
+       final heard = await _hear(ui);
+       if (heard == null) return;
+-      var intent = parseVoice(heard);
++      var intent = parseVoice(heard, player: widget.inPlayer);
+ 
+       // Something is missing ("play season 1 episode 2"): ask, listen again, put the two together.
+       if (intent.missingTitle) {
+@@ -168,20 +192,32 @@
+           await Future<void>.delayed(const Duration(milliseconds: 1800));
+           return;
+         }
+-        intent = VoiceIntent(intent.kind, a.title, intent.season > 0 ? intent.season : a.season, intent.episode > 0 ? intent.episode : a.episode, answer);
++        intent = intent.copyWith(text: a.title, season: intent.season > 0 ? intent.season : a.season, episode: intent.episode > 0 ? intent.episode : a.episode, full: answer);
+         ui.prompt.value = '';
+       }
+ 
+       intent = _fit(intent); // "the beer" -> "The Bear"
+       ui.phase.value = VoicePhase.done;
++      // A scene ("skip to where the guy gets slapped") needs the online assistant: say so instead of guessing.
++      String? sceneNote;
++      if (intent.needsOnline) sceneNote = await _sceneNote();
++      if (!_open) return;
++      if (intent.kind == VoiceKind.scene) {
++        ui.status.value = sceneNote ?? '';
++        await Future<void>.delayed(const Duration(milliseconds: 2200));
++        return;
++      }
+       if (!widget.supports.contains(intent.kind)) {
+         ui.status.value = "I understood that, but I can't ${intent.kind == VoiceKind.open ? 'open pages' : 'do that'} from here yet";
+         await Future<void>.delayed(const Duration(milliseconds: 1800));
+         return;
+       }
+-      ui.status.value = _describe(intent);
+-      await Future<void>.delayed(const Duration(milliseconds: 700)); // let the words be read before the screen changes
++      ui.status.value = _describe(intent) + (sceneNote == null ? '' : ' \u2014 ${sceneNote.toLowerCase()}');
++      await Future<void>.delayed(Duration(milliseconds: sceneNote == null ? 700 : 2000)); // let the words be read before the screen changes
+       if (!_open) return;
++      // Close the overlay first: the action may open a screen of its own (the player), and the pop below must not take that one.
++      _open = false;
++      if (nav.mounted) nav.pop();
+       widget.onIntent(intent);
+       if (widget.speakBack && intent.kind != VoiceKind.unknown) {
+         final w = _where(intent).isEmpty ? '' : ', ${_where(intent)}';
+@@ -190,7 +226,7 @@
+           VoiceKind.search => 'Searching for ${intent.text}$w.',
+           VoiceKind.open => 'Opening ${intent.text}.',
+           VoiceKind.resume => 'Resuming.',
+-          VoiceKind.unknown => '',
++          VoiceKind.seek || VoiceKind.skip || VoiceKind.skipSpan || VoiceKind.pause || VoiceKind.scene || VoiceKind.unknown => '',
+         }));
+       }
+     } on VoiceException catch (e) {
+@@ -204,6 +240,7 @@
+       }
+       _working = false;
+       ui.dispose();
++      widget.onEnd?.call();
+     }
+   }
+ 
+@@ -213,6 +250,8 @@
+ 
+   @override
+   Widget build(BuildContext context) {
++    final custom = widget.button;
++    if (custom != null) return custom(_tap);
+     final p = context.pek;
+     final t = p.tokens;
+     final size = 2.75 * p.rem; // the height of the search box next to it
+diff -ruN a/flutter_ui/test/voice_intent_test.dart b/flutter_ui/test/voice_intent_test.dart
+--- a/flutter_ui/test/voice_intent_test.dart	2026-11-11 16:36:32.754507444 +0000
++++ b/flutter_ui/test/voice_intent_test.dart	2026-11-11 16:36:32.747190904 +0000
+@@ -62,4 +62,143 @@
+     expect(titleFromAnswer('The series is Severance.'), 'severance');
+     expect(titleFromAnswer('the bear'), 'the bear');
+   });
++
++  group('season / episode as the speech model hears them', () {
++    test('"see someone" is season one', () {
++      final i = parseVoice('play severance and see someone episode 2');
++      expect(i.kind, VoiceKind.play);
++      expect(i.text, 'severance');
++      expect(i.season, 1);
++      expect(i.episode, 2);
++    });
++    test('homophones after season / episode', () {
++      final i = parseVoice('play severance season to episode for');
++      expect(i.season, 2);
++      expect(i.episode, 4);
++    });
++    test('a title that merely contains "for" is left alone', () {
++      final i = parseVoice('play bridge for terabithia');
++      expect(i.text, 'bridge for terabithia');
++      expect(i.season, 0);
++    });
++  });
++
++  group('durations', () {
++    test('digits and words', () {
++      expect(parseDuration('3 minutes'), 180);
++      expect(parseDuration('three minutes'), 180);
++      expect(parseDuration('ninety seconds'), 90);
++      expect(parseDuration('twenty one minutes'), 1260);
++    });
++    test('combined', () {
++      expect(parseDuration('1 hour 20 minutes'), 4800);
++      expect(parseDuration('3 minutes 30 seconds'), 210);
++      expect(parseDuration('an hour and a half'), 5400);
++      expect(parseDuration('two and a half minutes'), 150);
++      expect(parseDuration('half an hour'), 1800);
++    });
++    test('no time in it', () {
++      expect(parseDuration('the future'), isNull);
++      expect(parseDuration(''), isNull);
++    });
++    test('shown back to the person', () {
++      expect(voiceTime(185), '3:05');
++      expect(voiceTime(3725), '1:02:05');
++      expect(voiceSpan(30), '30 seconds');
++      expect(voiceSpan(90), '1 minute 30 seconds');
++    });
++  });
++
++  group('player commands', () {
++    test('skip to a time', () {
++      final i = parseVoice('skip to 3 minutes in for me');
++      expect(i.kind, VoiceKind.seek);
++      expect(i.secs, 180);
++      expect(parseVoice('can you jump to an hour and a half').secs, 5400);
++    });
++    test('relative', () {
++      expect(parseVoice('go back 30 seconds').secs, -30);
++      expect(parseVoice('go back 30 seconds').kind, VoiceKind.skip);
++      expect(parseVoice('skip ahead 1 minute').secs, 60);
++      expect(parseVoice('skip 45 seconds').secs, 45);
++      expect(parseVoice('rewind').secs, -10);
++    });
++    test('start over, pause', () {
++      expect(parseVoice('start over').kind, VoiceKind.seek);
++      expect(parseVoice('start over').secs, 0);
++      expect(parseVoice('pause it please').kind, VoiceKind.pause);
++    });
++    test('a title that starts like a command is still a title', () {
++      expect(parseVoice('back to the future').kind, VoiceKind.search);
++      expect(parseVoice('back to the future').text, 'back to the future');
++      expect(parseVoice('go to the movies').kind, VoiceKind.open);
++    });
++    test('bare play: asks in the library, unpauses in the player', () {
++      expect(parseVoice('play').missingTitle, isTrue);
++      expect(parseVoice('play', player: true).kind, VoiceKind.resume);
++      expect(parseVoice('resume', player: true).kind, VoiceKind.resume);
++    });
++  });
++
++  group('scenes need the online assistant', () {
++    test('on their own', () {
++      final i = parseVoice('skip to where the guy gets slapped');
++      expect(i.kind, VoiceKind.scene);
++      expect(i.scene, 'where the guy gets slapped');
++      expect(i.needsOnline, isTrue);
++    });
++    test('"the part where"', () {
++      expect(parseVoice('skip to the part where he says hello').scene, 'where he says hello');
++    });
++    test('after a play request: the episode still plays', () {
++      final i = parseVoice('play severance and see someone episode 2 and skip to where the guy get slapped');
++      expect(i.kind, VoiceKind.play);
++      expect(i.text, 'severance');
++      expect(i.season, 1);
++      expect(i.episode, 2);
++      expect(i.scene, 'where the guy get slapped');
++      expect(i.needsOnline, isTrue);
++    });
++  });
++
++  group('play and start at a time', () {
++    test('words', () {
++      final i = parseVoice('Play Severance season one episode two and skip to 3 minutes in');
++      expect(i.kind, VoiceKind.play);
++      expect(i.text, 'severance');
++      expect(i.season, 1);
++      expect(i.episode, 2);
++      expect(i.secs, 180);
++      expect(i.scene, '');
++    });
++  });
++
++  group('guess flag', () {
++    test('no command word: a guess', () {
++      expect(parseVoice('tom hanks').guess, isTrue);
++      expect(parseVoice('play the matrix').guess, isFalse);
++      expect(parseVoice('find alien').guess, isFalse);
++    });
++  });
++
++  group('skip intro / recap', () {
++    test('named', () {
++      final a = parseVoice('skip the intro');
++      expect(a.kind, VoiceKind.skipSpan);
++      expect(a.text, 'intro');
++      expect(parseVoice('Skip intro please').text, 'intro');
++      expect(parseVoice('skip the opening credits').text, 'intro');
++      expect(parseVoice('skip the recap').text, 'recap');
++      expect(parseVoice('skip previously on').text, 'recap');
++    });
++    test('a bare "skip" is whatever the Skip button offers', () {
++      final i = parseVoice('skip');
++      expect(i.kind, VoiceKind.skipSpan);
++      expect(i.text, '');
++    });
++    test('skipping time is still skipping time', () {
++      expect(parseVoice('skip ahead 1 minute').kind, VoiceKind.skip);
++      expect(parseVoice('skip to 3 minutes in').kind, VoiceKind.seek);
++    });
++  });
+ }

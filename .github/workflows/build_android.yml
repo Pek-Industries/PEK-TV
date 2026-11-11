@@ -120,6 +120,13 @@ jobs:
           if [ -f "$Z" ]; then
             unzip -o -q "$Z" -d android/app/libs
           fi
+          # An .aar that was zipped twice (a libmpv-release.aar inside the libmpv-release.aar) has no jni/ folder at the top
+          # level; unwrap it so Gradle gets the real library.
+          if [ -f android/app/libs/libmpv-release.aar ] && unzip -l android/app/libs/libmpv-release.aar | grep -q ' libmpv-release.aar$'; then
+            echo "libmpv-release.aar is double-zipped: unwrapping"
+            mkdir -p /tmp/mpvinner && unzip -o -q android/app/libs/libmpv-release.aar -d /tmp/mpvinner
+            cp /tmp/mpvinner/libmpv-release.aar android/app/libs/libmpv-release.aar
+          fi
           if [ -f android/app/libs/libmpv-release.aar ]; then
             unzip -l android/app/libs/libmpv-release.aar | grep -q 'jni/arm64-v8a/libmpv.so' || { echo "::error::libmpv-release.aar has no libmpv.so"; exit 1; }
             echo "Using the bundled libmpv-release.aar"
