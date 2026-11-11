@@ -51,9 +51,9 @@ class Cloud {
   static const _kPlanOk = 'pek_plan_ok';
   static const _kPlanUntil = 'pek_plan_until';
   static const _kSince = 'pek_plan_since'; // when the current paid plan started (ms), 0 = not known
-  static const _kLapse = 'pek_lapse'; // 'none' | 'grace' | 'deletion' (a plan that was not renewed)
+  static const _kLapse = 'pek_lapse'; // 'none' | 'grace' | 'ended' (a plan that was not renewed)
   static const _kLapseGrace = 'pek_lapse_grace'; // the moment the grace period ends (ms)
-  static const _kLapseDelete = 'pek_lapse_delete'; // the moment the account and its data are deleted (ms)
+  static const _kLapseDelete = 'pek_lapse_delete'; // always 0 now: nothing is deleted when a plan lapses (kept for clouds from before that rule)
   static const _kGone = 'pek_account_gone'; // '1' once the cloud said the account was deleted (until the person has been told)
 
   /// The website where PEK Cloud is bought (never inside the app).
@@ -97,12 +97,14 @@ class Cloud {
   static bool get renews => plan == 'monthly' || plan == 'yearly';
   /// When the current paid plan started (ms since 1970), 0 when it is not known (free accounts, included accounts, or an older subscription the cloud has no date for yet).
   static int get planSince => int.tryParse(Store.strGet(_kSince, scoped: false) ?? '') ?? 0;
-  /// A plan that was not renewed: 'grace' (still on, pay now), 'deletion' (backup is off, the account and its data will be deleted at [deleteAt]) or 'none'.
+  /// A plan that was not renewed: 'grace' (still on, pay now), 'ended' (backup is off and only the main profile can be used; nothing is deleted and
+  /// buying a plan again turns everything back on) or 'none'.
   static String get lapseState => linked ? (Store.strGet(_kLapse, scoped: false) ?? 'none') : 'none';
   static int get graceEnds => int.tryParse(Store.strGet(_kLapseGrace, scoped: false) ?? '') ?? 0;
+  /// Always 0 now (nothing is deleted when a plan lapses); only a cloud from before that rule sends a date.
   static int get deleteAt => int.tryParse(Store.strGet(_kLapseDelete, scoped: false) ?? '') ?? 0;
 
-  /// True from the moment the cloud told this device that its account was deleted (a lapsed plan was not renewed in time) until the person has been told.
+  /// True from the moment the cloud told this device that its account was deleted (on another device or the website) until the person has been told.
   static bool get goneNoticePending => Store.strGet(_kGone, scoped: false) == '1';
   static Future<void> clearGoneNotice() => Store.strDel(_kGone, scoped: false);
 
@@ -129,11 +131,14 @@ class Cloud {
   static Future<void> _savePlan(Map<String, dynamic> b) async {
     final p = b['plan'];
     if (p is! String || p.isEmpty) return; // an older cloud service that has no plans yet
+    final wasEntitled = entitled;
     final ok = b['entitled'] == true ? '1' : '0';
     final until = '${(b['until'] as num?)?.toInt() ?? 0}';
     final since = '${(b['since'] as num?)?.toInt() ?? 0}';
     final lapse = b['lapse'] is Map ? Map<String, dynamic>.from(b['lapse'] as Map) : const <String, dynamic>{};
-    final state = lapse['state'] is String && const ['grace', 'deletion'].contains(lapse['state']) ? lapse['state'] as String : 'none';
+    final rawState = lapse['state'];
+    // 'deletion' is what a cloud from before the "nothing is deleted" rules calls an ended plan.
+    final state = rawState == 'ended' || rawState == 'deletion' ? 'ended' : rawState == 'grace' ? 'grace' : 'none';
     final grace = '${(lapse['graceEnds'] as num?)?.toInt() ?? 0}';
     final del = '${(lapse['deleteAt'] as num?)?.toInt() ?? 0}';
     final changed = plan != p || Store.strGet(_kPlanOk, scoped: false) != ok || Store.strGet(_kPlanUntil, scoped: false) != until ||
@@ -145,7 +150,13 @@ class Cloud {
     await Store.strSet(_kLapse, state, scoped: false);
     await Store.strSet(_kLapseGrace, grace, scoped: false);
     await Store.strSet(_kLapseDelete, del, scoped: false);
-    if (changed) changes.value++;
+    if (changed) {
+      changes.value++;
+      Profiles.enforceLock(); // PEK Cloud off: back to the main profile
+      Profiles.changes.value++; // the picker locks / unlocks the other profiles
+      // A plan was bought again: send what this device collected while backup was off, so backup continues for everything.
+      if (!wasEntitled && ok == '1') unawaited(sync());
+    }
   }
 
   /// Asks the cloud which plan this account has (at most once a minute unless [force]). Returns whether cloud backup is unlocked.
@@ -169,7 +180,7 @@ class Cloud {
         }
         await _savePlan(r.body);
       } else if (r.status == 410 && r.body['error'] == 'account_deleted') {
-        await _gone(); // the account was deleted (a lapsed plan was not renewed in time)
+        await _gone(); // the account was deleted (on another device or the website)
       } else if (r.status == 404) {
         await _savePlan({'plan': 'grandfathered', 'entitled': true, 'until': 0}); // a cloud service from before plans: nothing is locked
       }

@@ -7,10 +7,11 @@ import 'tokens.dart';
 
 /// Keeps the lapsed-plan state fresh and shows the one-time "your account was deleted" box.
 ///
-/// The warning itself is the [LapseBanner] at the top of the shell: it stays there for as long as the plan is lapsed (grace or deletion
-/// period) and goes away by itself once a plan is bought. It lives inside the shell, so it is never over a movie, an episode, the music
-/// player or a plugin screen. After the deletion date the cloud has deleted the account; the next time this device asks, it is told once
-/// (a box, not the banner) and signed out.
+/// The warning itself is the [LapseBanner] at the top of the shell: it stays there for as long as the plan is lapsed (grace, then ended) and
+/// goes away by itself once a plan is bought. It lives inside the shell, so it is never over a movie, an episode, the music player or a
+/// plugin screen. A lapsed plan never deletes anything: after the grace, cloud backup is off and only the main profile can be used; buying a
+/// plan again unlocks the other profiles and backup continues for everything. The box below is only for an account that was deleted (on
+/// another device or the website): the next time this device asks, it is told once and signed out.
 class LapseNotice {
   LapseNotice._();
 
@@ -43,8 +44,7 @@ class LapseNotice {
       builder: (c) => AlertDialog(
         title: const Text('Your PEK Cloud account was deleted'),
         content: const Text(
-          'Your plan was not renewed in time, so your PEK Cloud account and all the data stored in it were permanently deleted. This cannot be undone and the data cannot be recovered. '
-          'You have been signed out here. You can create a new account on the website at any time.',
+          'This PEK Cloud account was deleted, so you have been signed out here. You can create a new account on the website at any time.',
         ),
         actions: [TextButton(autofocus: true, onPressed: () => Navigator.pop(c), child: const Text('OK'))],
       ),
@@ -52,9 +52,9 @@ class LapseNotice {
   }
 }
 
-/// The banner across the top of the app while a PEK Cloud plan is lapsed: amber while the renewal is overdue (grace), red once the
-/// account is scheduled for deletion. One button opens the upgrade dialog; the X hides it until the app is started again (or the
-/// state gets worse, grace -> deletion).
+/// The banner across the top of the app while a PEK Cloud plan is lapsed: amber while the renewal is overdue (grace), red once the plan has
+/// ended (backup off, main profile only, nothing deleted). One button opens the upgrade dialog; the X hides it until the app is started
+/// again (or the state gets worse, grace -> ended).
 class LapseBanner {
   LapseBanner._();
 
@@ -95,9 +95,9 @@ class LapseBanner {
     final top = p.sidebar ? p.safeY : MediaQuery.paddingOf(context).top;
     final title = grace ? 'Payment overdue' : 'Your PEK Cloud plan has ended';
     final body = grace
-        ? 'PEK Cloud stays on until ${_date(Cloud.graceEnds)} (${_left(Cloud.graceEnds)} left). Pay now to keep your cloud backup.'
-        : 'Your account and data will be deleted on ${_date(Cloud.deleteAt)} (${_left(Cloud.deleteAt)} left) unless you subscribe again.';
-    final why = grace ? 'Pay to keep your cloud backup on.' : 'Subscribe again to keep your account and data.';
+        ? 'PEK Cloud stays on until ${_date(Cloud.graceEnds)} (${_left(Cloud.graceEnds)} left). Pay now to keep your cloud backup and all your profiles.'
+        : 'Cloud backup is off and only your main profile is available. Your data is kept: subscribe again and your other profiles unlock and backup continues for everything.';
+    final why = grace ? 'Pay to keep your cloud backup on.' : 'Subscribe again to unlock your other profiles and turn cloud backup back on. Your data is kept.';
     const white = Colors.white;
     final text = Column(
       crossAxisAlignment: CrossAxisAlignment.start,

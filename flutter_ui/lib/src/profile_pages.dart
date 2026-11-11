@@ -210,7 +210,15 @@ class ProfileGate extends StatefulWidget {
 class _ProfileGateState extends State<ProfileGate> {
   bool _manage = false;
 
+  /// PEK Cloud is off: every profile except the main one is locked (nothing is deleted).
+  Future<void> _lockedNotice() => showUpgradeDialog(context,
+      why: 'Your PEK Cloud plan has ended, so only your main profile is available. Your data is kept: subscribe again and this profile unlocks and backup continues for everything.');
+
   Future<void> _pick(Profile p) async {
+    if (Profiles.isLocked(p)) {
+      await _lockedNotice();
+      return;
+    }
     if (_manage) {
       await _edit(p);
       return;
@@ -276,8 +284,8 @@ class _ProfileGateState extends State<ProfileGate> {
         width: size + 1 * rem,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Stack(alignment: Alignment.center, children: [
-            ProfileAvatar(name: pr.name, color: pr.color, avatar: pr.avatar, size: size, locked: pr.locked),
-            if (_manage) Container(width: size, height: size, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x88000000)), child: const Icon(Icons.edit, color: Colors.white)),
+            Opacity(opacity: Profiles.isLocked(pr) ? 0.45 : 1.0, child: ProfileAvatar(name: pr.name, color: pr.color, avatar: pr.avatar, size: size, locked: pr.locked || Profiles.isLocked(pr))),
+            if (_manage && !Profiles.isLocked(pr)) Container(width: size, height: size, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x88000000)), child: const Icon(Icons.edit, color: Colors.white)),
           ]),
           SizedBox(height: 0.6 * rem),
           Text(pr.name, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: TextStyle(fontSize: 1.05 * rem, fontWeight: FontWeight.w600)),

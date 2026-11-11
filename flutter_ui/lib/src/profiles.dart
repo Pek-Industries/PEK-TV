@@ -104,6 +104,7 @@ class Profiles {
       _active = 'p1';
     }
     if (!_list.any((p) => p.id == _active)) _active = _list.first.id;
+    if (_list.any((p) => p.id == _active && isLocked(p))) _active = mainId; // PEK Cloud is off: only the main profile can be used
     // Anyone who already has several profiles, a custom name, a picture or a passcode has effectively done the first-time setup.
     if (!setupDone && (_list.length > 1 || _list.any((p) => p.avatar.isNotEmpty || p.pin.isNotEmpty || p.name != 'Profile 1'))) setupDone = true;
     Store.setProfile(_active);
@@ -137,6 +138,22 @@ class Profiles {
   static String get currentId => _active;
   static Profile get current => _list.firstWhere((p) => p.id == _active, orElse: () => _list.first);
   static int get limit => Cloud.entitled ? max : freeMax;
+
+  /// The profile that always works. Without PEK Cloud (a plan that ended, or none) it is the only one the app lets a person use.
+  static String get mainId => _list.isEmpty || _list.any((p) => p.id == 'p1') ? 'p1' : _list.first.id;
+
+  /// True for a profile that is locked because PEK Cloud is off: every profile except the main one. Nothing is deleted: its data stays stored
+  /// (here and in the cloud) and it unlocks the moment a plan is bought again.
+  static bool isLocked(Profile p) => Cloud.linked && !Cloud.entitled && p.id != mainId;
+
+  /// Called when the plan state changes: if the active profile just became locked, the app goes back to the main profile.
+  static void enforceLock() {
+    final i = _list.indexWhere((p) => p.id == _active);
+    if (i < 0 || !isLocked(_list[i])) return;
+    _active = mainId;
+    Store.setProfile(_active);
+    _save();
+  }
   static bool get canAdd => _list.length < limit;
 
   /// True when another profile would be allowed with PEK Cloud (the screens then show an upgrade tile instead of Add).
@@ -272,7 +289,8 @@ class Profiles {
   }
 
   static void enter(String id) {
-    if (!_list.any((p) => p.id == id)) return;
+    final i = _list.indexWhere((p) => p.id == id);
+    if (i < 0 || isLocked(_list[i])) return; // a locked profile (PEK Cloud is off) cannot be entered
     _active = id;
     pickedThisSession = true;
     Store.setProfile(id);

@@ -63,19 +63,19 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
     return '${m[d.month - 1]} ${d.day}, ${d.year}';
   }
 
-  /// A plan that was not renewed: what happens next and when (the same message the 24-hour notice gives).
+  /// A plan that was not renewed: what happens next and when (nothing is ever deleted; the banner says the same).
   Widget _lapseCard(PekScope p, String state) {
     final rem = p.rem;
     final grace = state == 'grace';
     final text = grace
-        ? 'Your renewal did not go through. PEK Cloud stays on until ${_longDate(Cloud.graceEnds)}. Pay before then to keep cloud backup; after that your account and its data are scheduled for deletion unless you subscribe again.'
-        : 'Your plan has ended and cloud backup is off. Your account and everything stored in it will be permanently deleted on ${_longDate(Cloud.deleteAt)} unless you subscribe again before then. Deleted data cannot be recovered.';
+        ? 'Your renewal did not go through. PEK Cloud stays on until ${_longDate(Cloud.graceEnds)}. Pay before then to keep cloud backup and all your profiles; after that backup stops and only your main profile is available. Nothing is deleted.'
+        : 'Your plan has ended: cloud backup is off and only your main profile is available. Nothing is deleted. Subscribe again and your other profiles unlock, this device sends what you watched in the meantime, and backup continues for everything.';
     return Container(
       margin: EdgeInsets.only(top: 0.6 * rem, bottom: 0.2 * rem),
       padding: EdgeInsets.all(0.9 * rem),
       decoration: BoxDecoration(color: p.tokens.surface, borderRadius: BorderRadius.circular(p.tokens.radius), border: Border.all(color: p.tokens.accent)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(grace ? 'Payment overdue' : 'Your data will be deleted', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.0 * rem)),
+        Text(grace ? 'Payment overdue' : 'Your plan has ended', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.0 * rem)),
         SizedBox(height: 0.35 * rem),
         Text(text, style: TextStyle(color: p.tokens.textMuted)),
         SizedBox(height: 0.6 * rem),
@@ -262,9 +262,11 @@ class ManageProfilesScreen extends StatelessWidget {
           for (final pr in Profiles.list)
             ListRow(
               title: pr.name,
-              subtitle: pr.id == Profiles.currentId ? 'Active now${pr.locked ? ' \u00b7 passcode' : ''}' : (pr.locked ? 'Passcode' : ''),
-              trailing: ProfileAvatar(name: pr.name, color: pr.color, avatar: pr.avatar, size: 2.4 * p.rem, locked: pr.locked),
-              onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => ProfileEditor(existing: pr))),
+              subtitle: Profiles.isLocked(pr) ? 'Locked \u00b7 subscribe again to unlock' : pr.id == Profiles.currentId ? 'Active now${pr.locked ? ' \u00b7 passcode' : ''}' : (pr.locked ? 'Passcode' : ''),
+              trailing: ProfileAvatar(name: pr.name, color: pr.color, avatar: pr.avatar, size: 2.4 * p.rem, locked: pr.locked || Profiles.isLocked(pr)),
+              onTap: Profiles.isLocked(pr)
+                  ? () => showUpgradeDialog(context, why: 'Your PEK Cloud plan has ended, so only your main profile is available. Your data is kept: subscribe again and this profile unlocks.')
+                  : () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => ProfileEditor(existing: pr))),
             ),
           if (Profiles.needsUpgradeToAdd) ListRow(title: 'More profiles', subtitle: 'Up to ${Profiles.max} people with PEK Cloud', onTap: () => showUpgradeDialog(context, why: 'More profiles are part of PEK Cloud.')),
           if (Profiles.canAdd) ListRow(title: 'Add profile', subtitle: 'Up to ${Profiles.max} people', onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => const ProfileEditor()))),
