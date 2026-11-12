@@ -124,6 +124,12 @@ class _VideoOutputSectionState extends State<VideoOutputSection> {
           on: v.hdr,
           onTap: () => _flip(PekOutput.setHdr, v.hdr),
         ),
+        ToggleRow(
+          title: 'Keep HDR with subtitles',
+          subtitle: v.subOverlay ? 'On \u2013 text subtitles are drawn over the picture' : 'Off \u2013 a subtitle switches the picture to SDR',
+          on: v.subOverlay,
+          onTap: () => _flip(PekOutput.setSubOverlay, v.subOverlay),
+        ),
       ],
     );
   }

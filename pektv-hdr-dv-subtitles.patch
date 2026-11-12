@@ -1,0 +1,537 @@
+--- a/android/app/src/main/java/com/pektv/app/MpvController.kt
++++ b/android/app/src/main/java/com/pektv/app/MpvController.kt
+@@ -103,6 +103,31 @@
+     private var appliedFps = 0f
+     private var hdrGamma = ""                    // "pq" / "hlg" for HDR video, else something SDR
+     private var hdrDirect = false                // this video goes MediaCodec -> HDR screen untouched
++
++    // Dolby Vision. Profiles 7 / 8 carry an ordinary HDR10 (or HLG / SDR) base layer, so they play like HDR10 and can go straight to
++    // the screen. Profile 5 has NO such base layer: its picture only looks right after mpv applies the stream's RPU data (libplacebo,
++    // vo=gpu-next, and a decoder that keeps that data = software decoding). Sent straight to the screen it comes out purple / green.
++    private var dvProfile = 0                    // Dolby Vision profile of the video track (0 = none or not known yet)
++    private var dvNoBase = false                 // DV without a compatible base layer (profile 5): never direct, never smooth mode
++    private var dvRenderer = false               // the next engine start uses the Dolby Vision renderer (gpu-next + software decode)
++    private var engineDvRenderer = false         // ... and what the running engine was started with
++
++    // Subtitles on direct paths (direct HDR / smooth mode): mpv cannot draw them there, so a TEXT subtitle is read from mpv
++    // ("sub-text") and drawn by the Flutter player over the picture, and the video stays on the direct path. Picture subtitles
++    // (DVD, Blu-ray PGS ...) cannot be drawn that way and still use the normal renderer. Settings > Video output can turn this off.
++    private var subOverlay = prefs.getBoolean("sub_overlay", true)
++    private var overlaySubs = false              // the app (not mpv) is drawing the subtitle right now
++    private var curSid = "no"                    // the subtitle track in use ("no" = none)
++    private var wantSid: String? = null          // chosen by the person; applied again when the file is reopened by a renderer change
++    private val subImage = HashMap<Int, Boolean>()   // track id -> picture subtitle?
++    private var lastSubText = ""
++    private val subPoll = object : Runnable {
++        override fun run() {
++            if (!overlaySubs) return
++            pollSubText()
++            ui.postDelayed(this, 300L)
++        }
++    }
+     private val isTv: Boolean by lazy {
+         val ui = activity.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+         ui?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+@@ -131,6 +156,13 @@
+         videoFps = 0f
+         hdrGamma = ""
+         hdrDirect = false
++        dvProfile = 0
++        dvNoBase = false
++        dvRenderer = false
++        wantSid = null
++        curSid = "no"
++        subImage.clear()
++        setOverlay(false)
+         ui.removeCallbacks(stutterCheck)
+         buffering = true
+         position = 0.0
+@@ -165,27 +197,61 @@
+     fun setAudio(id: Int) { mpv?.setPropertyString("aid", id.toString()) }
+     fun setSubtitle(id: Int) {
+         val m = mpv ?: return
+-        // Smooth mode and direct HDR cannot draw subtitles: use the normal renderer while one is chosen.
++        val sid = if (id < 0) "no" else id.toString()
++        wantSid = sid
++        curSid = sid
++        // Direct paths cannot draw a picture subtitle: that one (and any subtitle, when the overlay is switched off) needs the
++        // normal renderer. A text subtitle stays on the direct path and is drawn by the player screen (see setOverlay).
+         if (lite || hdrDirect) {
+-            if (id >= 0 && !liteSuspended) { liteSuspended = true; applyRenderer(m) }
+-            else if (id < 0 && liteSuspended) { liteSuspended = false; applyRenderer(m) }
++            val need = subNeedsRenderer(sid)
++            if (need != liteSuspended) { liteSuspended = need; applyRenderer(m) }
+         }
+-        m.setPropertyString("sid", if (id < 0) "no" else id.toString())
++        val cur = mpv ?: return
++        if (cur !== m) return                // a renderer change reopened the file: onFileLoaded puts the chosen subtitle back
++        cur.setPropertyString("sid", sid)
++        updateOverlay()
++    }
++
++    private fun isPictureSub(codec: String?): Boolean {
++        val c = (codec ?: "").lowercase()
++        return c.contains("pgs") || c.contains("dvd_sub") || c.contains("dvdsub") || c.contains("dvb_sub") ||
++            c.contains("dvbsub") || c.contains("xsub") || c == "dvd_subtitle"
++    }
++
++    private fun subIsPicture(sid: String?): Boolean {
++        val id = sid?.toIntOrNull() ?: return false
++        return subImage[id] == true
++    }
++
++    // Does this subtitle make a direct video path fall back to the normal renderer?
++    private fun subNeedsRenderer(sid: String?): Boolean {
++        if (sid == null || sid == "no" || sid == "false") return false
++        return !subOverlay || subIsPicture(sid)
+     }
+ 
+     // An extra subtitle file (SubRip at a URL the UI got from the backend). It is loaded and
+     // switched on at once. Like picking a subtitle in the menu, it needs the normal renderer.
+     fun addSubtitle(url: String, label: String) {
+         val m = mpv ?: return
+-        if ((lite || hdrDirect) && !liteSuspended) { liteSuspended = true; applyRenderer(m) }
++        // A downloaded subtitle is SubRip text: with the overlay on it needs no renderer change.
++        if ((lite || hdrDirect) && !liteSuspended && !subOverlay) { liteSuspended = true; applyRenderer(m) }
++        val cur = mpv ?: return
++        if (cur !== m) return                // the file was reopened by a renderer change: this subtitle is not loaded into it
+         try {
+-            m.command(arrayOf("sub-add", url, "select", label))
++            cur.command(arrayOf("sub-add", url, "select", label))
+         } catch (t: Throwable) {
+             Log.w("PEK", "sub-add failed", t)
+             return
+         }
+         // mpv fetches the file in the background: tell the page about the new track once it has appeared.
+-        val refresh = Runnable { if (mpv != null) emit("tracks", readTracks()) }
++        val refresh = Runnable {
++            if (mpv != null) {
++                emit("tracks", readTracks())
++                curSid = mpv?.getPropertyString("sid") ?: curSid
++                wantSid = curSid
++                updateOverlay()
++            }
++        }
+         ui.postDelayed(refresh, 700L)
+         ui.postDelayed(refresh, 2500L)
+     }
+@@ -200,14 +266,17 @@
+     }
+     fun isLite(): Boolean = lite
+ 
+-    private fun useEmbed() = (lite || hdrDirect) && !liteSuspended
++    private fun useEmbed() = (lite || hdrDirect) && !liteSuspended && !dvNoBase
++
++    // The video output the running engine uses. The Dolby Vision renderer tries gpu-next (libplacebo) first and falls back to gpu.
++    private fun voName() = if (embedActive) "mediacodec_embed" else if (dvRenderer) "gpu-next,gpu" else "gpu"
+ 
+     private fun applyRenderer(m: MPVLib) {
+         // Switching mpv's video output while it plays (gpu <-> mediacodec_embed) on the SAME Surface leaves the screen black
+         // with the audio still running: the old renderer's GL connection to the surface is not released in time, so MediaCodec
+         // cannot attach to it (and the other way round). A fresh engine on the surface always works - that is exactly what
+         // starting the next video does - so reopen the file at the current position with the renderer that is wanted.
+-        if (useEmbed() != embedActive && currentUrl != null && surfaceReady && !restarting) {
++        if ((useEmbed() != embedActive || dvRenderer != engineDvRenderer) && currentUrl != null && surfaceReady && !restarting) {
+             restartEngine()
+             return
+         }
+@@ -216,7 +285,9 @@
+ 
+     private fun restartEngine() {
+         val url = currentUrl ?: return
+-        val resumeAt = if (looksLive() || position.isNaN() || position < 0.0) 0.0 else position
++        // Right after loading, time-pos has not caught up with the seek to the resume point yet: keep the requested start then.
++        val resumeAt = if (looksLive() || position.isNaN() || position < 0.0) 0.0
++                       else if (position < 1.0 && startSec > 1.0) startSec else position
+         val wasPaused = paused
+         val keepHdr = hdrDirect          // stopEngine() clears it; without this the HDR check would see "changed" and restart again
+         val keepLiteSuspended = liteSuspended
+@@ -470,18 +541,98 @@
+     // Anything else (an SDR screen, HDR switched off, a subtitle on screen) keeps the normal renderer, which tone-maps to SDR.
+     private fun refreshHdr() {
+         val m = mpv ?: return
+-        val want = hdrOut && (hdrGamma == "pq" || hdrGamma == "hlg") && screenShows(hdrGamma)
++        refreshDolbyVision()                  // before the decision: a profile 5 file must not go direct
++        val want = hdrOut && !dvNoBase && (hdrGamma == "pq" || hdrGamma == "hlg") && screenShows(hdrGamma)
+         if (want == hdrDirect) return
+         hdrDirect = want
+         if (want && !lite) {
+-            val sid = m.getPropertyString("sid")
+-            if (sid != null && sid != "no" && sid != "false") liteSuspended = true     // a subtitle is showing: needs the renderer
++            if (subNeedsRenderer(m.getPropertyString("sid"))) liteSuspended = true     // a picture subtitle is showing: needs the renderer
+         }
+         if (!want) liteSuspended = if (lite) liteSuspended else false
+         applyRenderer(m)
+         Log.i("PEK", "hdr: gamma=" + hdrGamma + " direct=" + hdrDirect)
+     }
+ 
++    // ---------------- Dolby Vision ----------------
++
++    // Which Dolby Vision profile is this video, and does it have a base layer a plain HDR10 / SDR path can show?
++    // libmpv reports the profile on the video track (track-list/N/dolby-vision-profile). Its colour matrix also reads
++    // "dolbyvision" when the picture can only be shown after the RPU data is applied. Profile 5 is the common case.
++    // Profiles 7 and 8 (and AV1 profile 10 with a compatible base) keep the HDR10 / HLG path: the base layer is correct HDR.
++    private fun refreshDolbyVision() {
++        val m = mpv ?: return
++        var profile = 0
++        try {
++            val n = m.getPropertyInt("track-list/count") ?: 0
++            for (i in 0 until n) {
++                if (m.getPropertyString("track-list/$i/type") != "video") continue
++                if (m.getPropertyBoolean("track-list/$i/selected") != true) continue
++                profile = m.getPropertyInt("track-list/$i/dolby-vision-profile") ?: 0
++                break
++            }
++        } catch (t: Throwable) { /* this libmpv build does not report it: treated as no Dolby Vision */ }
++        val matrix = try { m.getPropertyString("video-params/colormatrix") ?: "" } catch (t: Throwable) { "" }
++        val noBase = profile == 5 || matrix == "dolbyvision"
++        if (profile == dvProfile && noBase == dvNoBase) return
++        dvProfile = profile
++        dvNoBase = noBase
++        Log.i("PEK", "dolby vision: profile=" + profile + " matrix=" + matrix + " noBase=" + noBase)
++        if (noBase && !dvRenderer) {
++            dvRenderer = true
++            hdrDirect = false
++            liteSuspended = false
++            Toast.makeText(activity, "Dolby Vision without an HDR10 layer: using the compatibility renderer", Toast.LENGTH_LONG).show()
++            applyRenderer(m)                  // reopens the file at this spot with gpu-next + software decoding
++        }
++    }
++
++    // ---------------- subtitles drawn by the player screen (direct HDR / smooth mode) ----------------
++
++    // Is a text subtitle drawn by the app right now? Only while the video runs on a direct path (mpv draws nothing there) and a
++    // text subtitle is selected. The text is sent to the Flutter player as the "subtitle" event.
++    private fun updateOverlay() {
++        setOverlay(embedActive && subOverlay && curSid != "no" && curSid != "false" && !subIsPicture(curSid))
++    }
++
++    private fun setOverlay(on: Boolean) {
++        if (on == overlaySubs) { if (on) pollSubText(); return }
++        overlaySubs = on
++        ui.removeCallbacks(subPoll)
++        if (on) {
++            pollSubText()
++            ui.postDelayed(subPoll, 300L)
++        } else {
++            lastSubText = ""
++            emit("subtitle", JSONObject().put("text", ""))
++        }
++    }
++
++    private fun sendSubText(text: String) {
++        val t = text.trimEnd('\n', '\r', ' ')
++        if (t == lastSubText) return
++        lastSubText = t
++        emit("subtitle", JSONObject().put("text", t))
++    }
++
++    // mpv tells us when the text changes, but reading it as well costs nothing and covers a libmpv build that stays quiet.
++    private fun pollSubText() {
++        val m = mpv ?: return
++        try { sendSubText(m.getPropertyString("sub-text") ?: "") } catch (t: Throwable) { /* no text right now */ }
++    }
++
++    fun setSubOverlay(on: Boolean) {
++        subOverlay = on
++        prefs.edit().putBoolean("sub_overlay", on).apply()
++        // Takes effect now for a video that is playing: a text subtitle moves to / from the normal renderer.
++        val m = mpv ?: return
++        if ((lite || hdrDirect) && curSid != "no") {
++            val need = subNeedsRenderer(curSid)
++            if (need != liteSuspended) { liteSuspended = need; applyRenderer(m) }
++        }
++        updateOverlay()
++    }
++    fun isSubOverlay(): Boolean = subOverlay
++
+     private fun applyColorMode(hdr: Boolean) {
+         try {
+             if (Build.VERSION.SDK_INT >= 26) {
+@@ -544,10 +695,12 @@
+         try {
+             val m = MPVLib.create(activity) ?: throw IllegalStateException("mpv create returned null")
+             embedActive = useEmbed()
+-            m.setOptionString("vo", if (embedActive) "mediacodec_embed" else "gpu")
++            engineDvRenderer = dvRenderer
++            m.setOptionString("vo", voName())
+             m.setOptionString("gpu-context", "android")
+             m.setOptionString("opengl-es", "yes")
+-            m.setOptionString("hwdec", if (useEmbed()) "mediacodec" else "mediacodec,mediacodec-copy")
++            // Dolby Vision without a base layer: software decoding, because a hardware decoder does not hand mpv the RPU data.
++            m.setOptionString("hwdec", if (dvRenderer) "no" else if (useEmbed()) "mediacodec" else "mediacodec,mediacodec-copy")
+             m.setOptionString("ao", "audiotrack,opensles")
+             m.setOptionString("keep-open", "no")
+             // Smooth playback on weak TV chips: cheapest scalers, no extra video processing, and let every
+@@ -601,6 +754,8 @@
+             m.observeProperty("seeking", MPVLib.MpvFormat.MPV_FORMAT_FLAG)
+             m.observeProperty("container-fps", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
+             m.observeProperty("video-params/gamma", MPVLib.MpvFormat.MPV_FORMAT_STRING)
++            m.observeProperty("video-params/colormatrix", MPVLib.MpvFormat.MPV_FORMAT_STRING)
++            m.observeProperty("sub-text", MPVLib.MpvFormat.MPV_FORMAT_STRING)
+             m.attachSurface(surfaceView.holder.surface)
+             mpv = m
+             m.command(arrayOf("loadfile", u))
+@@ -619,6 +774,12 @@
+         resetFrameRate()
+         applyColorMode(false)
+         hdrDirect = false
++        ui.removeCallbacks(subPoll)
++        if (overlaySubs) {                // the next engine decides again once its file is open; clear the old text now
++            overlaySubs = false
++            emit("subtitle", JSONObject().put("text", ""))
++        }
++        lastSubText = ""
+         try {
+             m.removeObserver(this)
+             m.detachSurface()
+@@ -657,7 +818,7 @@
+             mpv?.let {
+                 it.attachSurface(holder.surface)
+                 it.setPropertyString("force-window", "yes")
+-                it.setPropertyString("vo", if (embedActive) "mediacodec_embed" else "gpu")
++                it.setPropertyString("vo", voName())
+             }
+         }
+     }
+@@ -685,6 +846,8 @@
+         ui.post {
+             when (property) {
+                 "video-params/gamma" -> { hdrGamma = value; refreshHdr() }
++                "video-params/colormatrix" -> refreshDolbyVision()
++                "sub-text" -> if (overlaySubs) sendSubText(value)
+             }
+         }
+     }
+@@ -739,11 +902,18 @@
+         if (startSec > 1.0) seek(startSec)
+         emit("tracks", readTracks())
+         emitState()
+-        // A file whose subtitles show by default needs the normal renderer.
+-        if ((lite || hdrDirect) && !liteSuspended) {
+-            val sid = mpv?.getPropertyString("sid")
+-            if (sid != null && sid != "no" && sid != "false") { liteSuspended = true; mpv?.let { applyRenderer(it) } }
++        val engine = mpv
++        refreshDolbyVision()
++        if (mpv !== engine) return            // Dolby Vision without a base layer: the file was reopened with the other renderer
++        // The file was reopened by a renderer change: the subtitle the person had chosen is put back.
++        wantSid?.let { try { mpv?.setPropertyString("sid", it) } catch (t: Throwable) { Log.w("PEK", "sid not restored", t) } }
++        curSid = mpv?.getPropertyString("sid") ?: "no"
++        // A subtitle that shows by default: a picture one needs the normal renderer, a text one is drawn by the player screen.
++        if (lite || hdrDirect) {
++            val need = subNeedsRenderer(curSid)
++            if (need != liteSuspended) { liteSuspended = need; mpv?.let { applyRenderer(it) } }
+         }
++        updateOverlay()
+         watchUntil = 0L
+         startStutterWatch()
+     }
+@@ -787,7 +957,7 @@
+             }
+             if (!buffering && !paused && !seeking) {
+                 // 15 or more frames lost in 4 seconds of normal playback: the renderer cannot keep up.
+-                if (lastDrops >= 0 && drops - lastDrops >= 15 && !lite && !embedBroken && !looksLive()) {
++                if (lastDrops >= 0 && drops - lastDrops >= 15 && !lite && !embedBroken && !dvNoBase && !looksLive()) {
+                     val sid = m.getPropertyString("sid")
+                     if (sid == null || sid == "no" || sid == "false") {
+                         lite = true; liteSuspended = false
+@@ -840,6 +1010,7 @@
+                     val v = m.getPropertyString("track-list/$i/$key")
+                     if (!v.isNullOrBlank()) parts.add(if (key == "codec") v.uppercase() else v)
+                 }
++                if (type == "sub") subImage[id] = isPictureSub(m.getPropertyString("track-list/$i/codec"))
+                 val t = JSONObject()
+                 t.put("id", id)
+                 t.put("label", if (parts.isEmpty()) "Track $id" else parts.joinToString(" - "))
+--- a/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt
++++ b/android/app/src/flutter/java/com/pektv/app/flutter/FlutterHostActivity.kt
+@@ -579,10 +579,12 @@
+                     "video" -> result.success(mapOf(
+                         "matchRate" to c.isMatchRate(),
+                         "hdr" to c.isHdrOut(),
+-                        "displayHdr" to c.displayHdr()
++                        "displayHdr" to c.displayHdr(),
++                        "subOverlay" to c.isSubOverlay()
+                     ))
+                     "setMatchRate" -> { c.setMatchRate(call.argument<Boolean>("on") ?: false); result.success(null) }
+                     "setHdr" -> { c.setHdr(call.argument<Boolean>("on") ?: false); result.success(null) }
++                    "setSubOverlay" -> { c.setSubOverlay(call.argument<Boolean>("on") ?: true); result.success(null) }
+                     "audio" -> {
+                         val support = JSONObject(c.passthroughSupportJson())
+                         result.success(mapOf(
+--- a/flutter_ui/lib/src/mpv.dart
++++ b/flutter_ui/lib/src/mpv.dart
+@@ -48,6 +48,10 @@
+   final failed = ValueNotifier<bool>(false);
+   final chapters = ValueNotifier<List<Chapter>>(const []);
+ 
++  /// The text subtitle showing right now ('' = none). Only sent while the video runs on a direct path (direct HDR / smooth mode),
++  /// where libmpv cannot draw subtitles itself: the player screen draws this text over the picture instead (see SubtitleOverlay).
++  final subtitleText = ValueNotifier<String>('');
++
+   void _onEvent(dynamic e) {
+     if (e is! Map) return;
+     final data = (e['data'] is Map) ? Map<String, dynamic>.from(e['data'] as Map) : <String, dynamic>{};
+@@ -68,6 +72,9 @@
+           chapters.value = ch.whereType<Map>().map((c) => Chapter('${c['title'] ?? ''}', (c['time'] as num?)?.toDouble() ?? 0)).toList();
+         }
+         break;
++      case 'subtitle':
++        subtitleText.value = '${data['text'] ?? ''}';
++        break;
+       case 'ended':
+         ended.value = true;
+         break;
+@@ -112,6 +119,7 @@
+     audio.value = const [];
+     subtitles.value = const [];
+     chapters.value = const [];
++    subtitleText.value = '';
+     ended.value = false;
+     failed.value = false;
+   }
+@@ -139,7 +147,8 @@
+ /// What the screen / TV / receiver can do, and the switches for it (Settings > Video output / Audio output).
+ /// Lives in Kotlin (MpvController); every call can fail on a host without the player, so callers treat errors as "not available".
+ class VideoOutput {
+-  const VideoOutput({required this.matchRate, required this.hdr, required this.displayHdr});
++  const VideoOutput({required this.matchRate, required this.hdr, required this.displayHdr, this.subOverlay = true});
++  final bool subOverlay; // text subtitles are drawn over HDR / smooth-mode video instead of switching to the normal renderer
+   final bool matchRate;
+   final bool hdr;
+   final bool displayHdr;
+@@ -157,11 +166,17 @@
+ 
+   static Future<VideoOutput> video() async {
+     final m = Map<String, dynamic>.from(await _c.invokeMethod<Map>('video') ?? const {});
+-    return VideoOutput(matchRate: m['matchRate'] == true, hdr: m['hdr'] == true, displayHdr: m['displayHdr'] == true);
++    return VideoOutput(
++      matchRate: m['matchRate'] == true,
++      hdr: m['hdr'] == true,
++      displayHdr: m['displayHdr'] == true,
++      subOverlay: m['subOverlay'] != false, // an older host does not send it: on
++    );
+   }
+ 
+   static Future<void> setMatchRate(bool on) => _c.invokeMethod('setMatchRate', {'on': on});
+   static Future<void> setHdr(bool on) => _c.invokeMethod('setHdr', {'on': on});
++  static Future<void> setSubOverlay(bool on) => _c.invokeMethod('setSubOverlay', {'on': on});
+ 
+   static Future<AudioOutput> audio() async {
+     final m = Map<String, dynamic>.from(await _c.invokeMethod<Map>('audio') ?? const {});
+--- a/flutter_ui/lib/src/player.dart
++++ b/flutter_ui/lib/src/player.dart
+@@ -776,6 +776,14 @@
+                   builder: (_, b, __) => b ? (widget.torrentHash == null ? const CircularProgressIndicator() : TorrentBufferCard(hash: widget.torrentHash!)) : const SizedBox.shrink(),
+                 ),
+               ),
++              // Text subtitles while the video runs on a direct path (direct HDR / smooth mode): libmpv cannot draw them there.
++              AnimatedPositioned(
++                duration: const Duration(milliseconds: 150),
++                left: 0,
++                right: 0,
++                bottom: _controls ? 150 : 44,
++                child: IgnorePointer(child: SubtitleOverlay(text: _player.subtitleText)),
++              ),
+               if (_live && !_guideOpen && (_tv?.available ?? false))
+                 Positioned(
+                   right: 0,
+@@ -1142,3 +1150,44 @@
+     );
+   }
+ }
++
++
++/// A text subtitle drawn over the picture. The video is a native surface behind Flutter, and on the direct paths (direct HDR, smooth
++/// mode) libmpv draws nothing on it, so the text comes from [PekPlayer.subtitleText]. White with a dark outline so it reads on any
++/// scene, sized from the screen height.
++class SubtitleOverlay extends StatelessWidget {
++  const SubtitleOverlay({super.key, required this.text});
++  final ValueListenable<String> text;
++
++  @override
++  Widget build(BuildContext context) {
++    final h = MediaQuery.sizeOf(context).height;
++    final size = (h * 0.052).clamp(18.0, 46.0).toDouble();
++    final style = TextStyle(
++      color: Colors.white,
++      fontSize: size,
++      height: 1.18,
++      fontWeight: FontWeight.w600,
++      shadows: const [
++        Shadow(color: Colors.black, blurRadius: 3),
++        Shadow(color: Colors.black, offset: Offset(1.5, 1.5), blurRadius: 2),
++        Shadow(color: Colors.black, offset: Offset(-1.5, -1.5), blurRadius: 2),
++        Shadow(color: Colors.black, offset: Offset(1.5, -1.5), blurRadius: 2),
++        Shadow(color: Colors.black, offset: Offset(-1.5, 1.5), blurRadius: 2),
++      ],
++    );
++    return ValueListenableBuilder<String>(
++      valueListenable: text,
++      builder: (_, t, __) {
++        if (t.isEmpty) return const SizedBox.shrink();
++        return Center(
++          heightFactor: 1, // as tall as the text, so it sits at the bottom of its Positioned
++          child: ConstrainedBox(
++            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.86),
++            child: Text(t, textAlign: TextAlign.center, style: style),
++          ),
++        );
++      },
++    );
++  }
++}
+--- a/flutter_ui/lib/src/settings_extra.dart
++++ b/flutter_ui/lib/src/settings_extra.dart
+@@ -124,6 +124,12 @@
+           on: v.hdr,
+           onTap: () => _flip(PekOutput.setHdr, v.hdr),
+         ),
++        ToggleRow(
++          title: 'Keep HDR with subtitles',
++          subtitle: v.subOverlay ? 'On \u2013 text subtitles are drawn over the picture' : 'Off \u2013 a subtitle switches the picture to SDR',
++          on: v.subOverlay,
++          onTap: () => _flip(PekOutput.setSubOverlay, v.subOverlay),
++        ),
+       ],
+     );
+   }
+--- /dev/null
++++ b/HDR.md
+@@ -0,0 +1,36 @@
++# HDR, Dolby Vision and subtitles on the video path
++
++Code: `android/app/src/main/java/com/pektv/app/MpvController.kt` (engine), `flutter_ui/lib/src/player.dart` (`SubtitleOverlay`),
++`flutter_ui/lib/src/mpv.dart` (`subtitleText`, `PekOutput.setSubOverlay`), Settings > Video output.
++
++## Which path a video takes
++
++| Video | Screen | Path |
++|---|---|---|
++| SDR | any | normal renderer (`gpu`), or smooth mode (`mediacodec_embed`) if switched on |
++| HDR10 / HLG, also Dolby Vision profile 7, 8 (they have an HDR10 / HLG base layer) | reports that HDR type | **direct**: MediaCodec to the screen, window colour mode HDR |
++| HDR10 / HLG, DV 7 / 8 | SDR screen, or HDR output off | normal renderer, `bt.2390` tone-map to SDR |
++| Dolby Vision profile 5 (no HDR10 base layer) | any | **DV renderer**: `vo=gpu-next,gpu` + `hwdec=no` (software decode), libplacebo applies the RPU and tone-maps |
++
++Profile 5 is found through `track-list/N/dolby-vision-profile` or a `dolbyvision` colour matrix. It is detected when the file opens;
++the file is then reopened once with the DV renderer at the same position (the engine cannot switch outputs on a live surface).
++Smooth mode and the automatic "switch to smooth mode after dropped frames" are never used for these files (they would show purple / green).
++The DV renderer decodes in software: fine for 1080p, may drop frames at 4K on a weak chip.
++Dolby Vision itself is not output (mpv cannot use Android's DV decoder): profile 7 / 8 show their HDR10 / HLG layer.
++
++## Subtitles
++
++mpv cannot draw anything on the direct paths. A **text** subtitle (SubRip, ASS/SSA, WebVTT, mov_text, downloaded subtitles) is read from
++mpv's `sub-text` property (observed, and also polled every 300 ms while it is showing) and sent to the player screen as the
++`subtitle` event; `SubtitleOverlay` draws it. The video stays on the direct path, so HDR is kept. Picture subtitles (PGS, DVD, DVB)
++cannot be drawn this way and still switch to the normal renderer, as before. ASS positioning and styling are not kept (plain text).
++Settings > Video output > "Keep HDR with subtitles" turns the overlay off (old behaviour).
++
++## Things to test on a device (not run here)
++
++1. HDR10 file with an SRT subtitle on an HDR screen: HDR stays on, text shows, timing right after a seek and after Subtitle delay.
++2. Same file with a PGS subtitle: switches to the normal renderer; switching back to a text subtitle returns to direct HDR.
++3. Dolby Vision profile 5 file: colours correct (not purple / green), one reload at the start, log line `dolby vision: profile=5`.
++4. Dolby Vision profile 8.1 file on an HDR10 screen: direct HDR10, no reload.
++5. Resume from a saved position on a profile 5 file keeps the position across the reopen.
++6. `adb logcat -s PEK` shows `dolby vision:`, `hdr:` and `playback:` lines.

@@ -579,10 +579,12 @@ class FlutterHostActivity : FlutterActivity() {
                     "video" -> result.success(mapOf(
                         "matchRate" to c.isMatchRate(),
                         "hdr" to c.isHdrOut(),
-                        "displayHdr" to c.displayHdr()
+                        "displayHdr" to c.displayHdr(),
+                        "subOverlay" to c.isSubOverlay()
                     ))
                     "setMatchRate" -> { c.setMatchRate(call.argument<Boolean>("on") ?: false); result.success(null) }
                     "setHdr" -> { c.setHdr(call.argument<Boolean>("on") ?: false); result.success(null) }
+                    "setSubOverlay" -> { c.setSubOverlay(call.argument<Boolean>("on") ?: true); result.success(null) }
                     "audio" -> {
                         val support = JSONObject(c.passthroughSupportJson())
                         result.success(mapOf(

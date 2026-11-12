@@ -776,6 +776,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   builder: (_, b, __) => b ? (widget.torrentHash == null ? const CircularProgressIndicator() : TorrentBufferCard(hash: widget.torrentHash!)) : const SizedBox.shrink(),
                 ),
               ),
+              // Text subtitles while the video runs on a direct path (direct HDR / smooth mode): libmpv cannot draw them there.
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 150),
+                left: 0,
+                right: 0,
+                bottom: _controls ? 150 : 44,
+                child: IgnorePointer(child: SubtitleOverlay(text: _player.subtitleText)),
+              ),
               if (_live && !_guideOpen && (_tv?.available ?? false))
                 Positioned(
                   right: 0,
@@ -1139,6 +1147,47 @@ class _GlassButtonState extends State<_GlassButton> {
           child: SizedBox(width: widget.size, height: widget.size, child: Icon(widget.icon, size: widget.iconSize, color: _f ? const Color(0xFF1C1815) : const Color(0xFFF6F2EC))),
         ),
       ),
+    );
+  }
+}
+
+
+/// A text subtitle drawn over the picture. The video is a native surface behind Flutter, and on the direct paths (direct HDR, smooth
+/// mode) libmpv draws nothing on it, so the text comes from [PekPlayer.subtitleText]. White with a dark outline so it reads on any
+/// scene, sized from the screen height.
+class SubtitleOverlay extends StatelessWidget {
+  const SubtitleOverlay({super.key, required this.text});
+  final ValueListenable<String> text;
+
+  @override
+  Widget build(BuildContext context) {
+    final h = MediaQuery.sizeOf(context).height;
+    final size = (h * 0.052).clamp(18.0, 46.0).toDouble();
+    final style = TextStyle(
+      color: Colors.white,
+      fontSize: size,
+      height: 1.18,
+      fontWeight: FontWeight.w600,
+      shadows: const [
+        Shadow(color: Colors.black, blurRadius: 3),
+        Shadow(color: Colors.black, offset: Offset(1.5, 1.5), blurRadius: 2),
+        Shadow(color: Colors.black, offset: Offset(-1.5, -1.5), blurRadius: 2),
+        Shadow(color: Colors.black, offset: Offset(1.5, -1.5), blurRadius: 2),
+        Shadow(color: Colors.black, offset: Offset(-1.5, 1.5), blurRadius: 2),
+      ],
+    );
+    return ValueListenableBuilder<String>(
+      valueListenable: text,
+      builder: (_, t, __) {
+        if (t.isEmpty) return const SizedBox.shrink();
+        return Center(
+          heightFactor: 1, // as tall as the text, so it sits at the bottom of its Positioned
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.86),
+            child: Text(t, textAlign: TextAlign.center, style: style),
+          ),
+        );
+      },
     );
   }
 }

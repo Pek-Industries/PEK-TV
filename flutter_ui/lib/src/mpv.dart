@@ -48,6 +48,10 @@ class PekPlayer {
   final failed = ValueNotifier<bool>(false);
   final chapters = ValueNotifier<List<Chapter>>(const []);
 
+  /// The text subtitle showing right now ('' = none). Only sent while the video runs on a direct path (direct HDR / smooth mode),
+  /// where libmpv cannot draw subtitles itself: the player screen draws this text over the picture instead (see SubtitleOverlay).
+  final subtitleText = ValueNotifier<String>('');
+
   void _onEvent(dynamic e) {
     if (e is! Map) return;
     final data = (e['data'] is Map) ? Map<String, dynamic>.from(e['data'] as Map) : <String, dynamic>{};
@@ -67,6 +71,9 @@ class PekPlayer {
         if (ch is List && ch.isNotEmpty) {
           chapters.value = ch.whereType<Map>().map((c) => Chapter('${c['title'] ?? ''}', (c['time'] as num?)?.toDouble() ?? 0)).toList();
         }
+        break;
+      case 'subtitle':
+        subtitleText.value = '${data['text'] ?? ''}';
         break;
       case 'ended':
         ended.value = true;
@@ -112,6 +119,7 @@ class PekPlayer {
     audio.value = const [];
     subtitles.value = const [];
     chapters.value = const [];
+    subtitleText.value = '';
     ended.value = false;
     failed.value = false;
   }
@@ -139,7 +147,8 @@ class PekPlayer {
 /// What the screen / TV / receiver can do, and the switches for it (Settings > Video output / Audio output).
 /// Lives in Kotlin (MpvController); every call can fail on a host without the player, so callers treat errors as "not available".
 class VideoOutput {
-  const VideoOutput({required this.matchRate, required this.hdr, required this.displayHdr});
+  const VideoOutput({required this.matchRate, required this.hdr, required this.displayHdr, this.subOverlay = true});
+  final bool subOverlay; // text subtitles are drawn over HDR / smooth-mode video instead of switching to the normal renderer
   final bool matchRate;
   final bool hdr;
   final bool displayHdr;
@@ -157,11 +166,17 @@ class PekOutput {
 
   static Future<VideoOutput> video() async {
     final m = Map<String, dynamic>.from(await _c.invokeMethod<Map>('video') ?? const {});
-    return VideoOutput(matchRate: m['matchRate'] == true, hdr: m['hdr'] == true, displayHdr: m['displayHdr'] == true);
+    return VideoOutput(
+      matchRate: m['matchRate'] == true,
+      hdr: m['hdr'] == true,
+      displayHdr: m['displayHdr'] == true,
+      subOverlay: m['subOverlay'] != false, // an older host does not send it: on
+    );
   }
 
   static Future<void> setMatchRate(bool on) => _c.invokeMethod('setMatchRate', {'on': on});
   static Future<void> setHdr(bool on) => _c.invokeMethod('setHdr', {'on': on});
+  static Future<void> setSubOverlay(bool on) => _c.invokeMethod('setSubOverlay', {'on': on});
 
   static Future<AudioOutput> audio() async {
     final m = Map<String, dynamic>.from(await _c.invokeMethod<Map>('audio') ?? const {});
