@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pek_tv_ui/src/api.dart';
+import 'package:pek_tv_ui/src/recs.dart';
 import 'package:pek_tv_ui/src/simple_data.dart';
 
 Map<String, dynamic> video(String key, String type, {bool official = false, String lang = 'en', String site = 'YouTube'}) =>
@@ -75,6 +76,17 @@ void main() {
 
     test('new = newest movies and shows taking turns', () {
       expect(lib.recentMixed.map((t) => t.title).toList(), ['Heat', 'Lost', 'The Matrix']);
+    });
+
+    test('a TMDb suggestion the library has is the library title; any other stays a suggestion', () {
+      final inLib = lib.fromRec(const RecItem(id: 1, tv: false, title: 'heat', year: 1995, poster: '/a.jpg'));
+      expect(inLib.inLibrary, isTrue);
+      expect(inLib.key, 'm:b');
+      final other = lib.fromRec(const RecItem(id: 2, tv: false, title: 'Alien', year: 1979, poster: '/b.jpg'));
+      expect(other.inLibrary, isFalse);
+      expect(other.key, 'r:m2');
+      expect(other.title, 'Alien');
+      expect(other.subtitle, '1979');
     });
   });
 }

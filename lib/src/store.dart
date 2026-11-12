@@ -47,6 +47,18 @@ class Store {
     simpleModeN.value = on;
   }
 
+  /// Simple layout's home: 'foryou' (rows of suggestions from TMDb), 'library' (this device's own movies and shows) or '' = decide
+  /// by itself (the library when it has anything, else suggestions). The switch on the Simple home screen sets it.
+  static String get simpleSource {
+    final s = _p.getString('pek_simple_source') ?? '';
+    return s == 'foryou' || s == 'library' ? s : '';
+  }
+
+  static Future<void> setSimpleSource(String s) async {
+    await _p.setString('pek_simple_source', s);
+    _bump();
+  }
+
   /// Simple layout: trailers start by themselves on the banner and on a title's page (default on) ...
   static bool get simpleTrailers => _p.getBool('pek_simple_trailers') ?? true;
   static Future<void> setSimpleTrailers(bool on) async {

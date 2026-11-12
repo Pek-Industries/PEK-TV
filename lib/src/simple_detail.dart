@@ -7,6 +7,7 @@ import 'art_cache.dart';
 import 'detail.dart';
 import 'plugin_ui.dart' show PekTrailerView;
 import 'ratings.dart';
+import 'recs.dart' show Recs;
 import 'simple_data.dart';
 import 'simple_shell.dart' show SimpleShelf;
 import 'store.dart';
@@ -47,11 +48,19 @@ class _SimpleDetailScreenState extends State<SimpleDetailScreen> {
       final lib = _lib ??= await SimpleLib.load();
       final out = <SimpleTitle>[];
       final seen = <String>{widget.title.key};
+      // What TMDb recommends: the ones the library has first (they play), then the rest as suggestions (they open Discover).
+      final hidden = Recs.hidden;
       for (final r in m.related) {
         final hit = lib.named(r.title, tv: r.tv);
         if (hit != null && seen.add(hit.key)) out.add(hit);
       }
-      if (out.length < 12 && m.genres.isNotEmpty) {
+      for (final r in m.related) {
+        if (out.length >= 16) break;
+        if (hidden.contains(r.key) || lib.named(r.title, tv: r.tv) != null) continue;
+        final t = SimpleTitle.rec(r);
+        if (seen.add(t.key)) out.add(t);
+      }
+      if (out.length < 6 && m.genres.isNotEmpty && widget.title.inLibrary) {
         final res = await Api.librarySearch('', genre: m.genres.first, limit: 40, only: widget.title.tv ? 'shows' : 'movies');
         if (res != null) {
           for (final t in lib.fromSearch(res)) {
@@ -77,7 +86,10 @@ class _SimpleDetailScreenState extends State<SimpleDetailScreen> {
   }
 
   void _play() => unawaited(_cover(() => simplePlay(context, widget.title)));
-  void _episodes() => unawaited(_cover(() => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => ShowScreen(show: widget.title.show!)))));
+  void _episodes() {
+    final s = widget.title.show;
+    if (s != null) unawaited(_cover(() => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => ShowScreen(show: s)))));
+  }
 
   void _openRelated(SimpleTitle t) {
     Navigator.pushReplacement<void, void>(context, MaterialPageRoute<void>(builder: (_) => SimpleDetailScreen(title: t, lib: _lib)));
@@ -183,7 +195,7 @@ class _SimpleDetailScreenState extends State<SimpleDetailScreen> {
     final shadow = onImage ? const [Shadow(blurRadius: 10, color: Colors.black87)] : const <Shadow>[];
     final facts = m.ok ? m.facts(title) : title.subtitle;
     final fav = title.favorite;
-    final seen = !title.tv && movieWatched(title.movie!);
+    final seen = title.movie != null && movieWatched(title.movie!);
 
     Widget overview(String s) => onImage
         ? Text(s, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: soft, fontSize: 0.95 * rem, height: 1.35, shadows: shadow))
@@ -192,8 +204,8 @@ class _SimpleDetailScreenState extends State<SimpleDetailScreen> {
     final buttons = <Widget>[
       _DButton(icon: Icons.play_arrow_rounded, label: simplePlayLabel(title), primary: true, autofocus: p.isTv || onImage, rem: rem, onTap: _play),
       _DButton(icon: fav ? Icons.check : Icons.add, label: 'My List', rem: rem, onImage: onImage, onTap: () => unawaited(title.toggleFavorite())),
-      if (!title.tv) _DButton(icon: seen ? Icons.visibility : Icons.visibility_outlined, label: seen ? 'Watched' : 'Mark watched', rem: rem, onImage: onImage, onTap: () => unawaited(Watched.set([movieItem(title.movie!)], !seen))),
-      if (title.tv) _DButton(icon: Icons.list, label: 'Episodes', rem: rem, onImage: onImage, onTap: _episodes),
+      if (title.movie != null) _DButton(icon: seen ? Icons.visibility : Icons.visibility_outlined, label: seen ? 'Watched' : 'Mark watched', rem: rem, onImage: onImage, onTap: () => unawaited(Watched.set([movieItem(title.movie!)], !seen))),
+      if (title.show != null) _DButton(icon: Icons.list, label: 'Episodes', rem: rem, onImage: onImage, onTap: _episodes),
     ];
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -239,7 +251,7 @@ class _SimpleDetailScreenState extends State<SimpleDetailScreen> {
           title: 'More Like This',
           memoryKey: 'simple/related',
           cardW: p.sidebar ? 6 * rem : 7 * rem,
-          cards: [for (final it in items) PosterCard(title: it.title, subtitle: it.subtitle, poster: it.details, onTap: () => _openRelated(it))],
+          cards: [for (final it in items) PosterCard(title: it.title, subtitle: it.subtitle, poster: it.details, inLibrary: it.inLibrary, onTap: () => _openRelated(it))],
         );
       },
     );

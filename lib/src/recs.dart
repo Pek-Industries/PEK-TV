@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -271,9 +272,12 @@ class RecItem {
 }
 
 class RecRow {
-  const RecRow(this.title, this.items);
+  const RecRow(this.title, this.items, {this.personal = false});
   final String title;
   final List<RecItem> items;
+
+  /// A "Because you liked ..." row (as opposed to a genre or a popular row).
+  final bool personal;
 }
 
 /// A title the person liked or watched, to ask TMDb for similar ones.
@@ -551,6 +555,91 @@ class RecFeed {
     final movies = g.movie > 0 ? await _get(path('movie', g.movie)) : null;
     final shows = g.tv > 0 ? await _get(path('tv', g.tv)) : null;
     return interleave(parseResults(movies, false), parseResults(shows, true));
+  }
+
+  /// One run of the app: the random rows (and which pages of the popular lists) are the same until it is closed.
+  static final _session = math.Random();
+
+  /// Popular / trending / top-rated lists for the grid pages of the Simple layout's "For You" side. Empty when offline.
+  static Future<List<RecItem>> popularList(bool tv, {int page = 1}) async =>
+      parseResults(await _get('/discover/${tv ? 'tv' : 'movie'}?sort_by=popularity.desc&vote_count.gte=300&include_adult=false&page=$page'), tv);
+
+  static Future<List<RecItem>> trendingList() async {
+    final r = await Future.wait([_get('/trending/movie/week'), _get('/trending/tv/week')]);
+    return interleave(parseResults(r[0], false), parseResults(r[1], true));
+  }
+
+  static Future<List<RecItem>> genreList(RecGenre g) => _forGenre(g);
+
+  /// The Simple layout's "For You" rows: one "Because you liked X" row per thing the person liked, newest like first (the titles
+  /// picked on the taste picker, favorites, 7+ ratings, then what was watched), a row per picked genre, and, when that makes fewer
+  /// than [wanted] rows (nothing liked yet, or offline for a while), random trending / popular / top-rated / genre rows to fill up.
+  /// A title appears once; watched, favorited, liked and "not interested" titles are left out. Empty = nothing could be fetched.
+  static Future<List<RecRow>> simpleRows({required List<RecSeed> seeds, required List<String> genres, required Set<String> hidden, int maxPersonal = 5, int wanted = 6}) async {
+    final known = _known();
+    final chosen = [for (final id in genres) ...recGenres.where((g) => g.id == id)];
+    final personalF = Future.wait([for (final s in seeds.take(maxPersonal + 2)) _forSeed(s)]); // a little extra: some come back short
+    final genreF = Future.wait([for (final g in chosen) _forGenre(g)]);
+    final personal = await personalF;
+    final byGenre = await genreF;
+    final used = <String>{for (final p in Recs.picks) p.key};
+    List<RecItem> pickFrom(List<RecItem> l) {
+      final out = <RecItem>[];
+      for (final i in l) {
+        if (out.length >= 20) break;
+        if (hidden.contains(i.key) || used.contains(i.key) || known.contains(Store.normalize(i.title))) continue;
+        out.add(i);
+      }
+      for (final i in out) {
+        used.add(i.key);
+      }
+      return out;
+    }
+
+    final rows = <RecRow>[];
+    for (var i = 0; i < personal.length && i < seeds.length && rows.length < maxPersonal; i++) {
+      final items = pickFrom(personal[i]);
+      if (items.length >= 3) rows.add(RecRow(seeds[i].liked ? 'Because you liked ${seeds[i].title}' : 'Because you watched ${seeds[i].title}', items, personal: true));
+    }
+    for (var i = 0; i < byGenre.length; i++) {
+      final items = pickFrom(byGenre[i]);
+      if (items.length >= 3) rows.add(RecRow(chosen[i].name, items));
+    }
+    if (rows.length < wanted) {
+      // Random stuff: the two trending lists first, then popular / top-rated and a few random genres in a random order.
+      final page = 1 + _session.nextInt(3);
+      final specs = <(String, String, bool)>[
+        ('Popular movies', '/discover/movie?sort_by=popularity.desc&vote_count.gte=500&include_adult=false&page=$page', false),
+        ('Popular shows', '/discover/tv?sort_by=popularity.desc&vote_count.gte=300&include_adult=false&page=$page', true),
+        ('Top rated movies', '/discover/movie?sort_by=vote_average.desc&vote_count.gte=3000&include_adult=false&page=1', false),
+        ('Top rated shows', '/discover/tv?sort_by=vote_average.desc&vote_count.gte=1000&include_adult=false&page=1', true),
+      ]..shuffle(_session);
+      final skip = {for (final g in chosen) g.id};
+      final extraGenres = [for (final g in recGenres) if (!skip.contains(g.id)) g]..shuffle(_session);
+      final gs = extraGenres.take(4).toList();
+      final lists = await Future.wait<List<RecItem>>([
+        _get('/trending/movie/week').then((b) => parseResults(b, false)),
+        _get('/trending/tv/week').then((b) => parseResults(b, true)),
+        for (final s in specs) _get(s.$2).then((b) => parseResults(b, s.$3)),
+        for (final g in gs) _forGenre(g),
+      ]);
+      final candidates = <RecRow>[];
+      void add(String title, List<RecItem> raw) {
+        final items = pickFrom(raw);
+        if (items.length >= 3) candidates.add(RecRow(title, items));
+      }
+      add('Trending movies', lists[0]);
+      add('Trending shows', lists[1]);
+      final rest = <(String, List<RecItem>)>[
+        for (var i = 0; i < specs.length; i++) (specs[i].$1, lists[2 + i]),
+        for (var i = 0; i < gs.length; i++) (gs[i].name, lists[2 + specs.length + i]),
+      ]..shuffle(_session);
+      for (final r in rest) {
+        add(r.$1, r.$2);
+      }
+      rows.addAll(candidates.take(wanted - rows.length));
+    }
+    return rows;
   }
 
   /// The stacked rows: up to two "Because you ..." rows, then one row per picked genre. A title appears once, watched and
