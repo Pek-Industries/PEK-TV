@@ -98,6 +98,9 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # Pinned: "stable" alone moved to 3.50.0, which refuses Gradle below 9.3.1 (this build uses 8.14.3 and AGP 8.11.1).
+          # 3.47.9 is the version the last green build used. Raise it together with Gradle and the Android Gradle plugin.
+          flutter-version: '3.47.9'
           cache: true
 
       - name: Generate the Flutter module
@@ -119,13 +122,6 @@ jobs:
           Z=android/app/libs/libmpv-release.aar.zip
           if [ -f "$Z" ]; then
             unzip -o -q "$Z" -d android/app/libs
-          fi
-          # An .aar that was zipped twice (a libmpv-release.aar inside the libmpv-release.aar) has no jni/ folder at the top
-          # level; unwrap it so Gradle gets the real library.
-          if [ -f android/app/libs/libmpv-release.aar ] && unzip -l android/app/libs/libmpv-release.aar | grep -q ' libmpv-release.aar$'; then
-            echo "libmpv-release.aar is double-zipped: unwrapping"
-            mkdir -p /tmp/mpvinner && unzip -o -q android/app/libs/libmpv-release.aar -d /tmp/mpvinner
-            cp /tmp/mpvinner/libmpv-release.aar android/app/libs/libmpv-release.aar
           fi
           if [ -f android/app/libs/libmpv-release.aar ]; then
             unzip -l android/app/libs/libmpv-release.aar | grep -q 'jni/arm64-v8a/libmpv.so' || { echo "::error::libmpv-release.aar has no libmpv.so"; exit 1; }
