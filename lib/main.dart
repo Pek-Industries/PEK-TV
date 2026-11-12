@@ -1,0 +1,192 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show MethodChannel;
+
+import 'src/deep_link.dart';
+import 'src/dev_console.dart';
+import 'src/activity.dart';
+import 'src/app_update.dart';
+import 'src/api.dart';
+import 'src/key_guard.dart';
+import 'src/cloud.dart';
+import 'src/profile_pages.dart';
+import 'src/profiles.dart';
+import 'src/recs.dart';
+import 'src/onboarding_flow.dart';
+import 'src/remote_host.dart';
+import 'src/skins.dart';
+import 'src/mpv.dart';
+import 'src/nav_sound.dart';
+import 'src/music_controller.dart';
+import 'src/net.dart';
+import 'src/news.dart';
+import 'src/shell.dart';
+import 'src/store.dart';
+import 'src/theme.dart';
+import 'src/tokens.dart';
+import 'src/tv_nav.dart';
+import 'src/welcome.dart';
+import 'src/whats_new.dart';
+
+Future<void> main() async {
+  // Everything runs in one zone so the developer console (dev_console.dart) sees what the app prints and the errors nothing else
+  // catches. This costs nothing while developer mode is off: lines only go into a small buffer.
+  runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      DevConsole.installErrorHooks();
+      // The same phone / TV test the web UI used for html.pek-tv; Settings > TV mode (tv_mode.dart) can force the look on or off.
+      // Asked right away so it runs alongside the storage load instead of after it.
+      final phoneAsk = PekPlayer.isPhone();
+      await Store.init();
+      DevConsole.init();
+      NavSounds.install(); // the move sound (nav_sound.dart); select and back are hooked in PekFocusable and the navigator
+      Profiles.load();
+      MusicController.instance.restore(); // the song the active profile was playing when the app closed
+      Net.start(); // the green / red dot and offline mode (net.js)
+      final phone = await phoneAsk;
+      unawaited(RemoteHost.instance.startIfWanted(isPhone: phone)); // TV: lets a paired phone act as remote and keyboard (remote_host.dart)
+      runApp(PekApp(isPhone: phone));
+    },
+    (error, stack) => DevConsole.add('[uncaught] $error\n$stack'),
+    zoneSpecification: ZoneSpecification(
+      print: (self, parent, zone, line) {
+        DevConsole.add(line);
+        parent.print(zone, line);
+      },
+    ),
+  );
+}
+
+class PekApp extends StatelessWidget {
+  const PekApp({super.key, required this.isPhone});
+  final bool isPhone;
+
+  @override
+  Widget build(BuildContext context) {
+    // The skin belongs to the profile: it changes with the picker and with Settings > Appearance.
+    return ListenableBuilder(
+      listenable: Listenable.merge([Skins.changes, Store.profile]),
+      builder: (context, _) {
+        final tokens = Skins.tokens;
+        return MaterialApp(
+          title: 'PEK TV',
+          debugShowCheckedModeBanner: false,
+          scaffoldMessengerKey: Net.messenger,
+          navigatorKey: DeepLink.navKey,
+          navigatorObservers: NavSounds.observers,
+          theme: pekTheme(tokens),
+          // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
+          builder: (context, child) => PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()])))),
+          home: const _Boot(),
+        );
+      },
+    );
+  }
+}
+
+/// Waits for the C++ server (MainActivity has started it already, this only covers a slow start) then opens the shell.
+class _Boot extends StatefulWidget {
+  const _Boot();
+  @override
+  State<_Boot> createState() => _BootState();
+}
+
+class _BootState extends State<_Boot> {
+  late Future<bool> _ready = _start();
+
+  // A newer PEK TV on GitHub (app_update.dart). Looked for while the server starts, so it adds no waiting when up to date;
+  // "Not now" hides the screen for this run only, it is back at the next start.
+  AppRelease? _update;
+  bool _later = false;
+
+  // What changed in this version (whats_new.dart): shown once, on the first start after an update.
+  List<ReleaseNotes> _notes = const [];
+  bool _notesSeen = false;
+
+  Future<bool> _start() async {
+    final check = AppUpdate.check(); // gives up after a few seconds; any problem = no update screen
+    final notes = WhatsNew.pending(); // local, instant; any problem = no screen
+    unawaited(News.refresh()); // the Updates feed (news.dart): fetched in the background so Settings can show "N new"
+    final ok = await Api.waitForServer();
+    _update = await check;
+    _notes = await notes;
+    _announceReady();
+    return ok;
+  }
+
+  /// Tells the native splash video that the app has loaded, so it can lift as soon as it has finished playing (the video covers
+  /// everything while this runs underneath, and cannot be skipped). Sent two frames from now, after the spinner has been
+  /// swapped for the real first screen (profile picker, update screen or home), so that is what appears when the video lifts.
+  /// If this never arrives the native side lifts the video a few seconds after it ends anyway.
+  void _announceReady() {
+    final b = WidgetsBinding.instance;
+    b.addPostFrameCallback((_) {
+      b.addPostFrameCallback((_) {
+        const MethodChannel('pek/host').invokeMethod<void>('splashReady').catchError((Object _) {});
+      });
+      b.ensureVisualUpdate();
+    });
+    b.ensureVisualUpdate();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _ready,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          // Same colour as the native splash (pek_splash_bg), so the hand-over from the launch screen does not flash.
+          return const Scaffold(
+            backgroundColor: Color(0xFFE04A00),
+            body: Center(child: CircularProgressIndicator(color: Colors.white)),
+          );
+        }
+        if (snap.data == true) {
+          if (_update != null && !_later) {
+            return AppUpdateScreen(release: _update!, onLater: () => setState(() => _later = true));
+          }
+          if (_notes.isNotEmpty && !_notesSeen) {
+            return WhatsNewScreen(
+              notes: _notes,
+              onDone: () {
+                WhatsNew.markSeen();
+                setState(() => _notesSeen = true);
+              },
+            );
+          }
+          // With an account, "Who's watching?" comes first; the app below is rebuilt for each profile.
+          return ListenableBuilder(
+            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Store.simpleModeN, Recs.changed, Welcome.changed]),
+            builder: (context, _) {
+              if (Profiles.gateNeeded) return const ProfileGate();
+              // First launch: the welcome tour (welcome.dart), the taste picker (recs_onboarding.dart), the Simple / Advanced question and sign in,
+              // each sliding in after the one before (onboarding_flow.dart); the last answer opens the app. A new profile on an old
+              // install only gets the taste picker, and "Skip" there goes straight to the app.
+              if (Welcome.pending || Recs.onboardingPending || LayoutChoice.pending || SignInStep.pending) return OnboardingFlow(key: ValueKey('onboarding-${Profiles.currentId}'));
+              return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}-${Store.simpleMode}'));
+            },
+          );
+        }
+        final rem = context.pek.rem;
+        return Scaffold(
+          body: Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('The PEK server did not start.'),
+              SizedBox(height: rem),
+              PekButtonRetry(onTap: () => setState(() => _ready = _start())),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class PekButtonRetry extends StatelessWidget {
+  const PekButtonRetry({super.key, required this.onTap});
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => FilledButton(autofocus: true, onPressed: onTap, child: const Text('Try again'));
+}

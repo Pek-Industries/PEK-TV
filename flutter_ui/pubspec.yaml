@@ -34,6 +34,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/welcome/   # stand-in screenshots for the welcome tour (welcome.dart): <name>.jpg for TVs, <name>-portrait.jpg for phones
+    - assets/brand/     # the PEK TV logo (pek_logo.png, from the launcher icon) on the sign-in page at the end of the first-launch flow
   module:
     androidX: true
     androidPackage: com.pektv.app.flutterui

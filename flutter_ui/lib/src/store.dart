@@ -24,6 +24,7 @@ class Store {
     _p = await SharedPreferences.getInstance();
     await ColdHistory.init();
     musicModeN.value = _p.getBool('pek_music_mode') ?? false;
+    simpleModeN.value = _p.getBool('pek_simple_mode') ?? false;
     _archiveLocalIfSignedOut();
   }
 
@@ -34,6 +35,30 @@ class Store {
   static Future<void> setMusicMode(bool on) async {
     await _p.setBool('pek_music_mode', on);
     musicModeN.value = on;
+  }
+
+  /// Simple layout (Settings > Mode > Layout): a streaming-app look (banner, rows of cards, genre chips) made for people who just want
+  /// to press Play. Off = the Advanced layout (dashboard, filters, plugins, everything). Device-wide, like music mode; the notifier
+  /// makes main.dart rebuild the shell the moment it is switched. Change the `?? false` in [init] to make Simple the first-run look.
+  static final ValueNotifier<bool> simpleModeN = ValueNotifier(false);
+  static bool get simpleMode => simpleModeN.value;
+  static Future<void> setSimpleMode(bool on) async {
+    await _p.setBool('pek_simple_mode', on);
+    simpleModeN.value = on;
+  }
+
+  /// Simple layout: trailers start by themselves on the banner and on a title's page (default on) ...
+  static bool get simpleTrailers => _p.getBool('pek_simple_trailers') ?? true;
+  static Future<void> setSimpleTrailers(bool on) async {
+    await _p.setBool('pek_simple_trailers', on);
+    _bump();
+  }
+
+  /// ... with the sound off unless this is on (default off, like a streaming app's banner).
+  static bool get simpleSound => _p.getBool('pek_simple_sound') ?? false;
+  static Future<void> setSimpleSound(bool on) async {
+    await _p.setBool('pek_simple_sound', on);
+    _bump();
   }
 
   static void _bump() => changed.value++;

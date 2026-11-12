@@ -1,0 +1,41 @@
+name: pek_tv_ui
+description: PEK TV Flutter UI (Android first). Talks to the existing C++ server on 127.0.0.1:8080 and drives libmpv through platform channels.
+publish_to: none
+version: 2.2.4+24
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  http2: ^2.2.0                     # HTTP/2 for the poster downloads: one connection carries every picture (h2_fetch.dart)
+  shared_preferences: ^2.2.3
+  crypto: ^3.0.3
+  share_plus: ^10.1.4               # sharing the history / ratings export file
+  webview_flutter: ^4.10.0          # plugin trailers (YouTube, locked to youtube-nocookie.com)
+  webview_flutter_android: ^4.3.0
+  image_picker: ^1.1.2              # choosing a playlist picture from the gallery
+  path_provider: ^2.1.4             # where the chosen playlist pictures are kept
+  qr_flutter: ^4.1.0                # the QR code on the "Sign in with your phone" screen
+  sherpa_onnx: ^1.12.0              # Moonshine (speech to text, bundled in the APK) and Piper (text to speech, optional download), voice.dart
+  record: ^6.0.0                   # microphone, 16 kHz PCM stream (voice.dart)
+  audioplayers: ^6.1.0              # plays the spoken reply (voice.dart)
+  archive: ^3.6.1                   # unpacks the espeak-ng data zip after the optional spoken-reply download (voice_models.dart)
+  flutter_animate: ^4.5.0           # staggered pop-in and tap bounces on the taste picker (recs_onboarding.dart)
+  dpad: ^3.3.0                      # TV D-pad navigation: regions with focus memory, beam-based moves (tv_nav.dart)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/welcome/   # stand-in screenshots for the welcome tour (welcome.dart): <name>.jpg for TVs, <name>-portrait.jpg for phones
+    - assets/brand/     # the PEK TV logo (pek_logo.png, from the launcher icon) on the sign-in page at the end of the first-launch flow
+  module:
+    androidX: true
+    androidPackage: com.pektv.app.flutterui
+    iosBundleIdentifier: com.pektv.app.flutterui

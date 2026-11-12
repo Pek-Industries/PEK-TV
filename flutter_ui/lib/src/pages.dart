@@ -31,6 +31,7 @@ import 'plugin_updates.dart';
 import 'plugin_ui.dart';
 import 'remote_ui.dart';
 import 'settings_extra.dart';
+import 'simple_settings.dart';
 import 'store.dart';
 import 'tv_mode.dart';
 import 'tokens.dart';
@@ -451,7 +452,7 @@ class SettingsPage extends StatelessWidget {
     final music = Store.musicMode;
     return ListView(padding: padding, children: [
       Heading('Settings', weather: !music),
-      row('Mode', music ? 'Music mode is on. Switch back to regular PEK TV here' : 'Turn on music mode: the app becomes a music player', Icons.music_note_outlined, () => const _SettingsList(children: [ModeSection()])),
+      row('Mode', music ? 'Music mode is on. Switch back to regular PEK TV here' : 'Simple or Advanced layout, and music mode', Icons.dashboard_customize_outlined, () => _SettingsList(children: [if (!music) const InterfaceSection(), const ModeSection()])),
       row('Library', music ? 'The folders and network folders PEK TV scans for music' : 'The folders PEK TV scans for movies, shows and music', Icons.folder_outlined, () => _LibrarySettings(music: music)),
       row('Account', music ? 'Sign in, profiles and sync' : 'Sign in, profiles, sync and Discord', Icons.person_outline, () => _SettingsList(children: [const AccountSection(), if (!music) const DiscordSection()])),
       // Regular mode: Updates is a main screen (bottom bar on a phone, side menu on a TV). Music mode has no such bar entry.

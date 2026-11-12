@@ -1009,8 +1009,11 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
 /// from the beginning. The web view lives here instead, so a new widget just picks it up where it was, and the trailer is
 /// paused (never restarted) while it cannot be seen.
 class _TrailerHolder {
-  _TrailerHolder(this.id);
+  _TrailerHolder(this.id, {this.seeThrough = false});
   final String id;
+  /// The web view and its page have no background of their own, so whatever is behind the trailer (the Simple layout's banner picture)
+  /// stays visible until the video itself fades in.
+  final bool seeThrough;
   WebViewController? controller;
   bool fellBack = false; // the plain stream failed: the YouTube frame is showing instead
   bool _active = true;
@@ -1060,7 +1063,7 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     late final WebViewController c;
     c = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.black)
+      ..setBackgroundColor(holder.seeThrough ? const Color(0x00000000) : Colors.black)
       ..addJavaScriptChannel('PekTrailer', onMessageReceived: (m) {
         // The plain stream would not play: use the YouTube frame instead (once).
         if (m.message == 'error' && holder.controller == c && !holder.fellBack) {
@@ -1095,7 +1098,8 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     final video = Api.withToken(Api.abs('${info['video']}'));
     final audioPath = '${info['audio'] ?? ''}';
     final audio = audioPath.isEmpty ? '' : Api.withToken(Api.abs(audioPath));
-    const css = 'html,body{margin:0;height:100%;background:#000;overflow:hidden}'
+    final bg = holder.seeThrough ? 'transparent' : '#000';
+    final css = 'html,body{margin:0;height:100%;background:$bg;overflow:hidden}'
         'video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .4s}'
         'video.on{opacity:1}';
     final js = "var v=document.getElementById('v'),a=document.getElementById('a'),want=${play ? 'true' : 'false'},muted=${muted ? 'true' : 'false'},ok=false;"
@@ -1133,7 +1137,8 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     final id = Uri.encodeComponent(idRaw);
     final q = 'autoplay=${play ? 1 : 0}&mute=${muted ? 1 : 0}&controls=0&disablekb=1&fs=0&iv_load_policy=3&cc_load_policy=0'
         '&playsinline=1&rel=0&modestbranding=1&loop=1&playlist=$id&enablejsapi=1&origin=${Uri.encodeComponent(origin)}';
-    const css = 'html,body{margin:0;height:100%;background:#000;overflow:hidden}'
+    final bg = widget.holder.seeThrough ? 'transparent' : '#000';
+    final css = 'html,body{margin:0;height:100%;background:$bg;overflow:hidden}'
         'iframe{position:absolute;left:50%;top:50%;border:0;pointer-events:none;opacity:0;transition:opacity .4s;'
         'width:calc(max(100vw,177.78vh)*1.2);height:calc(max(56.25vw,100vh)*1.2);transform:translate(-50%,-50%)}'
         'iframe.on{opacity:1}';
@@ -1165,12 +1170,46 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     final c = _controller;
     return ClipRect(
       child: ColoredBox(
-        color: Colors.black,
+        color: widget.holder.seeThrough ? Colors.transparent : Colors.black,
         child: c == null
             ? Center(child: PekButton(shrink: true, label: 'Play trailer', primary: true, onTap: () => setState(() => _start(play: true))))
             : ExcludeFocus(excluding: p.tvDevice, child: WebViewWidget(controller: c)),
       ),
     );
+  }
+}
+
+/// A trailer for screens outside the plugin pages (the Simple layout's banner and detail page). It is the same player as the
+/// plugins' `ui.video` (the plain stream from this app's own server first, YouTube's locked-down frame as the fallback), muted
+/// unless [muted] is false, looping, and see-through until the picture arrives, so the banner picture under it stays visible while
+/// the trailer loads. [active] false pauses it (a player or another screen is on top); true plays on from the same place.
+/// [videoId] is the 11-character YouTube id.
+class PekTrailerView extends StatefulWidget {
+  const PekTrailerView({super.key, required this.videoId, this.muted = true, this.active = true});
+  final String videoId;
+  final bool muted;
+  final bool active;
+
+  @override
+  State<PekTrailerView> createState() => _PekTrailerViewState();
+}
+
+class _PekTrailerViewState extends State<PekTrailerView> {
+  late _TrailerHolder _holder = _TrailerHolder(widget.videoId, seeThrough: true);
+
+  @override
+  void didUpdateWidget(PekTrailerView old) {
+    super.didUpdateWidget(old);
+    if (old.videoId != widget.videoId) {
+      _holder = _TrailerHolder(widget.videoId, seeThrough: true); // another title: a new web view (the key below changes too)
+    } else if (old.active != widget.active) {
+      _holder.setActive(widget.active);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _PluginTrailer(key: ValueKey('pek-trailer-${widget.videoId}'), id: widget.videoId, autoplay: true, muted: widget.muted, holder: _holder);
   }
 }
 

@@ -372,6 +372,11 @@ class RecFeed {
     return Details(overview: '${pick['overview'] ?? ''}', poster: poster.isEmpty ? '' : '${RecFeed.imageBase}/w342$poster');
   }
 
+  /// One title's TMDb page with extras appended (trailers, recommendations), for the Simple layout's banner and detail page.
+  /// null = no answer (offline, or the proxy is busy). Kept for 6 hours like every other TMDb answer here.
+  static Future<Map<String, dynamic>?> info(int id, bool tv, {String append = 'videos,recommendations'}) =>
+      _get('/${tv ? 'tv' : 'movie'}/$id?append_to_response=$append&include_video_language=en,null');
+
   /// The TMDb id of the show called [name] (an exact name match first, else the top result), or 0 when none is found.
   static Future<int> tvIdByName(String name) async {
     final q = name.trim();

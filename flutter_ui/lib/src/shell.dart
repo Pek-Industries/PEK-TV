@@ -17,6 +17,7 @@ import 'common.dart';
 import 'dashboard.dart';
 import 'library.dart';
 import 'layouts.dart';
+import 'simple_shell.dart';
 import 'library_pages.dart';
 import 'mpv.dart';
 import 'music.dart';
@@ -83,6 +84,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final ValueNotifier<int> _pageN = ValueNotifier(0); // only the tab bar listens, so a swipe does not rebuild every page
   // Music mode is read once: switching it rebuilds the whole shell (main.dart keys it on the mode).
   final bool _music = Store.musicMode;
+  // Simple layout (Settings > Mode > Layout): the streaming-app home replaces the swipe pages / sidebar. Read once, like _music: main.dart keys the shell on it.
+  final bool _simple = Store.simpleMode && !Store.musicMode;
   String get _home => _music ? 'mhome' : 'dashboard';
   /// The pages in the order of the tab bar: the app's own, with the skin's order and removed pages applied (skin_layout.dart).
   /// The home page and "More" (music mode: Home and Settings) always stay, so every screen can still be reached.
@@ -343,7 +346,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _askExit();
         }
       },
-      child: Material(color: p.tokens.bg, child: BackupLimitBanner.wrap(child: LapseBanner.wrap(child: p.sidebar ? _tv(context) : _phone(context)))),
+      child: Material(color: p.tokens.bg, child: BackupLimitBanner.wrap(child: LapseBanner.wrap(child: _simple ? const SimpleHome() : (p.sidebar ? _tv(context) : _phone(context))))),
     );
   }
 

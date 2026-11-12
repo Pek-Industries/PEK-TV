@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
+import 'onboarding_flow.dart' show LayoutChoice, SignInStep;
 import 'recs.dart';
 import 'store.dart';
 import 'tokens.dart';
@@ -25,6 +26,8 @@ class Welcome {
 
   static Future<void> markSeen() async {
     await Store.strSet(_k, '1', scoped: false);
+    await LayoutChoice.arm(); // the last first-launch questions (onboarding_flow.dart) come after the taste picker
+    await SignInStep.arm();
     changed.value++;
   }
 

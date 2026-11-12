@@ -13,7 +13,7 @@ import 'src/cloud.dart';
 import 'src/profile_pages.dart';
 import 'src/profiles.dart';
 import 'src/recs.dart';
-import 'src/recs_onboarding.dart';
+import 'src/onboarding_flow.dart';
 import 'src/remote_host.dart';
 import 'src/skins.dart';
 import 'src/mpv.dart';
@@ -158,15 +158,14 @@ class _BootState extends State<_Boot> {
           }
           // With an account, "Who's watching?" comes first; the app below is rebuilt for each profile.
           return ListenableBuilder(
-            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Recs.changed, Welcome.changed]),
+            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Store.simpleModeN, Recs.changed, Welcome.changed]),
             builder: (context, _) {
               if (Profiles.gateNeeded) return const ProfileGate();
-              // First launch ever: "Welcome to PEK TV" (welcome.dart), one feature per screen, then the picker below.
-              if (Welcome.pending) return WelcomeScreen(key: const ValueKey('welcome'), onDone: Welcome.markSeen);
-              // A brand new profile picks genres, movies and shows first (recs_onboarding.dart); "Skip" goes straight to the app.
-              // Saving or skipping changes Recs, which rebuilds this into the shell.
-              if (Recs.onboardingPending) return RecsOnboardingScreen(key: ValueKey('recs-first-${Profiles.currentId}'), firstRun: true, onDone: () {});
-              return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}'));
+              // First launch: the welcome tour (welcome.dart), the taste picker (recs_onboarding.dart), the Simple / Advanced question and sign in,
+              // each sliding in after the one before (onboarding_flow.dart); the last answer opens the app. A new profile on an old
+              // install only gets the taste picker, and "Skip" there goes straight to the app.
+              if (Welcome.pending || Recs.onboardingPending || LayoutChoice.pending || SignInStep.pending) return OnboardingFlow(key: ValueKey('onboarding-${Profiles.currentId}'));
+              return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}-${Store.simpleMode}'));
             },
           );
         }
