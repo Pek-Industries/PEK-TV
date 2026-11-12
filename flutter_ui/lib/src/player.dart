@@ -119,6 +119,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ..start();
     }
     _player.ended.addListener(_onEnded);
+    _nextVisible.addListener(_onNextVisible);
     _player.failed.addListener(_onFailed);
     _player.playing.addListener(_onPlaying);
     _subs = SubsController(player: _player, meta: widget.resume, fileName: widget.title, toast: _toast);
@@ -169,6 +170,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_phone) SystemChrome.setPreferredOrientations(const []);
     _rootNode.dispose();
     _playNode.dispose();
+    _nextVisible.removeListener(_onNextVisible);
+    _nextPlayNode.dispose();
+    _nextDismissNode.dispose();
     Activity.playerLeave();
     if (!_leaving) {
       _hook('stop');
@@ -398,8 +402,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hide = Timer(const Duration(seconds: 4), () {
       if (mounted && _player.playing.value) {
         setState(() => _controls = false);
-        // the buttons are out of the focus order while hidden: hand the remote back to the video
-        if (ModalRoute.of(context)?.isCurrent ?? false) _rootNode.requestFocus();
+        // the buttons are out of the focus order while hidden: hand the remote back to the video (but not off the Next episode card)
+        if (!_nextHasFocus && (ModalRoute.of(context)?.isCurrent ?? false)) _rootNode.requestFocus();
       }
     });
   }
@@ -477,6 +481,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // video lands. Left / Right / Up / Down then move between the buttons and OK presses the one that is lit.
   final FocusNode _rootNode = FocusNode(debugLabel: 'player');
   final FocusNode _playNode = FocusNode(debugLabel: 'player play');
+  // The "Next episode" card's two buttons. Up from the video lands on Play now (and the card takes the focus by itself once the
+  // episode has ended and the countdown runs), so a remote or controller can reach them without walking through the controls.
+  final FocusNode _nextPlayNode = FocusNode(debugLabel: 'player next: play now');
+  final FocusNode _nextDismissNode = FocusNode(debugLabel: 'player next: dismiss');
+  bool get _nextHasFocus => _nextPlayNode.hasFocus || _nextDismissNode.hasFocus;
+
+  void _onNextVisible() {
+    if (!mounted) return;
+    if (_nextVisible.value) {
+      // The film is over and the countdown runs: nothing else needs the remote, so OK = Play now, and Right reaches Cancel.
+      if (_player.ended.value) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _nextVisible.value) _nextPlayNode.requestFocus();
+        });
+      }
+    } else if (_nextHasFocus) {
+      _rootNode.requestFocus(); // the card went away under the focus: hand the remote back to the video
+    }
+  }
   DateTime _lastSeekKey = DateTime.fromMillisecondsSinceEpoch(0);
 
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
@@ -530,6 +553,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (k == LogicalKeyboardKey.arrowUp) {
       _poke();
+      if (_nextVisible.value && _next != null && e is KeyDownEvent) _nextPlayNode.requestFocus(); // Up = the Next episode card
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowDown) {
@@ -864,6 +888,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  // A clear white ring on whichever of the card's buttons has the focus (the default highlight is too faint to see from the sofa).
+  static final ButtonStyle _nextFocusRing = ButtonStyle(
+    side: WidgetStateProperty.resolveWith((st) => st.contains(WidgetState.focused) ? const BorderSide(color: Colors.white, width: 2.5) : null),
+  );
+
   /// The "Next episode" card in the top right corner: Play now / Dismiss, or a countdown once this episode has ended.
   Widget _nextCard() {
     return ValueListenableBuilder<bool>(
@@ -890,11 +919,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Text(n.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white)),
                 if (left != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Starts in $left\u2026', style: const TextStyle(color: Colors.white70))),
                 const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(child: FilledButton(onPressed: _playNext, child: const Text('Play now'))),
-                  const SizedBox(width: 8),
-                  TextButton(onPressed: _cancelNext, child: Text(left != null ? 'Cancel' : 'Dismiss')),
-                ]),
+                // Down hands the remote back to the video; Left / Right move between the two buttons, OK presses the lit one.
+                Focus(
+                  canRequestFocus: false,
+                  skipTraversal: true,
+                  onKeyEvent: (_, e) {
+                    if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.arrowDown) {
+                      _rootNode.requestFocus();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: Row(children: [
+                    Expanded(child: FilledButton(focusNode: _nextPlayNode, style: _nextFocusRing, onPressed: _playNext, child: const Text('Play now'))),
+                    const SizedBox(width: 8),
+                    TextButton(focusNode: _nextDismissNode, style: _nextFocusRing, onPressed: _cancelNext, child: Text(left != null ? 'Cancel' : 'Dismiss')),
+                  ]),
+                ),
+                if (left == null && context.pek.tvDevice)
+                  const Padding(padding: EdgeInsets.only(top: 8), child: Text('Press Up to choose', style: TextStyle(fontSize: 11, color: Colors.white54))),
               ]),
             ),
           ),

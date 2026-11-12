@@ -624,8 +624,19 @@ class Cloud {
   /// null = could not ask (offline); id 0 = TMDb has no match.
   static Future<({int id, String poster})?> _tmdbLookup(bool tv, String title, int year) async {
     try {
-      final q = Uri.encodeQueryComponent(title);
-      final url = tv ? '$_tmdb/search/tv?query=$q' : '$_tmdb/search/movie?query=$q${year > 0 ? '&year=$year' : ''}';
+      // A series that shares its name with another carries its year in the library title ("Battlestar Galactica (1978)"): ask TMDb
+      // for that year, so the right series' id and poster come back.
+      var name = title;
+      var tvYear = 0;
+      if (tv) {
+        final m = RegExp(r'^(.*\S)\s*\(((?:19|20)\d{2})\)\s*$').firstMatch(title);
+        if (m != null) {
+          name = m.group(1)!;
+          tvYear = int.parse(m.group(2)!);
+        }
+      }
+      final q = Uri.encodeQueryComponent(name);
+      final url = tv ? '$_tmdb/search/tv?query=$q${tvYear > 0 ? '&first_air_date_year=$tvYear' : ''}' : '$_tmdb/search/movie?query=$q${year > 0 ? '&year=$year' : ''}';
       final r = await _c.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
       if (r.statusCode != 200) return null;
       final o = jsonDecode(utf8.decode(r.bodyBytes));

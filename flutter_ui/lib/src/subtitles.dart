@@ -126,12 +126,24 @@ class SubsController extends ChangeNotifier {
   void onTracks() {
     if (_dead || _autoDone || !Store.subsAuto || !available) return;
     _timer?.cancel();
-    _timer = Timer(_autoDelay, () {
-      if (_dead || _autoDone) return;
-      _autoDone = true;
-      if (player.subtitles.value.isNotEmpty) return; // the file brings its own: leave it alone
-      find(auto: true);
-    });
+    _waits = 0;
+    _timer = Timer(_autoDelay, _autoCheck);
+  }
+
+  int _waits = 0;
+
+  /// Looks for subtitles only once the picture is really playing: searching and loading one while the file is still opening
+  /// (slow network share, torrent, a renderer restart) hung or crashed the player on some boxes.
+  void _autoCheck() {
+    if (_dead || _autoDone) return;
+    final started = player.position.value > 0; // (playing starts out true, so it says nothing about the file having opened)
+    if (!started && _waits++ < 30) {
+      _timer = Timer(const Duration(seconds: 1), _autoCheck);
+      return;
+    }
+    _autoDone = true;
+    if (player.subtitles.value.isNotEmpty) return; // the file brings its own: leave it alone
+    find(auto: true);
   }
 
   /// auto = true: pick the best match and switch it on. auto = false: just fill the list for the menu.

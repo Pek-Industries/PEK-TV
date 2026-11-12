@@ -116,3 +116,20 @@ rating to match on. Nothing here asks TMDb.
   `min_rating`, `min_runtime`, `max_runtime`, `nfo=with|without` and `sort=title|title_desc|year|year_asc|added|rating|runtime|runtime_asc`;
   `GET /api/library/suggest` takes the same plus `type=movies|shows|both`; `GET /api/library/facets` also lists `studios`,
   `collections`, `mpaa` and how many titles have a `.nfo`.
+
+## Shows that share a name (remakes, mini-series)
+
+Name each series' own folder with its year and, if you like, a Plex / Jellyfin style id tag:
+
+```
+Battlestar Galactica (1978) {tmdb-501}/Season 1/...
+Battlestar Galactica (2003) {tmdb-71365}/Season 1/...
+Battlestar Galactica (2004) {tmdb-1972}/Season 1/...
+```
+
+- The `(year)` is what looks the right series up on TMDb (poster, synopsis); the `{tmdb-N}`, `{imdb-tt...}` or `{tvdb-N}` tag
+  (also `[tmdbid-N]`) is read as well and never ends up in the title.
+- When the library holds the same title under different years or ids, each series keeps its year in the title
+  (`Battlestar Galactica (1978)`, `(2003)`, `(2004)`) so their episodes are no longer merged. A title that is unique stays plain.
+- Episode files can simply be named `S01E01`; the folder is what identifies the series.
+- If you already watched episodes of an affected show, its progress is under the old plain title and starts fresh under the new one.

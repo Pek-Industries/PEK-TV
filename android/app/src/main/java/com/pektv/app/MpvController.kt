@@ -28,6 +28,7 @@ import android.widget.Toast
 import dev.jdtech.mpv.MPVLib
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -49,7 +50,11 @@ class MpvController(
 ) : SurfaceHolder.Callback, MPVLib.EventObserver {
 
     private val ui = Handler(Looper.getMainLooper())
-    private var mpv: MPVLib? = null
+    @Volatile private var mpv: MPVLib? = null
+    // mpv's sub-add blocks until mpv has opened the file; on the UI thread that froze the whole app for a moment. It runs on its
+    // own thread instead. The lock keeps stopEngine() from destroying the engine while such a command is still inside it.
+    private val engineLock = Any()
+    private val subExec = Executors.newSingleThreadExecutor { r -> Thread(r, "pek-subadd").apply { isDaemon = true } }
     private var surfaceReady = false
 
     // DVD: "dvd://" or "dvd://<title>" is played from this folder (the one that holds VIDEO_TS) or .iso file, through libmpv's
@@ -231,29 +236,46 @@ class MpvController(
 
     // An extra subtitle file (SubRip at a URL the UI got from the backend). It is loaded and
     // switched on at once. Like picking a subtitle in the menu, it needs the normal renderer.
-    fun addSubtitle(url: String, label: String) {
+    fun addSubtitle(url: String, label: String) = addSubtitleWhenReady(url, label, 0)
+
+    // The file may still be opening (a subtitle that arrives this early used to be added into an engine that was not ready, and
+    // could take the app down): wait until mpv reports the file as loaded, for at most ~15 s.
+    private fun addSubtitleWhenReady(url: String, label: String, tries: Int) {
         val m = mpv ?: return
+        if (!loaded) {
+            if (tries < 30) ui.postDelayed({ if (mpv === m) addSubtitleWhenReady(url, label, tries + 1) }, 500L)
+            return
+        }
         // A downloaded subtitle is SubRip text: with the overlay on it needs no renderer change.
         if ((lite || hdrDirect) && !liteSuspended && !subOverlay) { liteSuspended = true; applyRenderer(m) }
         val cur = mpv ?: return
-        if (cur !== m) return                // the file was reopened by a renderer change: this subtitle is not loaded into it
-        try {
-            cur.command(arrayOf("sub-add", url, "select", label))
-        } catch (t: Throwable) {
-            Log.w("PEK", "sub-add failed", t)
+        if (cur !== m) {                     // the file was reopened by a renderer change: add the subtitle to the new engine once it is loaded
+            addSubtitleWhenReady(url, label, tries + 1)
             return
         }
-        // mpv fetches the file in the background: tell the page about the new track once it has appeared.
-        val refresh = Runnable {
-            if (mpv != null) {
-                emit("tracks", readTracks())
-                curSid = mpv?.getPropertyString("sid") ?: curSid
-                wantSid = curSid
-                updateOverlay()
+        subExec.execute {
+            val ok = synchronized(engineLock) {
+                if (mpv !== cur) false else try {
+                    cur.command(arrayOf("sub-add", url, "select", label))
+                    true
+                } catch (t: Throwable) {
+                    Log.w("PEK", "sub-add failed", t)
+                    false
+                }
             }
+            if (!ok) return@execute
+            // mpv fetches the file in the background: tell the page about the new track once it has appeared.
+            val refresh = Runnable {
+                if (mpv === cur) {
+                    emit("tracks", readTracks())
+                    curSid = mpv?.getPropertyString("sid") ?: curSid
+                    wantSid = curSid
+                    updateOverlay()
+                }
+            }
+            ui.postDelayed(refresh, 700L)
+            ui.postDelayed(refresh, 2500L)
         }
-        ui.postDelayed(refresh, 700L)
-        ui.postDelayed(refresh, 2500L)
     }
 
     // Turn smooth mode on / off (also reachable from the page: mpvSetLite).
@@ -780,11 +802,13 @@ class MpvController(
             emit("subtitle", JSONObject().put("text", ""))
         }
         lastSubText = ""
-        try {
-            m.removeObserver(this)
-            m.detachSurface()
-            m.destroy()
-        } catch (t: Throwable) { /* already gone */ }
+        synchronized(engineLock) {
+            try {
+                m.removeObserver(this)
+                m.detachSurface()
+                m.destroy()
+            } catch (t: Throwable) { /* already gone */ }
+        }
     }
 
     // mpv failed: close the player and tell the user. No second player to fall back to.

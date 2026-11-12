@@ -287,6 +287,43 @@ std::string normalizeName(const std::string& s) {
     return out;
 }
 
+// A show title the library hands over may carry the year / id that tells same-named series apart: "Battlestar Galactica (1978)",
+// or, from the scanner, "Battlestar Galactica (2003) {tmdb-71365}". Splits it: base title, year (0 = none), TMDb id ("" = none).
+void splitShowGuess(const std::string& in, std::string& base, int& year, std::string& tmdb) {
+    base = in; year = 0; tmdb.clear();
+    auto trim = [](std::string& x) {
+        while (!x.empty() && std::isspace(static_cast<unsigned char>(x.back()))) x.pop_back();
+        size_t i = 0;
+        while (i < x.size() && std::isspace(static_cast<unsigned char>(x[i]))) ++i;
+        x.erase(0, i);
+    };
+    trim(base);
+    if (!base.empty() && base.back() == '}') {                    // trailing " {tmdb-123}"
+        size_t o = base.rfind('{');
+        if (o != std::string::npos) {
+            std::string tag = base.substr(o + 1, base.size() - o - 2);
+            if (tag.compare(0, 5, "tmdb-") == 0) {
+                std::string n = tag.substr(5);
+                if (!n.empty() && std::all_of(n.begin(), n.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) tmdb = n;
+            }
+            base.erase(o);
+            trim(base);
+        }
+    }
+    if (base.size() > 7 && base.back() == ')') {                  // trailing " (1978)"
+        size_t o = base.rfind('(');
+        if (o != std::string::npos && base.size() - o == 6) {
+            std::string y = base.substr(o + 1, 4);
+            if (std::all_of(y.begin(), y.end(), [](unsigned char c) { return std::isdigit(c) != 0; }) && (y[0] == '1' || y[0] == '2')) {
+                year = std::atoi(y.c_str());
+                base.erase(o);
+                trim(base);
+            }
+        }
+    }
+    if (base.empty()) base = in;
+}
+
 // First "key": 123 number as text ("" if absent). Used for TMDb ids.
 std::string extractJsonNumber(const std::string& json, const std::string& key) {
     std::string needle = "\"" + key + "\"";
@@ -547,7 +584,10 @@ static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, boo
         art = local.art.empty() ? "" : "/api/artwork?kind=show&title=" + httplib::encode_uri_component(job.title) + artVersion(local);
         stamp = MediaScanner::localStamp(local);
         if (!local.plot.empty() && !art.empty()) { scanner->artStore(false, job.title, art, local.plot, stamp); return 1; }
-        path = "/search/tv?query=" + httplib::encode_uri(job.title);
+        std::string showBase, showTmdb; int showYear = 0;
+        splitShowGuess(job.title, showBase, showYear, showTmdb);      // "Battlestar Galactica (1978)": the year picks the right series
+        path = "/search/tv?query=" + httplib::encode_uri(showBase);
+        if (showYear > 0) path += "&first_air_date_year=" + std::to_string(showYear);
         overview = local.plot;
         tmdbStamp = MediaScanner::tmdbStamp(local, job.title, 0);
     }
@@ -622,8 +662,11 @@ static void startArtWorker(MediaScanner* scanner) {
     }).detach();
 }
 
-std::string PekServer::resolveShowName(const std::string& guess) {
-    if (guess.empty()) return "";
+std::string PekServer::resolveShowName(const std::string& guess_in) {
+    if (guess_in.empty()) return "";
+
+    std::string guess, tmdbId; int year = 0;
+    splitShowGuess(guess_in, guess, year, tmdbId);
 
     httplib::Client client(tmdbProxyUrl());
 
@@ -631,18 +674,33 @@ std::string PekServer::resolveShowName(const std::string& guess) {
     client.set_connection_timeout(5);
     client.set_read_timeout(5);
 
+    // The year narrows the search to the right series when several share the name (1978 / 2003 / 2004 Battlestar Galactica).
     std::string query = "/search/tv?query=" + httplib::encode_uri(guess);
+    if (year > 0) query += "&first_air_date_year=" + std::to_string(year);
     auto res = client.Get(query.c_str());
     if (!res || res->status != 200) return "";
 
     size_t results_pos = res->body.find("\"results\"");
-    std::string first_result = results_pos != std::string::npos ? res->body.substr(results_pos) : res->body;
-    std::string name = extractJsonString(first_result, "name");
+    std::string results = results_pos != std::string::npos ? res->body.substr(results_pos) : res->body;
+
+    std::string a = normalizeName(guess);
+    // A {tmdb-N} tag names the exact series: take it when the search lists it.
+    if (!tmdbId.empty()) {
+        size_t at = results.find("\"id\":" + tmdbId + ",");
+        if (at == std::string::npos) at = results.find("\"id\": " + tmdbId + ",");
+        if (at != std::string::npos) {
+            std::string name = extractJsonString(results.substr(at), "name");
+            std::string b = normalizeName(name);
+            if (!b.empty() && !a.empty() && (a.find(b) != std::string::npos || b.find(a) != std::string::npos)) return name;
+        }
+    }
+
+    std::string name = extractJsonString(results, "name");
     if (name.empty()) return "";
 
     // Only trust a close match: "friends" -> "Friends" is fine, but an
     // unrelated top hit must not rename the show.
-    std::string a = normalizeName(guess), b = normalizeName(name);
+    std::string b = normalizeName(name);
     if (a.empty() || b.empty()) return "";
     if (a.find(b) == std::string::npos && b.find(a) == std::string::npos) return "";
     return name;
@@ -1493,7 +1551,11 @@ void PekServer::start(int port, const std::string& plugins_dir,
         if (!local.plot.empty() && !art.empty()) { scanner->artStore(false, title, art, local.plot, MediaScanner::localStamp(local)); reply(local.plot, art); return; }
 
         std::string tmdb_body;
-        if (!tmdbSearch("/search/tv?query=" + httplib::encode_uri(title), tmdb_body)) {
+        std::string showBase, showTmdb; int showYear = 0;
+        splitShowGuess(title, showBase, showYear, showTmdb);
+        std::string showQuery = "/search/tv?query=" + httplib::encode_uri(showBase);
+        if (showYear > 0) showQuery += "&first_air_date_year=" + std::to_string(showYear);
+        if (!tmdbSearch(showQuery, tmdb_body)) {
             if (!local.plot.empty() || !art.empty()) { reply(local.plot, art); return; }
             res.status = 502;
             res.set_content("{\"error\": \"TMDb lookup failed\"}", "application/json");
@@ -1606,7 +1668,11 @@ void PekServer::start(int port, const std::string& plugins_dir,
             applyTls(tm);
             tm.set_connection_timeout(5);
             tm.set_read_timeout(6);
-            auto s1 = tm.Get(("/search/tv?query=" + httplib::encode_uri(show)).c_str());
+            std::string skipBase, skipTmdb; int skipYear = 0;
+            splitShowGuess(show, skipBase, skipYear, skipTmdb);
+            std::string skipQuery = "/search/tv?query=" + httplib::encode_uri(skipBase);
+            if (skipYear > 0) skipQuery += "&first_air_date_year=" + std::to_string(skipYear);
+            auto s1 = tm.Get(skipQuery.c_str());
             if (!s1 || s1->status != 200) { reply(false, "", ""); return; }
             size_t rp = s1->body.find("\"results\"");
             std::string tvId = extractJsonNumber(rp != std::string::npos ? s1->body.substr(rp) : s1->body, "id");

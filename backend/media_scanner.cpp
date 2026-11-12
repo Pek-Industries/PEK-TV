@@ -181,7 +181,18 @@ std::string cutAtJunk(const std::string& name) {
 // Show-name cleanup: drop (parenthesized) bits, trailing release year,
 // junk tokens and dangling separators.
 std::string cleanShowName(const std::string& raw) {
-    std::string s = cleanSeparators(raw);
+    // {tmdb-1972} / {imdb-tt0407362} / {tvdb-73545} id tags (Plex / Jellyfin / Emby naming) are not part of the title: left in, they
+    // were searched for as words and threw the show lookup off.
+    std::string tagless;
+    {
+        int brace = 0;
+        for (char c : raw) {
+            if (c == '{') { ++brace; continue; }
+            if (c == '}') { if (brace > 0) --brace; continue; }
+            if (brace == 0) tagless += c;
+        }
+    }
+    std::string s = cleanSeparators(tagless);
 
     std::string no_paren;
     int depth = 0;
@@ -276,6 +287,92 @@ bool isUsableShowFolder(const fs::path& dir, const std::vector<std::string>& roo
     }
     return std::find(kGenericFolders.begin(), kGenericFolders.end(), toLower(name)) == kGenericFolders.end();
 }
+
+// What a show's folder says about WHICH show it is: "Battlestar Galactica (2003) {tmdb-71365}" -> year 2003, tmdb 71365.
+// Three different series can share one title (1978, 2003 and 2004 Battlestar Galactica); the year and the id are what tell them apart.
+struct ShowHints {
+    int year = 0;
+    std::string tmdb, imdb, tvdb;
+    bool any() const { return year > 0 || !tmdb.empty() || !imdb.empty() || !tvdb.empty(); }
+    // The same series = the same id (TMDb first), else the same year. Empty = the folder says nothing.
+    std::string identity() const {
+        if (!tmdb.empty()) return "tmdb" + tmdb;
+        if (!tvdb.empty()) return "tvdb" + tvdb;
+        if (!imdb.empty()) return "imdb" + imdb;
+        if (year > 0) return "y" + std::to_string(year);
+        return "";
+    }
+};
+
+ShowHints parseShowHints(const std::string& raw) {
+    ShowHints h;
+    static const std::regex id_re(R"([\{\[]\s*(tmdb|tmdbid|imdb|imdbid|tvdb|tvdbid)\s*[-=:_ ]\s*([A-Za-z0-9]+)\s*[\}\]])", std::regex::icase);
+    for (auto it = std::sregex_iterator(raw.begin(), raw.end(), id_re); it != std::sregex_iterator(); ++it) {
+        std::string kind = toLower((*it)[1].str()), val = (*it)[2].str();
+        if (kind.compare(0, 4, "tmdb") == 0) { if (h.tmdb.empty()) h.tmdb = val; }
+        else if (kind.compare(0, 4, "imdb") == 0) { if (h.imdb.empty()) h.imdb = toLower(val); }
+        else if (h.tvdb.empty()) h.tvdb = val;
+    }
+    static const std::regex year_re(R"(\(\s*((?:19|20)\d{2})\s*\))");
+    std::smatch m;
+    if (std::regex_search(raw, m, year_re)) {
+        try { h.year = std::stoi(m[1].str()); } catch (...) {}
+    }
+    return h;
+}
+
+// The hints for an episode file: from its show folder ("Show (2003) {tmdb-1}/Season 1/file", or "Show (2003)/file"), else from the
+// start of the file name for a flat layout.
+ShowHints showHintsForPath(const std::string& path) {
+    fs::path p(path);
+    fs::path dir = p.parent_path();
+    int season = 0;
+    if (parseSeasonFolder(dir.filename().string(), season)) dir = dir.parent_path();
+    ShowHints h = parseShowHints(dir.filename().string());
+    if (!h.any()) {
+        std::string stem = p.stem().string();
+        size_t st = 0; int se = 0, ep = 0;
+        std::string cleaned = stem;
+        if (matchEpisodePattern(cleanSeparators(stem), st, se, ep)) {
+            // the part of the name before SxxEyy (the cleaned name is shorter than the raw one, so look in the raw stem too)
+            static const std::regex sxe(R"((^|[^a-z0-9])s\d{1,2}[ ._-]*e\d{1,3})", std::regex::icase);
+            std::smatch m;
+            if (std::regex_search(stem, m, sxe)) cleaned = stem.substr(0, static_cast<size_t>(m.position(0)));
+        }
+        h = parseShowHints(cleaned);
+    }
+    return h;
+}
+
+bool endsWith(const std::string& s, const std::string& suffix) {
+    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Series that share one title are kept apart: when the library holds the same show name under two different years / ids, each
+// gets its year in the title ("Battlestar Galactica (1978)", "(2003)", "(2004)"). A title that is unique stays plain. Runs after every
+// scan over all the episodes, and is safe to repeat (it takes a year it added earlier off again before it decides).
+void disambiguateShows(std::vector<MediaEntry>& list) {
+    struct Item { MediaEntry* e; ShowHints h; std::string base; };
+    std::vector<Item> items;
+    std::map<std::string, std::set<std::string>> identities;     // lowercase base title -> distinct identities seen
+    for (auto& e : list) {
+        if (e.kind != MediaKind::Episode || e.show_title.empty()) continue;
+        Item it{&e, showHintsForPath(e.path), e.show_title};
+        if (it.h.year > 0) {
+            const std::string suffix = " (" + std::to_string(it.h.year) + ")";
+            if (endsWith(it.base, suffix)) it.base.erase(it.base.size() - suffix.size());
+        }
+        std::string id = it.h.identity();
+        if (!id.empty()) identities[toLower(it.base)].insert(id);
+        items.push_back(std::move(it));
+    }
+    for (auto& it : items) {
+        const bool clash = identities[toLower(it.base)].size() > 1;
+        if (clash && it.h.year > 0) it.e->show_title = it.base + " (" + std::to_string(it.h.year) + ")";
+        else it.e->show_title = it.base;
+    }
+}
+
 
 
 // ---- NFO files (Kodi, Radarr, Sonarr, tinyMediaManager...): see nfo.h ----
@@ -1129,11 +1226,17 @@ void MediaScanner::scan(bool onlyNewSources) {
             // "friends" becomes TMDb's "Friends". Tag-derived names and
             // the no-key / offline case are left exactly as parsed.
             if (entry.guessed && entry.kind == MediaKind::Episode && show_resolver_) {
-                std::string key = toLower(entry.show_title);
+                // The folder's year and {tmdb-..} tag go along, so the 1978, 2003 and 2004 "Battlestar Galactica" are each looked up as
+                // themselves (the resolver understands a trailing " (YYYY)" and " {tmdb-N}").
+                const ShowHints hint = showHintsForPath(entry.path);
+                std::string guess = entry.show_title;
+                if (hint.year > 0) guess += " (" + std::to_string(hint.year) + ")";
+                if (!hint.tmdb.empty()) guess += " {tmdb-" + hint.tmdb + "}";
+                std::string key = toLower(guess);
                 auto cached = resolved_names_.find(key);
                 if (cached == resolved_names_.end()) {
                     std::string official;
-                    try { official = show_resolver_(entry.show_title); } catch (...) {}
+                    try { official = show_resolver_(guess); } catch (...) {}
                     cached = resolved_names_.emplace(key, sanitizeField(official)).first;
                 }
                 if (!cached->second.empty()) entry.show_title = cached->second;
@@ -1150,6 +1253,7 @@ void MediaScanner::scan(bool onlyNewSources) {
     }
 
     size_t indexed = fresh.size();
+    disambiguateShows(fresh);   // same title, different series (year / id in the folder name): keep them apart
     groupParts(fresh);
     {
         std::lock_guard<std::mutex> lock(mutex_);
