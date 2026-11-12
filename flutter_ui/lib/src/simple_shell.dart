@@ -12,11 +12,14 @@ import 'music.dart' show MiniPlayer;
 import 'news.dart';
 import 'pages.dart';
 import 'plugin_ui.dart' show PekTrailerView;
+import 'ratings.dart';
+import 'recs.dart';
 import 'simple_data.dart';
 import 'simple_detail.dart';
 import 'store.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
+import 'watched.dart';
 import 'widgets.dart';
 
 /// The Simple layout (Settings > Mode > Layout): a streaming-app home for people who just want to press Play.
@@ -40,31 +43,53 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   /// One banner pick per app run, so coming back to Home does not change it.
   static final int _seed = DateTime.now().millisecondsSinceEpoch;
 
-  late Future<SimpleLib> _libFuture;
   SimpleLib? _lib;
+  bool _libError = false;
   SimpleTitle? _featured;
   List<String> _genres = const [];
   List<({String name, List<SimpleTitle> items})> _genreRows = const [];
+  List<RecRow> _recRows = const []; // the For You rows (TMDb)
+  bool _feedLoading = true;
+  bool _ready = false;
+  String _feedSig = '';
+  int _feedGen = 0;
+  String _choice = Store.simpleSource; // 'foryou' | 'library' | '' = by itself
   bool _covered = false; // another screen is on top
   bool _background = false; // the app is not in front
   bool _wideNow = false;
+  SimpleProgress _pm = SimpleProgress.empty(); // how far along each title is, refreshed with every build of the rows
   int _gen = 0;
   Timer? _dwell;
 
   bool get _trailerOn => Store.simpleTrailers && !_covered && !_background;
+  SimpleLib get _libOrEmpty => _lib ?? SimpleLib(const [], const []);
+
+  /// Which home is showing: the For You rows (suggestions from TMDb) or this device's library. Until the person chooses with the
+  /// switch it is the library when it has anything, else For You; '' while that is still unknown (the library is loading).
+  String get _source {
+    if (_choice == 'foryou' || _choice == 'library') return _choice;
+    final lib = _lib;
+    if (lib == null) return _libError ? 'foryou' : '';
+    return lib.isEmpty ? 'foryou' : 'library';
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    Recs.changed.addListener(_recsChanged);
     _load();
+    _loadFeed();
+    _ready = true;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    Recs.changed.removeListener(_recsChanged);
     _dwell?.cancel();
     _gen++;
+    _feedGen++;
     super.dispose();
   }
 
@@ -74,19 +99,19 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     if (bg != _background && mounted) setState(() => _background = bg);
   }
 
+  void _recsChanged() {
+    if (mounted) _loadFeed();
+  }
+
   void _load() {
     final gen = ++_gen;
     _lib = null;
+    _libError = false;
     _genres = const [];
     _genreRows = const [];
-    final f = SimpleLib.load();
-    _libFuture = f;
-    unawaited(f.then((lib) async {
+    unawaited(SimpleLib.load().then((lib) async {
       if (!mounted || gen != _gen) return;
-      setState(() {
-        _lib = lib;
-        _featured ??= _pickFeatured(lib);
-      });
+      setState(() => _lib = lib);
       // Genres come from the .nfo files; a library without them simply has no genre rows and an empty Categories list.
       final facets = await Api.libraryFacets('');
       if (!mounted || gen != _gen) return;
@@ -100,23 +125,69 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
         if (items.length < 3) continue;
         setState(() => _genreRows = [..._genreRows, (name: g, items: items)]);
       }
-    }, onError: (Object _) {}));
+    }, onError: (Object _) {
+      if (mounted && gen == _gen) setState(() => _libError = true);
+    }));
   }
 
-  SimpleTitle? _pickFeatured(SimpleLib lib) {
+  /// Asks TMDb for the For You rows again when what they are built from changed (a like, a rating, a hidden title, a watch).
+  void _loadFeed({bool force = false}) {
+    final sig = '${RecFeed.signature(Recs.genres, Ratings.all().length, Recs.hidden.length, Recs.picks.length)}|${Store.favorites().length}|${Store.pluginFavorites().length}';
+    if (!force && sig == _feedSig) return;
+    _feedSig = sig;
+    final gen = ++_feedGen;
+    if (_ready) {
+      setState(() => _feedLoading = true);
+    } else {
+      _feedLoading = true;
+    }
+    unawaited(RecFeed.simpleRows(seeds: simpleSeeds(), genres: Recs.genres, hidden: Recs.hidden).then((rows) {
+      if (!mounted || gen != _feedGen) return;
+      setState(() {
+        _recRows = rows;
+        _feedLoading = false;
+        if (_source == 'foryou') _featured = null; // re-picked from the new rows
+      });
+    }, onError: (Object _) {
+      if (mounted && gen == _feedGen) setState(() => _feedLoading = false);
+    }));
+  }
+
+  SimpleTitle? _pickFeatured() {
+    final lib = _libOrEmpty;
+    if (_source == 'foryou') {
+      final pool = [
+        for (final r in _recRows)
+          for (final i in r.items)
+            if (i.backdrop.isNotEmpty) i,
+      ];
+      if (pool.isEmpty) return null;
+      return lib.fromRec(pool[math.Random(_seed).nextInt(math.min(pool.length, 12))]);
+    }
     final pool = lib.recentMixed.take(12).toList();
     if (pool.isEmpty) return null;
     return pool[math.Random(_seed).nextInt(pool.length)];
   }
 
+  void _setSource(String s) {
+    if (_source == s) return;
+    unawaited(Store.setSimpleSource(s));
+    setState(() {
+      _choice = s;
+      _featured = null;
+    });
+  }
+
   // ---------------------------------------------------------------- opening things
 
-  /// Opens a screen on top; the banner's trailer is paused while it is open.
+  /// Opens a screen on top; the banner's trailer is paused while it is open. What the rows are built from may have changed.
   Future<void> _push(Widget page) async {
     if (!mounted) return;
     setState(() => _covered = true);
     await Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => page));
-    if (mounted) setState(() => _covered = false);
+    if (!mounted) return;
+    setState(() => _covered = false);
+    _loadFeed();
   }
 
   Future<void> _cover(Future<void> Function() action) async {
@@ -125,7 +196,10 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     try {
       await action();
     } finally {
-      if (mounted) setState(() => _covered = false);
+      if (mounted) {
+        setState(() => _covered = false);
+        _loadFeed();
+      }
     }
   }
 
@@ -143,33 +217,47 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     unawaited(_push(SimpleGridPage(title: title, load: load, live: live, empty: empty)));
   }
 
+  static const _offline = 'Could not load suggestions. Check your internet connection.';
+
   void _movies() {
-    final lib = _lib;
-    if (lib != null) _grid('Movies', () async => [for (final m in lib.movies) SimpleTitle.movie(m)], empty: 'No movies yet. Add a folder in Settings.');
+    final lib = _libOrEmpty;
+    if (_source == 'foryou') {
+      _grid('Popular Movies', () async => [for (final i in await RecFeed.popularList(false)) lib.fromRec(i)], empty: _offline);
+    } else {
+      _grid('Movies', () async => [for (final m in lib.movies) SimpleTitle.movie(m)], empty: 'No movies yet. Add a folder in Settings.');
+    }
   }
 
   void _shows() {
-    final lib = _lib;
-    if (lib != null) _grid('TV Shows', () async => [for (final s in lib.shows) SimpleTitle.show(s)], empty: 'No shows yet. Add a folder in Settings.');
+    final lib = _libOrEmpty;
+    if (_source == 'foryou') {
+      _grid('Popular Shows', () async => [for (final i in await RecFeed.popularList(true)) lib.fromRec(i)], empty: _offline);
+    } else {
+      _grid('TV Shows', () async => [for (final s in lib.shows) SimpleTitle.show(s)], empty: 'No shows yet. Add a folder in Settings.');
+    }
   }
 
   void _new() {
-    final lib = _lib;
-    if (lib != null) _grid('New', () async => lib.recentMixed, empty: 'Nothing new yet.');
+    final lib = _libOrEmpty;
+    if (_source == 'foryou') {
+      _grid('Trending', () async => [for (final i in await RecFeed.trendingList()) lib.fromRec(i)], empty: _offline);
+    } else {
+      _grid('New', () async => lib.recentMixed, empty: 'Nothing new yet.');
+    }
   }
 
   void _myList() {
-    final lib = _lib;
-    if (lib != null) _grid('My List', () async => lib.myList, live: true, empty: 'Your list is empty. Open a title and press My List to keep it here.');
+    final lib = _libOrEmpty;
+    _grid('My List', () async => lib.myList, live: true, empty: 'Your list is empty. Open a title and press My List to keep it here.');
   }
 
   Future<void> _categories() async {
-    final lib = _lib;
-    if (lib == null) return;
+    final lib = _libOrEmpty;
+    final forYou = _source == 'foryou';
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
-    final genres = _genres;
+    final genres = forYou ? [for (final g in recGenres) g.name] : _genres;
     final pick = await showDialog<String>(
       context: context,
       barrierColor: t.overlay,
@@ -197,10 +285,15 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
       ),
     );
     if (pick == null || !mounted) return;
-    _grid(pick, () async {
-      final r = await Api.librarySearch('', genre: pick, limit: 500);
-      return r == null ? <SimpleTitle>[] : lib.fromSearch(r);
-    }, empty: 'Nothing in $pick yet.');
+    if (forYou) {
+      final g = recGenres.firstWhere((g) => g.name == pick);
+      _grid(pick, () async => [for (final i in await RecFeed.genreList(g)) lib.fromRec(i)], empty: _offline);
+    } else {
+      _grid(pick, () async {
+        final r = await Api.librarySearch('', genre: pick, limit: 500);
+        return r == null ? <SimpleTitle>[] : lib.fromSearch(r);
+      }, empty: 'Nothing in $pick yet.');
+    }
   }
 
   Future<void> _moreSheet() async {
@@ -235,6 +328,65 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     }
   }
 
+  /// A small menu of actions on a title (long press, or held OK on a remote). The first one has the focus.
+  Future<void> _menu(String title, List<({IconData icon, String label, Future<void> Function() run})> items) async {
+    final tk = context.pek.tokens;
+    final i = await showDialog<int>(
+      context: context,
+      barrierColor: tk.overlay,
+      builder: (c) => SimpleDialog(
+        backgroundColor: tk.glassStrong,
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        children: [for (var k = 0; k < items.length; k++) ListTile(autofocus: k == 0, onTap: () => Navigator.pop(c, k), leading: Icon(items[k].icon), title: Text(items[k].label))],
+      ),
+    );
+    if (i == null || !mounted) return;
+    await items[i].run();
+    if (mounted) setState(() {});
+  }
+
+  /// A suggestion (not in the library): My List, or hide it from the suggestions.
+  Future<void> _recMenu(SimpleTitle t) {
+    final fav = t.favorite;
+    return _menu(t.title, [
+      (icon: Icons.play_arrow_rounded, label: simplePlayLabel(t), run: () async => _playTitle(t)),
+      (icon: fav ? Icons.check : Icons.add, label: fav ? 'Remove from My List' : 'Add to My List', run: () => t.toggleFavorite()),
+      (icon: Icons.visibility_off_outlined, label: 'Not interested', run: () => Recs.hide(t.rec!.key)), // Recs.changed loads the rows again without it
+    ]);
+  }
+
+  /// A movie or show of the library: play it, open its page, My List, mark it watched.
+  Future<void> _libMenu(SimpleTitle t) {
+    final m = t.movie;
+    final fav = t.favorite;
+    final seen = m != null && movieWatched(m);
+    return _menu(t.title, [
+      (icon: Icons.play_arrow_rounded, label: simplePlayLabel(t), run: () async => _playTitle(t)),
+      (icon: Icons.info_outline, label: 'Open page', run: () async => _openTitle(t)),
+      (icon: fav ? Icons.check : Icons.add, label: fav ? 'Remove from My List' : 'Add to My List', run: () => t.toggleFavorite()),
+      if (m != null) (icon: seen ? Icons.visibility_off_outlined : Icons.visibility_outlined, label: seen ? 'Mark as not watched' : 'Mark as watched', run: () => Watched.set([movieItem(m)], !seen)),
+      if (t.show != null) (icon: Icons.list, label: 'Episodes', run: () async => unawaited(_push(ShowScreen(show: t.show!)))),
+    ]);
+  }
+
+  /// A Continue Watching card (a movie or an episode, from the library or a plugin): continue, start over, its page, My List,
+  /// mark it watched, or take it off the row.
+  Future<void> _resumeMenu(Progress r) {
+    final lib = _libOrEmpty;
+    final show = r.kind == 'episode' ? lib.showByTitle(r.showTitle) : null;
+    final movie = r.kind == 'episode' ? null : lib.movieById(r.id);
+    final SimpleTitle? t = show != null ? SimpleTitle.show(show) : (movie != null ? SimpleTitle.movie(movie) : null);
+    final fav = t?.favorite ?? false;
+    return _menu(r.title, [
+      (icon: Icons.play_arrow_rounded, label: 'Continue', run: () => _cover(() => playMedia(context, r, startSec: r.position))),
+      (icon: Icons.replay, label: 'Start over', run: () => _cover(() => playMedia(context, r, startSec: 0.0))),
+      if (t != null) (icon: Icons.info_outline, label: show != null ? 'Open show page' : 'Open page', run: () async => _openTitle(t)),
+      if (t != null) (icon: fav ? Icons.check : Icons.add, label: fav ? 'Remove from My List' : 'Add to My List', run: () => t.toggleFavorite()),
+      (icon: Icons.visibility_outlined, label: 'Mark as watched', run: () => Watched.set([r], true)),
+      (icon: Icons.close, label: 'Remove from Continue Watching', run: () => Store.removeProgress(r.id)),
+    ]);
+  }
+
   // ---------------------------------------------------------------- banner follows the remote
 
   void _focused(SimpleTitle t) {
@@ -253,42 +405,35 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     final p = context.pek;
     final size = MediaQuery.sizeOf(context);
     _wideNow = p.sidebar || size.width >= 900;
-    return FutureBuilder<SimpleLib>(
-      future: _libFuture,
-      builder: (context, snap) {
-        final lib = _lib;
-        if (snap.hasError) return _message(context, 'Could not load your library', 'Check that PEK TV is running, then try again.', retry: true);
-        if (lib == null) return const Center(child: CircularProgressIndicator());
-        if (lib.isEmpty) return _message(context, 'Nothing to watch yet', 'Add a folder with your movies and shows in Settings.', settings: true);
-        return _wideNow ? _wide(context, lib) : _phone(context, lib);
-      },
-    );
+    _featured ??= _pickFeatured();
+    return _wideNow ? _wide(context) : _phone(context);
   }
 
-  Widget _message(BuildContext context, String title, String text, {bool retry = false, bool settings = false}) {
+  Widget _note(BuildContext context, String title, String text, {List<Widget> buttons = const []}) {
     final p = context.pek;
     final rem = p.rem;
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.all(2 * rem),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 1.5 * rem, fontWeight: FontWeight.w800)),
-          SizedBox(height: 0.75 * rem),
-          Text(text, textAlign: TextAlign.center, style: TextStyle(color: p.tokens.textMuted)),
-          SizedBox(height: 1.25 * rem),
-          if (retry) PekButton(label: 'Try again', primary: true, autofocus: true, shrink: true, onTap: () => setState(_load)),
-          if (settings) PekButton(label: 'Open Settings', primary: true, autofocus: true, shrink: true, onTap: _settings),
-        ]),
-      ),
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 2 * rem),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 1.3 * rem, fontWeight: FontWeight.w800)),
+        SizedBox(height: 0.6 * rem),
+        Text(text, textAlign: TextAlign.center, style: TextStyle(color: p.tokens.textMuted)),
+        if (buttons.isNotEmpty) ...[SizedBox(height: rem), Wrap(alignment: WrapAlignment.center, spacing: 0.75 * rem, runSpacing: 0.5 * rem, children: buttons)],
+      ]),
     );
   }
 
-  /// The rows under the banner, in order: Continue Watching, My List, Recently Added, then a row per genre.
-  List<Widget> _rows(BuildContext context, SimpleLib lib, {required double cardW}) {
+  /// The rows under the banner. Both homes start with Continue Watching and My List. Then: For You = the TMDb rows ("Because you
+  /// liked ...", genres, trending / popular); My Library = Recently Added and a row per genre.
+  List<Widget> _rows(BuildContext context, {required double cardW}) {
+    final lib = _libOrEmpty;
+    final src = _source;
+    final p = context.pek;
+    _pm = SimpleProgress.now();
     final resume = Store.resumeItems().take(12).toList();
     final mine = lib.myList.take(20).toList();
-    final p = context.pek;
-    return [
+    final rows = <Widget>[
+      if (src.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
       if (resume.isNotEmpty)
         SimpleShelf(
           title: 'Continue Watching',
@@ -298,37 +443,70 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
           cards: [
             for (final r in resume)
               PosterCard(
-                onLongPress: () => unawaited(_cover(() => showResumePreview(context, r))),
+                onLongPress: () => unawaited(_resumeMenu(r)),
                 holdSelect: true,
                 title: r.title,
                 subtitle: r.duration > 0 ? '${(100 * r.position / r.duration).round()}% watched' : formatTime(r.position),
                 poster: resumeArtFor(r),
                 aspectRatio: resumeShowsStill(r) ? 16 / 9 : 2 / 3,
                 fallbackImage: r.image,
+                inLibrary: r.kind == 'episode' ? lib.showByTitle(r.showTitle) != null : lib.movieById(r.id) != null,
                 progress: r.duration > 0 ? r.position / r.duration : null,
                 onTap: () => unawaited(_cover(() => playResumeOrStart(context, r))),
               ),
           ],
         ),
       if (mine.isNotEmpty) SimpleShelf(title: 'My List', memoryKey: 'simple/mylist', cardW: cardW, cards: [for (final t in mine) _card(t)]),
-      if (lib.movies.isNotEmpty) SimpleShelf(title: 'Recently Added Movies', memoryKey: 'simple/movies', cardW: cardW, cards: [for (final t in lib.recentMovies) _card(t)]),
-      if (lib.shows.isNotEmpty) SimpleShelf(title: 'Recently Added Shows', memoryKey: 'simple/shows', cardW: cardW, cards: [for (final t in lib.recentShows) _card(t)]),
-      for (final g in _genreRows) SimpleShelf(title: g.name, memoryKey: 'simple/genre/${g.name}', cardW: cardW, cards: [for (final t in g.items) _card(t)]),
-      SizedBox(height: 2 * p.rem),
     ];
+    if (src == 'foryou') {
+      for (final r in _recRows) {
+        rows.add(SimpleShelf(title: r.title, memoryKey: 'simple/rec/${r.title}', cardW: cardW, cards: [for (final i in r.items) _card(lib.fromRec(i))]));
+      }
+      if (_recRows.isEmpty) {
+        rows.add(_feedLoading
+            ? _note(context, 'Finding movies and shows for you', 'This takes a moment.')
+            : _note(context, 'No suggestions yet', 'Check your internet connection and try again.', buttons: [PekButton(label: 'Try again', primary: true, shrink: true, onTap: () => _loadFeed(force: true))]));
+      }
+    } else if (src == 'library') {
+      if (_libError) {
+        rows.add(_note(context, 'Could not load your library', 'Check that PEK TV is running, then try again.', buttons: [PekButton(label: 'Try again', primary: true, shrink: true, onTap: () => setState(_load))]));
+      } else if (lib.isEmpty) {
+        rows.add(_note(context, 'Your library is empty', 'Add a folder with your movies and shows in Settings, or look at suggestions for you.', buttons: [
+          PekButton(label: 'Open Settings', primary: true, shrink: true, onTap: _settings),
+          PekButton(label: 'See For You', shrink: true, onTap: () => _setSource('foryou')),
+        ]));
+      } else {
+        if (lib.movies.isNotEmpty) rows.add(SimpleShelf(title: 'Recently Added Movies', memoryKey: 'simple/movies', cardW: cardW, cards: [for (final t in lib.recentMovies) _card(t)]));
+        if (lib.shows.isNotEmpty) rows.add(SimpleShelf(title: 'Recently Added Shows', memoryKey: 'simple/shows', cardW: cardW, cards: [for (final t in lib.recentShows) _card(t)]));
+        for (final g in _genreRows) {
+          rows.add(SimpleShelf(title: g.name, memoryKey: 'simple/genre/${g.name}', cardW: cardW, cards: [for (final t in g.items) _card(t)]));
+        }
+      }
+    }
+    rows.add(SizedBox(height: 2 * p.rem));
+    return rows;
   }
 
-  /// One title's card. Resting on it (remote) lets the banner follow.
+  /// One title's card. Resting on it (remote) lets the banner follow; a suggestion also has a long-press menu.
   Widget _card(SimpleTitle t) => Focus(
         canRequestFocus: false,
         skipTraversal: true,
         onFocusChange: (f) {
           if (f) _focused(t);
         },
-        child: PosterCard(title: t.title, subtitle: t.subtitle, poster: t.details, onTap: () => _openTitle(t)),
+        child: PosterCard(
+          title: t.title,
+          subtitle: t.subtitle,
+          poster: t.details,
+          onTap: () => _openTitle(t),
+          onLongPress: () => unawaited(t.inLibrary ? _libMenu(t) : _recMenu(t)),
+          holdSelect: true,
+          inLibrary: t.inLibrary,
+          progress: _pm.of(t),
+        ),
       );
 
-  Widget _hero(BuildContext context, SimpleLib lib, {required bool wide, required double height, required double sidePad}) {
+  Widget _hero(BuildContext context, {required bool wide, required double height, required double sidePad}) {
     final t = _featured;
     if (t == null) return SizedBox(height: height);
     return _Hero(
@@ -345,12 +523,13 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
 
   // ---------------------------------------------------------------- phone / tablet
 
-  Widget _phone(BuildContext context, SimpleLib lib) {
+  Widget _phone(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
     final size = MediaQuery.sizeOf(context);
     final heroH = math.min(size.height * 0.5, size.width * 1.15);
+    final hasHero = _featured != null;
     Widget chip(String label, VoidCallback onTap, {bool arrow = false}) => Padding(
           padding: EdgeInsets.only(right: 0.5 * rem),
           child: PekFocusable(
@@ -379,6 +558,10 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
             _IconButton(icon: Icons.settings_outlined, label: 'Settings', onTap: _settings, rem: rem),
           ]),
         ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(rem, 0.35 * rem, rem, 0.15 * rem),
+          child: _SourceSwitch(value: _source, onChanged: _setSource, rem: rem),
+        ),
         SizedBox(
           height: 3 * rem,
           child: ListView(
@@ -392,9 +575,9 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
             padding: EdgeInsets.zero,
             cacheExtent: 900,
             children: [
-              _hero(context, lib, wide: false, height: heroH, sidePad: rem),
+              if (hasHero) _hero(context, wide: false, height: heroH, sidePad: rem),
               SizedBox(height: 0.75 * rem),
-              Padding(padding: EdgeInsets.symmetric(horizontal: rem), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: _rows(context, lib, cardW: 7 * rem))),
+              Padding(padding: EdgeInsets.symmetric(horizontal: rem), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: _rows(context, cardW: 7 * rem))),
             ],
           ),
         ),
@@ -433,62 +616,106 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
 
   // ---------------------------------------------------------------- TV / wide screen
 
-  Widget _wide(BuildContext context, SimpleLib lib) {
+  Widget _wide(BuildContext context) {
     final p = context.pek;
     final rem = p.rem;
     final size = MediaQuery.sizeOf(context);
-    final heroH = size.height * 0.56;
+    final hasHero = _featured != null;
+    // No banner (the rows are still loading, or there is nothing to show): just the menu bar, the rows take the rest.
+    final heroH = hasHero ? size.height * 0.56 : p.safeY + 5.5 * rem;
     final side = 2 * rem + p.safeX;
     return Column(children: [
       SizedBox(
         height: heroH,
         child: Stack(children: [
-          Positioned.fill(child: _hero(context, lib, wide: true, height: heroH, sidePad: side)),
-          Positioned(top: 0, left: 0, right: 0, child: _tvNav(context, side)),
+          if (hasHero) Positioned.fill(child: _hero(context, wide: true, height: heroH, sidePad: side)),
+          Positioned(top: 0, left: 0, right: 0, child: _tvNav(context, side, light: hasHero)),
         ]),
       ),
       Expanded(
         child: ListView(
           padding: EdgeInsets.fromLTRB(side, 0.5 * rem, side, p.safeY),
           cacheExtent: 900,
-          children: _rows(context, lib, cardW: 6 * rem),
+          children: _rows(context, cardW: 6 * rem),
         ),
       ),
       const MiniPlayer(),
     ]);
   }
 
-  Widget _tvNav(BuildContext context, double side) {
+  /// The top menu. Light text (white, shadowed) on the banner picture; the page's own colors when there is no banner.
+  Widget _tvNav(BuildContext context, double side, {required bool light}) {
     final p = context.pek;
     final rem = p.rem;
+    final fg = light ? Colors.white : p.tokens.text;
+    final shadows = light ? const [Shadow(blurRadius: 6, color: Colors.black87)] : const <Shadow>[];
     Widget item(String label, VoidCallback? onTap, {bool on = false, bool arrow = false}) => PekFocusable(
           radius: 8,
           padding: EdgeInsets.symmetric(horizontal: 0.8 * rem, vertical: 0.4 * rem),
           onTap: onTap,
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text(label, style: TextStyle(color: Colors.white, fontSize: 0.95 * rem, fontWeight: on ? FontWeight.w800 : FontWeight.w500, shadows: const [Shadow(blurRadius: 6, color: Colors.black87)])),
-            if (arrow) Icon(Icons.arrow_drop_down, color: Colors.white, size: 1.3 * rem),
+            Text(label, style: TextStyle(color: fg, fontSize: 0.95 * rem, fontWeight: on ? FontWeight.w800 : FontWeight.w500, shadows: shadows, decoration: on ? TextDecoration.underline : null, decorationColor: p.tokens.accent, decorationThickness: 2)),
+            if (arrow) Icon(Icons.arrow_drop_down, color: fg, size: 1.3 * rem),
           ]),
         );
+    final src = _source;
     return TvNav.region(
       memoryKey: 'simple/nav',
       child: Padding(
         padding: EdgeInsets.fromLTRB(side, p.safeY + 0.8 * rem, side, 0),
         child: Row(children: [
-          Text('PEK TV', style: TextStyle(color: p.tokens.accent, fontSize: 1.5 * rem, fontWeight: FontWeight.w900, letterSpacing: -0.5, shadows: const [Shadow(blurRadius: 6, color: Colors.black87)])),
+          Text('PEK TV', style: TextStyle(color: p.tokens.accent, fontSize: 1.5 * rem, fontWeight: FontWeight.w900, letterSpacing: -0.5, shadows: shadows)),
           SizedBox(width: 1.5 * rem),
-          item('Home', null, on: true),
+          item('For You', () => _setSource('foryou'), on: src == 'foryou'),
+          item('My Library', () => _setSource('library'), on: src == 'library'),
+          SizedBox(width: 0.5 * rem),
           item('Shows', _shows),
           item('Movies', _movies),
           item('New', _new),
           item('My List', _myList),
           item('Categories', _categories, arrow: true),
           const Spacer(),
-          _IconButton(icon: Icons.search, label: 'Search', onTap: _search, rem: rem, light: true),
-          _UpdatesButton(onTap: _updates, rem: rem, light: true),
-          _IconButton(icon: Icons.settings_outlined, label: 'Settings', onTap: _settings, rem: rem, light: true),
+          _IconButton(icon: Icons.search, label: 'Search', onTap: _search, rem: rem, light: light),
+          _UpdatesButton(onTap: _updates, rem: rem, light: light),
+          _IconButton(icon: Icons.settings_outlined, label: 'Settings', onTap: _settings, rem: rem, light: light),
         ]),
       ),
+    );
+  }
+}
+
+/// The two-way switch under the phone header: For You (suggestions) / My Library (this device's own movies and shows).
+class _SourceSwitch extends StatelessWidget {
+  const _SourceSwitch({required this.value, required this.onChanged, required this.rem});
+  final String value;
+  final ValueChanged<String> onChanged;
+  final double rem;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.pek.tokens;
+    Widget seg(String id, String label, IconData icon) {
+      final on = value == id;
+      return Expanded(
+        child: PekFocusable(
+          radius: 40,
+          background: on ? t.accent : Colors.transparent,
+          focusBackground: on ? t.accent : t.surfaceFocused,
+          padding: EdgeInsets.symmetric(vertical: 0.5 * rem),
+          onTap: () => onChanged(id),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 1.1 * rem, color: on ? Colors.white : t.textMuted),
+            SizedBox(width: 0.4 * rem),
+            Text(label, style: TextStyle(fontSize: 0.9 * rem, fontWeight: FontWeight.w700, color: on ? Colors.white : t.textMuted)),
+          ]),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(color: t.surface, borderRadius: BorderRadius.circular(40), border: Border.all(color: t.border)),
+      child: Row(children: [seg('foryou', 'For You', Icons.auto_awesome), seg('library', 'My Library', Icons.video_library_outlined)]),
     );
   }
 }
@@ -815,6 +1042,7 @@ class _SimpleGridPageState extends State<SimpleGridPage> {
           final items = snap.data ?? const <SimpleTitle>[];
           if (items.isEmpty) return Center(child: Padding(padding: EdgeInsets.all(2 * rem), child: Text(snap.hasError ? 'Could not load this list.' : widget.empty, textAlign: TextAlign.center, style: TextStyle(color: t.textMuted))));
           final w = p.sidebar ? 6 * rem : 7.5 * rem;
+          final pm = SimpleProgress.now();
           return TvNav.region(
             memoryKey: 'simple/grid/${widget.title}',
             child: GridView.builder(
@@ -831,6 +1059,8 @@ class _SimpleGridPageState extends State<SimpleGridPage> {
                     title: it.title,
                     subtitle: it.subtitle,
                     poster: it.details,
+                    inLibrary: it.inLibrary,
+                    progress: pm.of(it),
                     onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => SimpleDetailScreen(title: it, lib: null))),
                   ),
                 );

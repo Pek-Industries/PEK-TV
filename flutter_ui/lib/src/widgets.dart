@@ -446,10 +446,14 @@ class DashTile extends StatelessWidget {
 /// `ui.posterCard`: shows a plain card until the poster is known (and if it fails to load), then the 2:3 poster with the
 /// title over a dark gradient at the bottom.
 class PosterCard extends StatefulWidget {
-  const PosterCard({super.key, required this.title, required this.subtitle, required this.poster, required this.onTap, this.onLongPress, this.holdSelect = false, this.autofocus = false, this.fallbackImage = '', this.progress, this.aspectRatio = 2 / 3});
+  const PosterCard({super.key, required this.title, required this.subtitle, required this.poster, required this.onTap, this.onLongPress, this.holdSelect = false, this.autofocus = false, this.fallbackImage = '', this.progress, this.aspectRatio = 2 / 3, this.inLibrary = false});
   final String title;
   final String subtitle;
   final Future<Details> poster;
+
+  /// A small open-book badge in the picture's bottom right corner: this title (or the show this episode is from) is in the library.
+  /// The Simple layout sets it, so its suggestions from TMDb can be told from what the person already has.
+  final bool inLibrary;
 
   /// 2/3 for a poster; 16/9 for an episode's own picture (Continue Watching).
   final double aspectRatio;
@@ -624,6 +628,19 @@ class _PosterCardState extends State<PosterCard> {
                           },
                         ),
                       ),
+                      if (widget.inLibrary)
+                        Positioned(
+                          right: 0.4 * rem,
+                          bottom: (widget.progress != null && widget.progress! > 0 ? 0.4 : 0.3) * rem + (widget.progress != null && widget.progress! > 0 ? 4 : 0),
+                          child: Semantics(
+                            label: 'In your library',
+                            child: Container(
+                              padding: EdgeInsets.all(0.3 * rem),
+                              decoration: BoxDecoration(color: Colors.black.withAlpha(190), shape: BoxShape.circle),
+                              child: Icon(Icons.menu_book_rounded, size: 0.95 * rem, color: Colors.white),
+                            ),
+                          ),
+                        ),
                       if (widget.progress != null && widget.progress! > 0)
                         Positioned(
                           left: 0,
