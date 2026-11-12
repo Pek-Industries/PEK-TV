@@ -80,4 +80,34 @@ void main() {
   test('nothing watched or rated gives no seeds', () {
     expect(RecFeed.seedsFrom(const [], const [], 0), isEmpty);
   });
+
+  test('picked titles: only well-formed ones, once each, newest 30 kept', () {
+    final ok = {'k': 'm603', 't': 'The Matrix', 'y': 1999, 'p': '/a.jpg'};
+    final picks = Recs.cleanPicks([ok, ok, {'k': 'x1', 't': 'Bad key'}, {'k': 't9', 't': ''}, {'k': 't9', 't': 'Show', 'p': 'https://evil.example/x.jpg'}, 'junk']);
+    expect(picks.map((e) => e.key), ['m603', 't9']);
+    expect(picks.first.year, 1999);
+    expect(picks.last.poster, '');
+    expect(picks.last.tv, isTrue);
+    final many = [for (var i = 1; i <= 40; i++) {'k': 'm$i', 't': 'T$i'}];
+    expect(Recs.cleanPicks(many).length, Recs.maxPicks);
+    expect(Recs.cleanPicks(many).last.key, 'm40');
+    expect(Recs.cleanPicks(null), isEmpty);
+  });
+
+  test('the cloud copy keeps picked titles', () {
+    final r = Recs.cleanSync({'o': 1, 'g': ['drama'], 'l': [{'k': 'm1', 't': 'A'}]});
+    expect(r!['l'], [{'k': 'm1', 't': 'A'}]);
+    expect(Recs.cleanSync({'l': [{'k': 'm1', 't': 'A'}]}), isNotNull);
+  });
+
+  test('a wide picture is kept only when its path is safe', () {
+    final items = RecFeed.parseResults({
+      'results': [
+        {'id': 1, 'title': 'A', 'poster_path': '/a.jpg', 'backdrop_path': '/b.jpg'},
+        {'id': 2, 'title': 'B', 'poster_path': '/a.jpg', 'backdrop_path': 'https://evil.example/b.jpg'},
+      ],
+    }, false);
+    expect(items[0].banner, 'https://tmdb.pekindustries.com/t/p/w780/b.jpg');
+    expect(items[1].banner, isNull);
+  });
 }

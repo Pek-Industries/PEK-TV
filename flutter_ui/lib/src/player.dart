@@ -776,29 +776,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   builder: (_, b, __) => b ? (widget.torrentHash == null ? const CircularProgressIndicator() : TorrentBufferCard(hash: widget.torrentHash!)) : const SizedBox.shrink(),
                 ),
               ),
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 200),
-                right: 16,
-                bottom: _controls ? 100 : 28,
-                child: AnimatedBuilder(
-                  animation: _skip,
-                  builder: (_, __) {
-                    final c = _skip.cur;
-                    if (c == null) return const SizedBox.shrink();
-                    return Theme(
-                      data: ThemeData.dark(useMaterial3: true),
-                      child: FilledButton.icon(
-                        onPressed: () {
-                          _skip.skip();
-                          _poke();
-                        },
-                        icon: const Icon(Icons.skip_next),
-                        label: Text(c.label),
-                      ),
-                    );
-                  },
-                ),
-              ),
               if (_live && !_guideOpen && (_tv?.available ?? false))
                 Positioned(
                   right: 0,
@@ -838,6 +815,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   child: RepaintBoundary(child: Theme(data: ThemeData.dark(useMaterial3: true), child: DefaultTextStyle.merge(style: const TextStyle(color: Colors.white), child: _overlay()))),
                 ),
               )),
+              // Skip Intro / Recap: drawn AFTER (above) the controls so a tap reaches it. It used to sit under the controls layer,
+              // which covers the whole screen while the controls show and swallowed the touch.
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 200),
+                right: 16,
+                bottom: _controls ? _skipLift(context) : 28,
+                child: AnimatedBuilder(
+                  animation: _skip,
+                  builder: (_, __) {
+                    final c = _skip.cur;
+                    if (c == null) return const SizedBox.shrink();
+                    return Theme(
+                      data: ThemeData.dark(useMaterial3: true),
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          _skip.skip();
+                          _poke();
+                        },
+                        icon: const Icon(Icons.skip_next),
+                        label: Text(c.label),
+                      ),
+                    );
+                  },
+                ),
+              ),
               // "Next episode" card: the top right corner, away from the Skip button (bottom right) and the buffering box (middle). Last in
               // the stack so a tap always reaches it, and below the top bar while the controls show so it never covers the title.
               AnimatedPositioned(
@@ -937,6 +939,32 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  /// How far above the bottom edge the Skip button floats while the controls show: clear of the seek bar and the button rows.
+  /// A narrow phone stacks the controls in two rows (see _overlay), so they are taller there.
+  double _skipLift(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width >= 480) return 100;
+    return _live ? 154 : 176;
+  }
+
+  /// "00:10 / 43:12", on one line.
+  Widget _clock(TextStyle timeStyle) {
+    return ValueListenableBuilder<double>(
+      valueListenable: _player.position,
+      builder: (_, pos, __) => ValueListenableBuilder<double>(
+        valueListenable: _player.duration,
+        builder: (_, dur, __) => Text.rich(
+          TextSpan(style: timeStyle, children: [
+            TextSpan(text: _fmt(_drag ?? pos)),
+            TextSpan(text: '  /  ', style: timeStyle.copyWith(color: _fg.withAlpha(115))),
+            TextSpan(text: _fmt(dur), style: timeStyle.copyWith(color: _fg.withAlpha(179))),
+          ]),
+          maxLines: 1,
+          softWrap: false,
+        ),
+      ),
+    );
+  }
+
   Widget _overlay() {
     const shade = Color(0xFF0E0C0A);
     final timeStyle = const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _fg, fontFeatures: [FontFeature.tabularFigures()]);
@@ -1005,6 +1033,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   const SizedBox(width: 24),
                   _glassBtn(Icons.skip_next, () { _step(1); _poke(); }),
                 ]),
+              ] else if (!_live && MediaQuery.sizeOf(context).width < 480) ...[
+                // Narrow phone: one row of clock + mic + captions, and the rewind / play / forward row under it. Everything in a
+                // single row is wider than the screen (that is what overflowed by 35 px next to the mic button).
+                Row(children: [
+                  Flexible(child: _clock(timeStyle)),
+                  const Spacer(),
+                  _mic(),
+                  const SizedBox(width: 12),
+                  _glassBtn(Icons.subtitles_outlined, _tracks),
+                ]),
+                const SizedBox(height: 12),
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _glassBtn(Icons.replay_10, () { _seekBy(-10); _poke(); }),
+                  const SizedBox(width: 24),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: _player.playing,
+                    builder: (_, p, __) => _glassBtn(p ? Icons.pause : Icons.play_arrow, () { _player.togglePause(); _poke(); }, size: 56, icon_: 30, node: _playNode),
+                  ),
+                  const SizedBox(width: 24),
+                  _glassBtn(Icons.forward_10, () { _seekBy(10); _poke(); }),
+                ]),
               ] else
               Row(
                 children: [
@@ -1017,17 +1066,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               const SizedBox(width: 8),
                               Text('LIVE', style: timeStyle.copyWith(letterSpacing: 1.6)),
                             ])
-                          : ValueListenableBuilder<double>(
-                        valueListenable: _player.position,
-                        builder: (_, pos, __) => ValueListenableBuilder<double>(
-                          valueListenable: _player.duration,
-                          builder: (_, dur, __) => Text.rich(TextSpan(style: timeStyle, children: [
-                            TextSpan(text: _fmt(_drag ?? pos)),
-                            TextSpan(text: '  /  ', style: timeStyle.copyWith(color: _fg.withAlpha(115))),
-                            TextSpan(text: _fmt(dur), style: timeStyle.copyWith(color: _fg.withAlpha(179))),
-                          ])),
-                        ),
-                      ),
+                          : _clock(timeStyle),
                     ),
                   ),
                   _live ? _glassBtn(Icons.skip_previous, () { _step(-1); _poke(); }) : _glassBtn(Icons.replay_10, () { _seekBy(-10); _poke(); }),

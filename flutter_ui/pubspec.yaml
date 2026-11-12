@@ -23,6 +23,7 @@ dependencies:
   record: ^6.0.0                   # microphone, 16 kHz PCM stream (voice.dart)
   audioplayers: ^6.1.0              # plays the spoken reply (voice.dart)
   archive: ^3.6.1                   # unpacks the espeak-ng data zip after the optional spoken-reply download (voice_models.dart)
+  flutter_animate: ^4.5.0           # staggered pop-in and tap bounces on the taste picker (recs_onboarding.dart)
   dpad: ^3.3.0                      # TV D-pad navigation: regions with focus memory, beam-based moves (tv_nav.dart)
 
 dev_dependencies:
@@ -31,6 +32,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/welcome/   # stand-in screenshots for the welcome tour (welcome.dart): <name>.jpg for TVs, <name>-portrait.jpg for phones
   module:
     androidX: true
     androidPackage: com.pektv.app.flutterui

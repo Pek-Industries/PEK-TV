@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 
 import 'api.dart' show Details, EpisodeInfo;
 import 'plugin_ui.dart' show openPluginScreen;
+import 'art_cache.dart' show ArtImage;
+import 'recs_onboarding.dart';
 import 'ratings.dart';
 import 'store.dart';
 import 'tokens.dart';
@@ -83,6 +85,28 @@ class Recs {
   static bool get touched => _read().isNotEmpty;
 
   static List<String> get genres => cleanGenres(_read()['g']);
+
+  /// Movies and shows picked on the taste picker (recs_onboarding.dart): they seed "Because you liked ..." rows.
+  static List<RecPick> get picks => cleanPicks(_read()['l']);
+
+  /// True once the first-launch picker was finished or skipped on this device.
+  static bool get onboarded => _read()['d'] == 1;
+
+  /// Show the first-launch picker: a brand new profile (nothing picked, nothing watched, widget never offered) that did not skip it.
+  static bool get onboardingPending => !onboarded && !offered && genres.isEmpty && Store.history().isEmpty && !Store.musicMode;
+
+  static const maxPicks = 30;
+
+  /// Only well-formed picks, once each, newest last, at most [maxPicks]. Pure, so it can be tested.
+  static List<RecPick> cleanPicks(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <RecPick>[];
+    for (final e in raw) {
+      final p = RecPick.fromJson(e);
+      if (p != null && !out.any((o) => o.key == p.key)) out.add(p);
+    }
+    return out.length > maxPicks ? out.sublist(out.length - maxPicks) : out;
+  }
   static Set<String> get hidden => cleanHidden(_read()['n']).toSet();
 
   /// Only known genre ids, once each, in the order given. Pure, so it can be tested.
@@ -111,9 +135,10 @@ class Recs {
     if (o is! Map) return null;
     final g = cleanGenres(o['g']);
     final n = cleanHidden(o['n']);
+    final l = cleanPicks(o['l']);
     final off = o['o'] == 1;
-    if (!off && g.isEmpty && n.isEmpty) return null;
-    return {'o': off ? 1 : 0, 'g': g, 'n': n};
+    if (!off && g.isEmpty && n.isEmpty && l.isEmpty) return null;
+    return {'o': off ? 1 : 0, 'g': g, 'n': n, if (l.isNotEmpty) 'l': [for (final p in l) p.toJson()]};
   }
 
   static Map<String, dynamic>? syncValue() => cleanSync(_read());
@@ -126,7 +151,8 @@ class Recs {
     final g = (r['g'] as List).isNotEmpty ? r['g'] : cleanGenres(mine['g']);
     final n = <String>[...cleanHidden(mine['n']), ...(r['n'] as List).cast<String>()];
     final merged = cleanHidden(n.toSet().toList());
-    await _save({'o': (mine['o'] == 1 || r['o'] == 1) ? 1 : 0, 'g': g, 'n': merged}, edited: false);
+    final l = (r['l'] is List && (r['l'] as List).isNotEmpty) ? r['l'] : [for (final p in cleanPicks(mine['l'])) p.toJson()];
+    await _save({'o': (mine['o'] == 1 || r['o'] == 1) ? 1 : 0, 'g': g, 'n': merged, if ((l as List).isNotEmpty) 'l': l, if (mine['d'] == 1) 'd': 1}, edited: false);
   }
 
   static Future<void> setGenres(List<String> ids) async {
@@ -134,6 +160,31 @@ class Recs {
     m['g'] = cleanGenres(ids);
     m['o'] = 1;
     await _save(m);
+  }
+
+  static Future<void> setPicks(List<RecPick> picks) async {
+    final m = _read();
+    m['l'] = [for (final p in cleanPicks([for (final p in picks) p.toJson()])) p.toJson()];
+    m['o'] = 1;
+    await _save(m);
+  }
+
+  /// The picker was finished: genres and titles saved, and it is not offered again on launch.
+  static Future<void> finishOnboarding(List<String> genres, List<RecPick> picks) async {
+    final m = _read();
+    m['g'] = cleanGenres(genres);
+    m['l'] = [for (final p in picks.take(maxPicks)) p.toJson()];
+    m['o'] = 1;
+    m['d'] = 1;
+    await _save(m);
+  }
+
+  /// "Skip": nothing picked, never asked again on launch. The Recommended widget stays on the dashboard with its "Pick" button.
+  static Future<void> skipOnboarding() async {
+    final m = _read();
+    m['o'] = 1;
+    m['d'] = 1;
+    await _save(m, edited: false); // stays on this device: an empty skip must never overwrite picks made on another one
   }
 
   static Future<void> hide(String key) async {
@@ -165,20 +216,58 @@ class Recs {
   }
 }
 
+/// A movie or show the person picked on the taste picker. Small on purpose: it is saved with the other picks (and synced).
+class RecPick {
+  const RecPick({required this.id, required this.tv, required this.title, this.year = 0, this.poster = ''});
+  final int id;
+  final bool tv;
+  final String title;
+  final int year;
+  final String poster; // TMDb path ("/abc.jpg") or ''
+
+  String get key => '${tv ? 't' : 'm'}$id';
+
+  Map<String, dynamic> toJson() => {'k': key, 't': title, if (year > 0) 'y': year, if (poster.isNotEmpty) 'p': poster};
+
+  /// null = not a usable pick. Pure.
+  static RecPick? fromJson(dynamic e) {
+    if (e is! Map) return null;
+    final k = '${e['k'] ?? ''}';
+    final m = RegExp(r'^([mt])(\d{1,9})$').firstMatch(k);
+    final title = '${e['t'] ?? ''}'.trim();
+    if (m == null || title.isEmpty || title.length > 120) return null;
+    final p = '${e['p'] ?? ''}';
+    final y = e['y'];
+    return RecPick(
+      id: int.parse(m.group(2)!),
+      tv: m.group(1) == 't',
+      title: title,
+      year: y is int && y > 1800 && y < 2200 ? y : 0,
+      poster: RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(p) ? p : '',
+    );
+  }
+
+  static RecPick fromItem(RecItem i) => RecPick(id: i.id, tv: i.tv, title: i.title, year: i.year, poster: i.poster);
+}
+
 // ====================================================================== what to show
 
 class RecItem {
-  const RecItem({required this.id, required this.tv, required this.title, required this.year, required this.poster, this.overview = ''});
+  const RecItem({required this.id, required this.tv, required this.title, required this.year, required this.poster, this.overview = '', this.backdrop = ''});
   final int id;
   final bool tv;
   final String title;
   final int year;
   final String poster; // TMDb path ("/abc.jpg")
   final String overview;
+  final String backdrop; // TMDb path of the wide picture, '' when there is none (the banner then uses the poster)
 
   /// The "not interested" key: `m603` for a movie, `t1396` for a show.
   String get key => '${tv ? 't' : 'm'}$id';
   String get image => '${RecFeed.imageBase}/w342$poster';
+
+  /// The wide picture for the banner rows (TMDb w780), or null when this title has none.
+  String? get banner => backdrop.isEmpty ? null : '${RecFeed.imageBase}/w780$backdrop';
 }
 
 class RecRow {
@@ -236,7 +325,7 @@ class RecFeed {
   static final _cache = <String, (int, Map<String, dynamic>)>{};
 
   /// What the feed is built from: a change here means the rows should be asked for again.
-  static String signature(List<String> genres, int ratings, int hidden) => '${genres.join(',')}|${Store.history().length}|$ratings|$hidden';
+  static String signature(List<String> genres, int ratings, int hidden, [int picks = 0]) => '${genres.join(',')}|${Store.history().length}|$ratings|$hidden|$picks';
 
   static Future<Map<String, dynamic>?> _get(String path) async {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -330,7 +419,16 @@ class RecFeed {
       final poster = '${e['poster_path'] ?? ''}';
       if (id is! num || id <= 0 || title.isEmpty || !RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(poster)) continue;
       final date = '${e[tv ? 'first_air_date' : 'release_date'] ?? ''}';
-      out.add(RecItem(id: id.toInt(), tv: tv, title: title, year: date.length >= 4 ? int.tryParse(date.substring(0, 4)) ?? 0 : 0, poster: poster, overview: '${e['overview'] ?? ''}'));
+      final back = '${e['backdrop_path'] ?? ''}';
+      out.add(RecItem(
+        id: id.toInt(),
+        tv: tv,
+        title: title,
+        year: date.length >= 4 ? int.tryParse(date.substring(0, 4)) ?? 0 : 0,
+        poster: poster,
+        overview: '${e['overview'] ?? ''}',
+        backdrop: RegExp(r'^/[A-Za-z0-9_\-]+\.(jpg|jpeg|png|webp)$').hasMatch(back) ? back : '',
+      ));
     }
     return out;
   }
@@ -395,6 +493,32 @@ class RecFeed {
     return s;
   }
 
+  /// What the taste picker offers: well known movies and shows, mixed one by one. With [genres] picked it leans on those, otherwise
+  /// it is simply what is popular. [page] gives "show more". Empty when offline.
+  static Future<List<RecItem>> pickerTitles(List<String> genres, {int page = 1}) async {
+    final lists = <Future<List<RecItem>>>[];
+    Future<List<RecItem>> ask(String kind, String extra) async => parseResults(await _get('/discover/$kind?sort_by=popularity.desc&vote_count.gte=500&include_adult=false&page=$page$extra'), kind == 'tv');
+    final chosen = [for (final id in genres) ...recGenres.where((g) => g.id == id)];
+    if (chosen.isEmpty) {
+      lists..add(ask('movie', ''))..add(ask('tv', ''));
+    } else {
+      // "|" in a TMDb genre filter means any of them.
+      final m = chosen.map((g) => g.movie).where((i) => i > 0).toSet().join('|');
+      final t = chosen.map((g) => g.tv).where((i) => i > 0).toSet().join('|');
+      if (m.isNotEmpty) lists.add(ask('movie', '&with_genres=$m'));
+      if (t.isNotEmpty) lists.add(ask('tv', '&with_genres=$t'));
+    }
+    final got = await Future.wait(lists);
+    if (got.isEmpty) return const [];
+    return got.length == 1 ? got.first : interleave(got[0], got[1]);
+  }
+
+  /// Titles like [p], for the picker to add next to the ones just picked (the way Spotify shows related artists). Empty when offline.
+  static Future<List<RecItem>> similarTo(RecPick p) async {
+    final info = await _get('/${p.tv ? 'tv' : 'movie'}/${p.id}?append_to_response=recommendations');
+    return parseResults(info?['recommendations'], p.tv);
+  }
+
   static Future<List<RecItem>> _forSeed(RecSeed s) async {
     final q = Uri.encodeQueryComponent(s.title);
     final kind = s.tv ? 'tv' : 'movie';
@@ -428,14 +552,16 @@ class RecFeed {
   /// "not interested" titles are left out. An empty list means nothing could be fetched (offline).
   static Future<List<RecRow>> build({required List<String> genres, required Set<String> hidden}) async {
     final known = _known();
-    final seeds = seedsFrom(Store.history(), Ratings.all(), DateTime.now().millisecondsSinceEpoch);
+    // Titles picked on the taste picker come first (newest picks first, up to two), then what was watched and rated.
+    final picked = Recs.picks.reversed.take(2).map((p) => RecSeed(title: p.title, tv: p.tv, year: p.year, weight: 3, liked: true)).toList();
+    final seeds = [...picked, ...seedsFrom(Store.history(), Ratings.all(), DateTime.now().millisecondsSinceEpoch).where((s) => !picked.any((p) => Store.normalize(p.title) == Store.normalize(s.title)))].take(4).toList();
     final personal = await Future.wait([for (final s in seeds) _forSeed(s)]);
     final byGenre = await Future.wait([
       for (final id in genres)
         if (recGenres.any((g) => g.id == id)) _forGenre(recGenres.firstWhere((g) => g.id == id)),
     ]);
     final names = [for (final id in genres) if (recGenres.any((g) => g.id == id)) recGenres.firstWhere((g) => g.id == id).name];
-    final used = <String>{};
+    final used = <String>{for (final p in Recs.picks) p.key};
     List<RecItem> pickFrom(List<RecItem> l) {
       final out = <RecItem>[];
       for (final i in l) {
@@ -497,57 +623,8 @@ class _RecommendWidgetState extends State<RecommendWidget> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _pick() async {
-    final p = context.pek;
-    final t = p.tokens;
-    final rem = p.rem;
-    final chosen = <String>{...Recs.genres};
-    final save = await showDialog<bool>(
-      context: context,
-      barrierColor: t.overlay,
-      builder: (c) => StatefulBuilder(
-        builder: (c, setD) => Dialog(
-          backgroundColor: t.glassStrong,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(t.radius), side: BorderSide(color: t.border)),
-          child: Padding(
-            padding: EdgeInsets.all(1.5 * rem),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('What do you like to watch?', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700)),
-                SizedBox(height: 0.5 * rem),
-                Text('Pick a few genres for a row of movies and shows each. Picks improve as you watch and rate. Saved to your account.', style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem)),
-                SizedBox(height: rem),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: Wrap(spacing: 0.5 * rem, runSpacing: 0.5 * rem, children: [
-                      for (final g in recGenres)
-                        _GenreChip(
-                          label: g.name,
-                          on: chosen.contains(g.id),
-                          autofocus: g == recGenres.first,
-                          onTap: () => setD(() => chosen.contains(g.id) ? chosen.remove(g.id) : chosen.add(g.id)),
-                        ),
-                    ]),
-                  ),
-                ),
-                SizedBox(height: 1.25 * rem),
-                Wrap(spacing: 0.75 * rem, runSpacing: 0.75 * rem, children: [
-                  PekButton(label: chosen.isEmpty ? 'Pick at least one' : 'Save', primary: true, onTap: chosen.isEmpty ? null : () => Navigator.pop(c, true)),
-                  PekButton(label: 'Cancel', onTap: () => Navigator.pop(c, false)),
-                ]),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (save == true) {
-      // Keep the order the genres are listed in, so rows do not jump around.
-      await Recs.setGenres([for (final g in recGenres) if (chosen.contains(g.id)) g.id]);
-    }
-  }
+  /// The same screen as the first launch (recs_onboarding.dart), started from the widget: genres and titles can be changed any time.
+  Future<void> _pick() => RecsPicker.open(context);
 
   void _open(RecItem i) {
     unawaited(openPluginScreen(context, pluginId: 'tmdb-discover', title: i.title, launch: {'type': i.tv ? 'tv' : 'movie', 'id': i.id, 'title': i.title, 'year': i.year}));
@@ -601,38 +678,33 @@ class _RecommendWidgetState extends State<RecommendWidget> {
     );
   }
 
+  /// One Netflix-on-TV style row: a title, then long 16:9 banners that scroll sideways. The title and year sit on the picture.
   Widget _rowOf(BuildContext context, RecRow row) {
     final p = context.pek;
     final rem = p.rem;
-    final w = p.compact ? 110.0 : (p.isTv ? 8 * rem : 150.0);
-    final textRoom = (0.4 + 2.7 * MediaQuery.textScalerOf(context).scale(1.0)) * rem;
+    final w = p.isTv ? 15 * rem : (p.compact ? (p.size.width * 0.72).clamp(230.0, 300.0) : 300.0);
+    final h = w * 9 / 16;
     return Padding(
-      padding: EdgeInsets.only(bottom: rem),
+      padding: EdgeInsets.only(bottom: 1.2 * rem),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(row.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 1.05 * rem, fontWeight: FontWeight.w600)),
         SizedBox(height: 0.6 * rem),
         SizedBox(
-          height: w * 1.5 + textRoom,
+          height: h + (p.isTv ? 0.8 * rem : 0.3 * rem), // room for the focus scale
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             clipBehavior: Clip.none,
+            padding: EdgeInsets.symmetric(vertical: 0.15 * rem),
             itemCount: row.items.length,
             separatorBuilder: (_, __) => SizedBox(width: 0.75 * rem),
             itemBuilder: (_, k) {
               final i = row.items[k];
               return SizedBox(
                 width: w,
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: PosterCard(
-                    title: i.title,
-                    subtitle: [if (i.year > 0) '${i.year}', i.tv ? 'Show' : 'Movie'].join(' \u00b7 '),
-                    poster: Future.value(const Details(overview: '', poster: '')),
-                    fallbackImage: i.image,
-                    holdSelect: true,
-                    onTap: () => _open(i),
-                    onLongPress: () => _cardMenu(i),
-                  ),
+                height: h,
+                child: _FadeIn(
+                  delay: Duration(milliseconds: k < 6 ? 40 * k : 0),
+                  child: RecBanner(item: i, onTap: () => _open(i), onLongPress: () => _cardMenu(i)),
                 ),
               );
             },
@@ -648,13 +720,13 @@ class _RecommendWidgetState extends State<RecommendWidget> {
     final t = p.tokens;
     final rem = p.rem;
     final genres = Recs.genres;
-    if (genres.isEmpty) {
-      return _card(context, 'Recommended for you', 'Pick a few genres and we will suggest movies and shows. Picks improve as you watch and rate. Saved to your account.', [
-        PekButton(label: 'Pick genres', primary: true, shrink: true, onTap: _pick),
+    if (genres.isEmpty && Recs.picks.isEmpty) {
+      return _card(context, 'Recommended for you', 'Pick a few genres, movies and shows you like and we will suggest more. Picks improve as you watch and rate. Saved to your account.', [
+        PekButton(label: 'Pick what you like', primary: true, shrink: true, onTap: _pick),
         PekButton(label: 'Remove widget', shrink: true, onTap: widget.onRemove),
       ]);
     }
-    final sig = RecFeed.signature(genres, Ratings.all().length, Recs.hidden.length);
+    final sig = RecFeed.signature(genres, Ratings.all().length, Recs.hidden.length, Recs.picks.length);
     if (_future == null || sig != _sig) {
       _sig = sig;
       _future = RecFeed.build(genres: genres, hidden: Recs.hidden);
@@ -663,7 +735,7 @@ class _RecommendWidgetState extends State<RecommendWidget> {
       Text('Recommended for you', style: TextStyle(fontSize: 1.2 * rem, fontWeight: FontWeight.w700)),
       SizedBox(height: 0.5 * rem),
       Wrap(spacing: 0.75 * rem, runSpacing: 0.5 * rem, children: [
-        PekButton(compact: true, shrink: true, label: 'Edit genres', onTap: _pick),
+        PekButton(compact: true, shrink: true, label: 'Edit your picks', onTap: _pick),
         PekButton(compact: true, shrink: true, label: 'Remove widget', onTap: widget.onRemove),
       ]),
       SizedBox(height: 0.9 * rem),
@@ -694,31 +766,102 @@ class _RecommendWidgetState extends State<RecommendWidget> {
   }
 }
 
-class _GenreChip extends StatelessWidget {
-  const _GenreChip({required this.label, required this.on, required this.onTap, this.autofocus = false});
-  final String label;
-  final bool on;
-  final bool autofocus;
+/// Fades and slides a card in once, a little after the row appears. (The delay is started once, so a rebuild does not replay it.)
+class _FadeIn extends StatefulWidget {
+  const _FadeIn({required this.child, this.delay = Duration.zero});
+  final Widget child;
+  final Duration delay;
+
+  @override
+  State<_FadeIn> createState() => _FadeInState();
+}
+
+class _FadeInState extends State<_FadeIn> {
+  bool _in = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.delay == Duration.zero) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _in = true);
+      });
+    } else {
+      _timer = Timer(widget.delay, () {
+        if (mounted) setState(() => _in = true);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _in ? 1 : 0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(offset: _in ? Offset.zero : const Offset(0.06, 0), duration: const Duration(milliseconds: 320), curve: Curves.easeOutCubic, child: widget.child),
+    );
+  }
+}
+
+/// A long banner: the title's wide picture with its name and year laid over a soft shade. Falls back to the poster when TMDb has no
+/// wide picture, and to a plain title card when no picture loads.
+class RecBanner extends StatelessWidget {
+  const RecBanner({super.key, required this.item, required this.onTap, this.onLongPress});
+  final RecItem item;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
+    final url = item.banner ?? item.image;
+    final meta = [if (item.year > 0) '${item.year}', item.tv ? 'Show' : 'Movie'].join(' \u00b7 ');
+    Widget label() => Align(
+          alignment: Alignment.bottomLeft,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(0.75 * rem, 0, 0.75 * rem, 0.6 * rem),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 0.95 * rem, fontWeight: FontWeight.w700, color: Colors.white, height: 1.2)),
+              Text(meta, maxLines: 1, style: TextStyle(fontSize: 0.75 * rem, color: Colors.white70)),
+            ]),
+          ),
+        );
     return PekFocusable(
-      autofocus: autofocus,
       onTap: onTap,
-      radius: 20,
-      background: on ? t.accent.withAlpha(46) : t.surface,
-      borderColor: on ? t.accent : t.border,
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 0.9 * rem, vertical: 0.55 * rem),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (on) Padding(padding: EdgeInsets.only(right: 0.35 * rem), child: Icon(Icons.check, size: 1.0 * rem, color: t.accent)),
-          Text(label, style: TextStyle(fontSize: 0.95 * rem, fontWeight: on ? FontWeight.w700 : FontWeight.w500, color: on ? t.text : t.textMuted)),
-        ]),
-      ),
+      onLongPress: onLongPress,
+      holdSelect: true,
+      radius: p.compact ? 10 : 12,
+      focusScale: p.isTv ? 1.07 : 1.03,
+      focusMargin: p.isTv ? 0.6 * rem : 0,
+      child: Stack(fit: StackFit.expand, children: [
+        ColoredBox(color: t.surface),
+        ArtImage(
+          url,
+          fit: BoxFit.cover,
+          cacheWidth: 640, // decode small: weak TV boxes run out of memory on big pictures
+          placeholder: (_) => Center(child: Icon(Icons.movie_outlined, color: t.textMuted, size: 2 * rem)),
+          errorBuilder: (_, __, ___) => Container(
+            alignment: Alignment.center,
+            padding: EdgeInsets.all(rem),
+            color: t.surface,
+            child: Text(item.title, textAlign: TextAlign.center, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.text, fontWeight: FontWeight.w600)),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: [0.45, 1.0], colors: [Color(0x00000000), Color(0xD9000000)])),
+        ),
+        label(),
+      ]),
     );
   }
 }

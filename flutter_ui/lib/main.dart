@@ -12,6 +12,8 @@ import 'src/key_guard.dart';
 import 'src/cloud.dart';
 import 'src/profile_pages.dart';
 import 'src/profiles.dart';
+import 'src/recs.dart';
+import 'src/recs_onboarding.dart';
 import 'src/remote_host.dart';
 import 'src/skins.dart';
 import 'src/mpv.dart';
@@ -24,6 +26,7 @@ import 'src/store.dart';
 import 'src/theme.dart';
 import 'src/tokens.dart';
 import 'src/tv_nav.dart';
+import 'src/welcome.dart';
 import 'src/whats_new.dart';
 
 Future<void> main() async {
@@ -155,8 +158,16 @@ class _BootState extends State<_Boot> {
           }
           // With an account, "Who's watching?" comes first; the app below is rebuilt for each profile.
           return ListenableBuilder(
-            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN]),
-            builder: (context, _) => Profiles.gateNeeded ? const ProfileGate() : AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}')),
+            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Recs.changed, Welcome.changed]),
+            builder: (context, _) {
+              if (Profiles.gateNeeded) return const ProfileGate();
+              // First launch ever: "Welcome to PEK TV" (welcome.dart), one feature per screen, then the picker below.
+              if (Welcome.pending) return WelcomeScreen(key: const ValueKey('welcome'), onDone: Welcome.markSeen);
+              // A brand new profile picks genres, movies and shows first (recs_onboarding.dart); "Skip" goes straight to the app.
+              // Saving or skipping changes Recs, which rebuilds this into the shell.
+              if (Recs.onboardingPending) return RecsOnboardingScreen(key: ValueKey('recs-first-${Profiles.currentId}'), firstRun: true, onDone: () {});
+              return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}'));
+            },
           );
         }
         final rem = context.pek.rem;
