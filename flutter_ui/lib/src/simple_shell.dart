@@ -573,7 +573,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
         Expanded(
           child: ListView(
             padding: EdgeInsets.zero,
-            cacheExtent: 900,
+            cacheExtent: 500,
             children: [
               if (hasHero) _hero(context, wide: false, height: heroH, sidePad: rem),
               SizedBox(height: 0.75 * rem),
@@ -635,7 +635,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
       Expanded(
         child: ListView(
           padding: EdgeInsets.fromLTRB(side, 0.5 * rem, side, p.safeY),
-          cacheExtent: 900,
+          cacheExtent: 500,
           children: _rows(context, cardW: 6 * rem),
         ),
       ),
@@ -793,7 +793,7 @@ class SimpleShelf extends StatelessWidget {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
-              cacheExtent: 1200,
+              cacheExtent: 500, // cards kept built beside the visible ones: each holds a decoded poster, and a TV box has little memory
               itemCount: cards.length,
               separatorBuilder: (_, __) => SizedBox(width: 0.6 * rem),
               itemBuilder: (_, i) => SizedBox(width: cardW * (widthFactors != null && i < widthFactors!.length ? widthFactors![i] : 1.0), child: Align(alignment: Alignment.topCenter, child: cards[i])),

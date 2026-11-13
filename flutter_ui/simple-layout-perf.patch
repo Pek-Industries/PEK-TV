@@ -1,0 +1,91 @@
+--- /tmp/orig/flutter_ui/lib/src/widgets.dart	2026-11-12 21:48:34.000000000 +0000
++++ flutter_ui/lib/src/widgets.dart	2026-11-13 05:35:39.317482215 +0000
+@@ -486,6 +486,15 @@
+   Timer? _lookupTimer;
+   bool _plain = false; // the title card is showing (no picture yet)
+ 
++  /// How wide to decode the picture: the card's width in real pixels (a little over, for the focus zoom), never more than the old
++  /// fixed size. A poster is drawn about 200 px wide on a TV, so decoding it at 400 cost four times the memory for nothing, and a
++  /// long list of cards filled the Chromecast's memory until scrolling stuttered.
++  int _decodeWidth(BuildContext context, double cardWidth) {
++    final cap = widget.aspectRatio > 1 ? 640 : 400;
++    if (!cardWidth.isFinite || cardWidth <= 0) return cap;
++    return (cardWidth * MediaQuery.devicePixelRatioOf(context) * 1.15).round().clamp(120, cap);
++  }
++
+   /// This profile's star rating (1..10) of the title on this card, 0 when it has none. A card only knows its title and subtitle, so
+   /// a movie is looked up by title + the year in its subtitle, and anything else as a rated whole show.
+   int _rating() {
+@@ -555,7 +564,6 @@
+         var url = snap.data?.poster ?? '';
+         if (url.isEmpty && widget.fallbackImage.startsWith('https://')) url = widget.fallbackImage;
+         _plain = url.isEmpty || _failed;
+-        debugPrint('[art-ui] card "${widget.title}": ${url.isEmpty ? 'no poster address yet (${snap.connectionState.name})' : 'has poster address'}');
+         if (url.isEmpty && snap.connectionState == ConnectionState.done) _scheduleLookup(); // failed, or no picture yet
+         if (url.isEmpty || _failed) {
+           return ValueListenableBuilder<int>(
+@@ -586,10 +594,10 @@
+                   child: ColoredBox(
+                     color: t.surface,
+                     child: Stack(fit: StackFit.expand, children: [
+-                      ArtImage(
++                      LayoutBuilder(builder: (context, box) => ArtImage(
+                         url,
+                         fit: BoxFit.cover,
+-                        cacheWidth: widget.aspectRatio > 1 ? 640 : 400, // decode small: weak TV boxes run out of memory on full-size posters
++                        cacheWidth: _decodeWidth(context, box.maxWidth), // decode at the size it is drawn: weak TV boxes run out of memory on big pictures
+                         placeholder: (_) => Center(child: Icon(Icons.image_outlined, color: t.textMuted, size: 2 * rem)),
+                         errorBuilder: (_, __, ___) {
+                           WidgetsBinding.instance.addPostFrameCallback((_) {
+@@ -607,7 +615,7 @@
+                           });
+                           return const SizedBox.shrink();
+                         },
+-                      ),
++                      )),
+                       Positioned(
+                         top: 0.4 * rem,
+                         right: 0.4 * rem,
+--- /tmp/orig/flutter_ui/lib/src/simple_shell.dart	2026-11-12 21:57:34.000000000 +0000
++++ flutter_ui/lib/src/simple_shell.dart	2026-11-13 05:35:39.318095047 +0000
+@@ -573,7 +573,7 @@
+         Expanded(
+           child: ListView(
+             padding: EdgeInsets.zero,
+-            cacheExtent: 900,
++            cacheExtent: 500,
+             children: [
+               if (hasHero) _hero(context, wide: false, height: heroH, sidePad: rem),
+               SizedBox(height: 0.75 * rem),
+@@ -635,7 +635,7 @@
+       Expanded(
+         child: ListView(
+           padding: EdgeInsets.fromLTRB(side, 0.5 * rem, side, p.safeY),
+-          cacheExtent: 900,
++          cacheExtent: 500,
+           children: _rows(context, cardW: 6 * rem),
+         ),
+       ),
+@@ -793,7 +793,7 @@
+             child: ListView.separated(
+               scrollDirection: Axis.horizontal,
+               clipBehavior: Clip.none,
+-              cacheExtent: 1200,
++              cacheExtent: 500, // cards kept built beside the visible ones: each holds a decoded poster, and a TV box has little memory
+               itemCount: cards.length,
+               separatorBuilder: (_, __) => SizedBox(width: 0.6 * rem),
+               itemBuilder: (_, i) => SizedBox(width: cardW * (widthFactors != null && i < widthFactors!.length ? widthFactors![i] : 1.0), child: Align(alignment: Alignment.topCenter, child: cards[i])),
+--- /tmp/orig/flutter_ui/lib/main.dart	2026-11-13 03:06:28.000000000 +0000
++++ flutter_ui/lib/main.dart	2026-11-13 05:35:39.318367737 +0000
+@@ -35,6 +35,11 @@
+   runZonedGuarded(
+     () async {
+       WidgetsFlutterBinding.ensureInitialized();
++      // The decoded pictures kept for scrolling back. Flutter's default is 100 MB / 1000 pictures: a TV box with 1-2 GB runs short of
++      // memory after a long scroll through posters and slows down. 48 MB holds a couple of hundred posters decoded at card size.
++      PaintingBinding.instance.imageCache
++        ..maximumSizeBytes = 48 << 20
++        ..maximumSize = 300;
+       DevConsole.installErrorHooks();
+       // The same phone / TV test the web UI used for html.pek-tv; Settings > TV mode (tv_mode.dart) can force the look on or off.
+       // Asked right away so it runs alongside the storage load instead of after it.

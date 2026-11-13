@@ -486,6 +486,15 @@ class _PosterCardState extends State<PosterCard> {
   Timer? _lookupTimer;
   bool _plain = false; // the title card is showing (no picture yet)
 
+  /// How wide to decode the picture: the card's width in real pixels (a little over, for the focus zoom), never more than the old
+  /// fixed size. A poster is drawn about 200 px wide on a TV, so decoding it at 400 cost four times the memory for nothing, and a
+  /// long list of cards filled the Chromecast's memory until scrolling stuttered.
+  int _decodeWidth(BuildContext context, double cardWidth) {
+    final cap = widget.aspectRatio > 1 ? 640 : 400;
+    if (!cardWidth.isFinite || cardWidth <= 0) return cap;
+    return (cardWidth * MediaQuery.devicePixelRatioOf(context) * 1.15).round().clamp(120, cap);
+  }
+
   /// This profile's star rating (1..10) of the title on this card, 0 when it has none. A card only knows its title and subtitle, so
   /// a movie is looked up by title + the year in its subtitle, and anything else as a rated whole show.
   int _rating() {
@@ -555,7 +564,6 @@ class _PosterCardState extends State<PosterCard> {
         var url = snap.data?.poster ?? '';
         if (url.isEmpty && widget.fallbackImage.startsWith('https://')) url = widget.fallbackImage;
         _plain = url.isEmpty || _failed;
-        debugPrint('[art-ui] card "${widget.title}": ${url.isEmpty ? 'no poster address yet (${snap.connectionState.name})' : 'has poster address'}');
         if (url.isEmpty && snap.connectionState == ConnectionState.done) _scheduleLookup(); // failed, or no picture yet
         if (url.isEmpty || _failed) {
           return ValueListenableBuilder<int>(
@@ -586,10 +594,10 @@ class _PosterCardState extends State<PosterCard> {
                   child: ColoredBox(
                     color: t.surface,
                     child: Stack(fit: StackFit.expand, children: [
-                      ArtImage(
+                      LayoutBuilder(builder: (context, box) => ArtImage(
                         url,
                         fit: BoxFit.cover,
-                        cacheWidth: widget.aspectRatio > 1 ? 640 : 400, // decode small: weak TV boxes run out of memory on full-size posters
+                        cacheWidth: _decodeWidth(context, box.maxWidth), // decode at the size it is drawn: weak TV boxes run out of memory on big pictures
                         placeholder: (_) => Center(child: Icon(Icons.image_outlined, color: t.textMuted, size: 2 * rem)),
                         errorBuilder: (_, __, ___) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -607,7 +615,7 @@ class _PosterCardState extends State<PosterCard> {
                           });
                           return const SizedBox.shrink();
                         },
-                      ),
+                      )),
                       Positioned(
                         top: 0.4 * rem,
                         right: 0.4 * rem,

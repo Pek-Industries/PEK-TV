@@ -35,6 +35,11 @@ Future<void> main() async {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      // The decoded pictures kept for scrolling back. Flutter's default is 100 MB / 1000 pictures: a TV box with 1-2 GB runs short of
+      // memory after a long scroll through posters and slows down. 48 MB holds a couple of hundred posters decoded at card size.
+      PaintingBinding.instance.imageCache
+        ..maximumSizeBytes = 48 << 20
+        ..maximumSize = 300;
       DevConsole.installErrorHooks();
       // The same phone / TV test the web UI used for html.pek-tv; Settings > TV mode (tv_mode.dart) can force the look on or off.
       // Asked right away so it runs alongside the storage load instead of after it.
