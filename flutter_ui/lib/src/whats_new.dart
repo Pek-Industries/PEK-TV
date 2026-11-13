@@ -35,7 +35,14 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
-    ReleaseNotes('2.2.5', '', []), // cleared: an entry with no lines shows no screen. Add this release's notes here when you have them.
+    ReleaseNotes('2.2.5', 'Smarter matching and a smoother start', [
+      'Movies and shows are now matched to the right title more reliably, so you get the correct poster and details.',
+      'Subtitles now display properly on top of HDR video.',
+      'The Skip Intro button works again.',
+      'A new welcome screen helps you get set up the first time you open the app.',
+      'Small tweaks and fixes across the interface.',
+      'New layout options are available in Settings.',
+    ]),
   ];
 
   /// The version without "-debug", "-dev.N" or "+build", for comparing.
