@@ -101,7 +101,8 @@ class _BootState extends State<_Boot> {
   AppRelease? _update;
   bool _later = false;
 
-  // What changed in this version (whats_new.dart): shown once, on the first start after an update.
+  // What changed in this version (whats_new.dart): shown once, on the first start after an update, after the profile picker and
+  // the first-launch onboarding and right before the app.
   List<ReleaseNotes> _notes = const [];
   bool _notesSeen = false;
 
@@ -147,15 +148,6 @@ class _BootState extends State<_Boot> {
           if (_update != null && !_later) {
             return AppUpdateScreen(release: _update!, onLater: () => setState(() => _later = true));
           }
-          if (_notes.isNotEmpty && !_notesSeen) {
-            return WhatsNewScreen(
-              notes: _notes,
-              onDone: () {
-                WhatsNew.markSeen();
-                setState(() => _notesSeen = true);
-              },
-            );
-          }
           // With an account, "Who's watching?" comes first; the app below is rebuilt for each profile.
           return ListenableBuilder(
             listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Store.simpleModeN, Recs.changed, Welcome.changed]),
@@ -165,6 +157,16 @@ class _BootState extends State<_Boot> {
               // each sliding in after the one before (onboarding_flow.dart); the last answer opens the app. A new profile on an old
               // install only gets the taste picker, and "Skip" there goes straight to the app.
               if (Welcome.pending || Recs.onboardingPending || LayoutChoice.pending || SignInStep.pending) return OnboardingFlow(key: ValueKey('onboarding-${Profiles.currentId}'));
+              // What's new comes after the onboarding (a new install sees the tour first), then the app.
+              if (_notes.isNotEmpty && !_notesSeen) {
+                return WhatsNewScreen(
+                  notes: _notes,
+                  onDone: () {
+                    WhatsNew.markSeen();
+                    setState(() => _notesSeen = true);
+                  },
+                );
+              }
               return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}-${Store.simpleMode}'));
             },
           );

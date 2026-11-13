@@ -26,6 +26,8 @@ class ReleaseNotes {
 /// Rules the app follows:
 ///  * Which notes are due: every entry newer than the last version the person saw and not newer than the running app.
 ///    The very first time (nothing remembered yet) only the newest entry is shown, not the whole history.
+///  * An entry with no lines shows nothing (keep it as the top entry, so tools/check_version.py still finds the version).
+///  * The screen comes up after the profile picker and the first-launch onboarding, right before the app (main.dart).
 ///  * "-debug" / "-dev.N" suffixes are ignored, so a dev build of 2.2.0 shows the 2.2.0 notes (handy for checking the text).
 ///  * The version is remembered when the person presses Continue, so closing the app on the screen shows it again.
 class WhatsNew {
@@ -33,19 +35,7 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
-    ReleaseNotes('2.2.4', 'Phone remote, DVD support, audio controls and smarter filters', [
-      'Phone remote: your Android phone can now control PEK TV on your TV. Open More > Remote on the phone for arrows, OK, Back, Home, Menu, play / pause, skip 10 seconds and volume.',
-      'Typing: when a text box is open on the TV, a keyboard box appears on your phone, so searching and signing in no longer need the on-screen keyboard.',
-      'Pairing: on the TV open More > Remote > Pair a phone and enter the 6-digit code on your phone. You only do this once per phone, and you can remove a phone from the same screen.',
-      'Private by design: a phone that has not paired can do nothing, and the remote can be turned off on the TV at any time.',
-      'DVDs: DVD images (.iso files) and ripped DVD folders now play from your library as a single movie. Physical discs are not supported yet.',
-      'Multi-part movies: films split across several files now appear as a single title.',
-      'Search and filters: Movies and TV Shows have a search box with suggestions that finds titles by name, actor, director, genre, studio or year, and drop-downs to sort (random, rating, runtime, recently added), pick by genre or actor, and mix them with watched, unwatched and more filters such as decade, rating and runtime. Details come from your .nfo files when a title has one.',
-      'Equalizer: new audio settings let you shape the sound of your music.',
-      'Video audio: the video player has its own new audio options.',
-      'Playback errors: fixed a cause of the libmpv playback error, so videos that failed to start now play.',
-      'Skin backups: skins are now saved to your account properly.',
-    ]),
+    ReleaseNotes('2.2.5', '', []), // cleared: an entry with no lines shows no screen. Add this release's notes here when you have them.
   ];
 
   /// The version without "-debug", "-dev.N" or "+build", for comparing.
@@ -57,7 +47,7 @@ class WhatsNew {
     final last = core(seen);
     final due = [
       for (final r in all)
-        if (AppUpdate.compare(r.version, now) <= 0 && (last.isEmpty || AppUpdate.compare(r.version, last) > 0)) r,
+        if (r.items.isNotEmpty && AppUpdate.compare(r.version, now) <= 0 && (last.isEmpty || AppUpdate.compare(r.version, last) > 0)) r,
     ]..sort((a, b) => AppUpdate.compare(b.version, a.version));
     return last.isEmpty && due.length > 1 ? [due.first] : due;
   }

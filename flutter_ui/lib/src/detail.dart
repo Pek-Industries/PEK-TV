@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'art_cache.dart';
 import 'dvd.dart';
+import 'fix_match.dart';
 import 'library_match.dart';
 import 'player.dart';
 import 'recs.dart' show RecFeed;
@@ -372,8 +373,11 @@ class MovieScreen extends StatelessWidget {
   const MovieScreen({super.key, required this.movie});
   final Movie movie;
 
+  // Fix match (or a rescan) can change this movie's poster and synopsis: the page reads them again when the server says so.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(valueListenable: Api.artRevision, builder: (context, _, __) => _page(context));
+
+  Widget _page(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
@@ -408,6 +412,7 @@ class MovieScreen extends StatelessWidget {
                 PekButton(label: 'Play', primary: true, autofocus: true, onTap: () => playMedia(context, movieItem(movie))),
               PekButton(label: fav ? '\u2665 Favorited' : '\u2661 Favorite', onTap: () => Store.toggleFavorite(Favorite.movie(movie.id, movie.title, movie.year))),
               PekButton(label: seen ? '\u2713 Watched \u00b7 mark as unwatched' : 'Mark as watched', onTap: () => Watched.set([movieItem(movie)], !seen)),
+              PekButton(label: 'Fix match', onTap: () => openFixMatch(context, movie: true, key: movie.id, title: movie.title, year: movie.year)),
             ]),
             SizedBox(height: 1.25 * rem),
             RatingPanel(title: movie.title, year: movie.year),
@@ -450,8 +455,11 @@ class ShowScreen extends StatefulWidget {
 class _ShowScreenState extends State<ShowScreen> {
   int _season = 0;
 
+  // Fix match (or a rescan) can change this show's poster and synopsis: the page reads them again when the server says so.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(valueListenable: Api.artRevision, builder: (context, _, __) => _page(context));
+
+  Widget _page(BuildContext context) {
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
@@ -485,6 +493,7 @@ class _ShowScreenState extends State<ShowScreen> {
                 label: seasonSeen ? 'Mark season as unwatched' : 'Mark season as watched',
                 onTap: () => Watched.set([for (final e in episodes) episodeItem(show, e)], !seasonSeen),
               ),
+            PekButton(compact: true, label: 'Fix match', onTap: () => openFixMatch(context, movie: false, key: show.title, title: show.title)),
           ]);
           // Wide screens (TV): poster, big title, synopsis and buttons side by side. Phones keep the plain list.
           final header = wide

@@ -705,6 +705,8 @@ CREATE TABLE IF NOT EXISTS title_person(
 CREATE INDEX IF NOT EXISTS person_idx ON title_person(kind, norm);
 CREATE TABLE IF NOT EXISTS title_art(
   key TEXT PRIMARY KEY, poster TEXT NOT NULL, overview TEXT NOT NULL, tried INTEGER NOT NULL, stamp TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS match_pin(
+  key TEXT PRIMARY KEY, tmdb_id TEXT NOT NULL, name TEXT NOT NULL, year INTEGER NOT NULL);
 )SQL";
 
 std::string normOf(const MediaEntry& e) {
@@ -1480,17 +1482,18 @@ std::vector<MediaScanner::ArtJob> MediaScanner::artPending(size_t limit) {
     std::vector<ArtJob> out;
     if (!db_ || limit == 0) return out;
     const long long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    struct Row { bool poster; long long tried; bool changed; bool tmdb; };
+    struct Row { bool poster; long long tried; bool changed; bool tmdb; bool pinned; };
     std::unordered_map<std::string, Row> have;
     {
-        pekdb::Stmt st(*db_, "SELECT key, poster <> '', tried, stamp = '!', instr(stamp, '|t:') > 0 FROM title_art");
-        while (st.step()) have[st.str(0)] = Row{st.num(1) != 0, st.num(2), st.num(3) != 0, st.num(4) != 0};
+        pekdb::Stmt st(*db_, "SELECT key, poster <> '', tried, stamp = '!', instr(stamp, '|t:') > 0, substr(stamp, 1, 4) = 'pin:' FROM title_art");
+        while (st.step()) have[st.str(0)] = Row{st.num(1) != 0, st.num(2), st.num(3) != 0, st.num(4) != 0, st.num(5) != 0};
     }
     // 0 = leave alone, 1 = look up, 2 = look up again (it has a poster, but its files changed),
     // 3 = a poster that came from TMDb is old: ask TMDb again, and only replace it if the answer is different
     auto wanted = [&](const std::string& key) {
         auto it = have.find(key);
         if (it == have.end()) return 1;
+        if (it->second.pinned) return 0;   // matched by hand (Fix match): never looked up again
         if (it->second.changed) return now - it->second.tried > 600 ? 2 : 0;
         if (!it->second.poster) return now - it->second.tried > 24 * 3600 ? 1 : 0;
         return (it->second.tmdb && now - it->second.tried > kTmdbRecheckSecs) ? 3 : 0;
@@ -1522,14 +1525,51 @@ void MediaScanner::artStore(bool movie, const std::string& idOrTitle, const std:
     // Did the poster or synopsis really change? Only then does the app need to read its lists again.
     bool same = false;
     {
-        pekdb::Stmt old(*db_, "SELECT poster, overview FROM title_art WHERE key=?");
+        pekdb::Stmt old(*db_, "SELECT poster, overview, stamp FROM title_art WHERE key=?");
         old.text(1, key);
-        if (old.step()) same = (old.str(0) == poster && old.str(1) == overview);
+        if (old.step()) {
+            // Matched by hand (Fix match): only artPin() / artUnpin() change it, never an automatic look-up.
+            if (old.str(2).compare(0, 4, "pin:") == 0 && stamp.compare(0, 4, "pin:") != 0) return;
+            same = (old.str(0) == poster && old.str(1) == overview);
+        }
     }
     pekdb::Stmt up(*db_, "INSERT OR REPLACE INTO title_art(key,poster,overview,tried,stamp) VALUES(?,?,?,?,?)");
     up.text(1, key).text(2, poster).text(3, overview).i64(4, now).text(5, stamp);
     up.run();
     if (!same && !poster.empty()) ++art_changes_;
+}
+
+// ---- Fix match: a title the person matched to a TMDb entry by hand ------------------------------------------------------
+bool MediaScanner::artPinned(bool movie, const std::string& idOrTitle, Pin& out) {
+    if (!db_) return false;
+    const std::string key = artKey(movie, idOrTitle);
+    pekdb::Stmt st(*db_, "SELECT p.tmdb_id, p.name, p.year, a.poster, a.overview FROM match_pin p LEFT JOIN title_art a ON a.key = p.key WHERE p.key=?");
+    st.text(1, key);
+    if (!st.step()) return false;
+    out.tmdb_id = st.str(0); out.name = st.str(1); out.year = static_cast<int>(st.num(2)); out.poster = st.str(3); out.overview = st.str(4);
+    return true;
+}
+
+void MediaScanner::artPin(bool movie, const std::string& idOrTitle, const Pin& pin) {
+    if (!db_) return;
+    const std::string key = artKey(movie, idOrTitle);
+    artStore(movie, idOrTitle, pin.poster, pin.overview, "pin:" + pin.tmdb_id);
+    pekdb::Stmt up(*db_, "INSERT OR REPLACE INTO match_pin(key,tmdb_id,name,year) VALUES(?,?,?,?)");
+    up.text(1, key).text(2, pin.tmdb_id).text(3, pin.name).i64(4, pin.year);
+    up.run();
+    ++art_changes_;   // the lists read their posters again
+}
+
+void MediaScanner::artUnpin(bool movie, const std::string& idOrTitle) {
+    if (!db_) return;
+    const std::string key = artKey(movie, idOrTitle);
+    pekdb::Stmt a(*db_, "DELETE FROM title_art WHERE key=?");
+    a.text(1, key);
+    a.run();
+    pekdb::Stmt p(*db_, "DELETE FROM match_pin WHERE key=?");
+    p.text(1, key);
+    p.run();
+    ++art_changes_;   // gone from title_art: the background worker looks it up again like a new title
 }
 
 void MediaScanner::artRetryLater(bool movie, const std::string& idOrTitle) {
@@ -1592,7 +1632,7 @@ void MediaScanner::artRecheck() {
         if (isScanning()) return;
         const std::string key = artKey(true, m.id);
         auto it = stamps.find(key);
-        if (it == stamps.end() || it->second == "!") continue;
+        if (it == stamps.end() || it->second == "!" || it->second.compare(0, 4, "pin:") == 0) continue;
         const std::string now = it->second.find("|t:") != std::string::npos ? tmdbStamp(localMovie(m), m.title, m.year) : localStamp(localMovie(m));
         if (now != it->second) mark(key);   // a new / replaced poster, an edited .nfo, or (TMDb titles) a renamed title / changed year
         pause();
@@ -1603,7 +1643,7 @@ void MediaScanner::artRecheck() {
         const std::string key = artKey(false, e.show_title);
         if (!seen.insert(key).second) continue;
         auto it = stamps.find(key);
-        if (it == stamps.end() || it->second == "!") continue;
+        if (it == stamps.end() || it->second == "!" || it->second.compare(0, 4, "pin:") == 0) continue;
         const std::string now = it->second.find("|t:") != std::string::npos ? tmdbStamp(localShow(e.show_title), e.show_title, 0) : localStamp(localShow(e.show_title));
         if (now != it->second) mark(key);
         pause();

@@ -565,6 +565,46 @@ static std::string artVersion(const MediaScanner::Local& local) {
     return std::string("&v=") + buf;
 }
 
+// ---- Fix match: candidates from a TMDb search ----------------------------------------------------------------------------
+// The objects of the "results" array in a TMDb search answer, one string each (a brace counter that skips over strings, so
+// a "}" inside a synopsis does not end an object early). There is no JSON parser in this project.
+static std::vector<std::string> splitTmdbResults(const std::string& body) {
+    std::vector<std::string> out;
+    size_t pos = body.find("\"results\"");
+    if (pos == std::string::npos) return out;
+    pos = body.find('[', pos);
+    if (pos == std::string::npos) return out;
+    int depth = 0;
+    bool inStr = false;
+    size_t start = 0;
+    for (size_t i = pos + 1; i < body.size(); ++i) {
+        const char c = body[i];
+        if (inStr) { if (c == '\\') ++i; else if (c == '"') inStr = false; continue; }
+        if (c == '"') inStr = true;
+        else if (c == '{') { if (depth++ == 0) start = i; }
+        else if (c == '}') { if (--depth == 0) out.push_back(body.substr(start, i - start + 1)); }
+        else if (c == ']' && depth == 0) break;
+    }
+    return out;
+}
+
+// Like extractJsonString, but only when the value really is a string: for "poster_path": null it gives "" (extractJsonString would
+// run on to the next field's string).
+static std::string stringField(const std::string& obj, const std::string& key) {
+    const size_t k = obj.find("\"" + key + "\"");
+    if (k == std::string::npos) return "";
+    size_t c = obj.find(':', k);
+    if (c == std::string::npos) return "";
+    ++c;
+    while (c < obj.size() && std::isspace(static_cast<unsigned char>(obj[c]))) ++c;
+    if (c >= obj.size() || obj[c] != '"') return "";
+    return extractJsonString(obj.substr(k), key);
+}
+
+static bool allDigits(const std::string& v) {
+    return !v.empty() && v.size() < 12 && std::all_of(v.begin(), v.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+}
+
 static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, bool& askedTmdb) {
     askedTmdb = false;
     std::string overview, art, path, stamp, tmdbStamp;
@@ -1506,6 +1546,10 @@ void PekServer::start(int port, const std::string& plugins_dir,
             res.set_content(json, "application/json");
         };
         if (!local.plot.empty() && !art.empty()) { scanner->artStore(true, entry.id, art, local.plot, MediaScanner::localStamp(local)); reply(local.plot, art); return; }
+        {   // matched by hand (Fix match): that choice is used, TMDb is not asked
+            MediaScanner::Pin pin;
+            if (scanner->artPinned(true, entry.id, pin)) { reply(local.plot.empty() ? pin.overview : local.plot, art.empty() ? pin.poster : art); return; }
+        }
 
         std::string query = "/search/movie?query=" + httplib::encode_uri(entry.title);
         if (entry.year > 0) query += "&year=" + std::to_string(entry.year);
@@ -1549,6 +1593,10 @@ void PekServer::start(int port, const std::string& plugins_dir,
                             "\", \"poster\": \"" + jsonEscape(poster) + "\"}", "application/json");
         };
         if (!local.plot.empty() && !art.empty()) { scanner->artStore(false, title, art, local.plot, MediaScanner::localStamp(local)); reply(local.plot, art); return; }
+        {   // matched by hand (Fix match): that choice is used, TMDb is not asked
+            MediaScanner::Pin pin;
+            if (scanner->artPinned(false, title, pin)) { reply(local.plot.empty() ? pin.overview : local.plot, art.empty() ? pin.poster : art); return; }
+        }
 
         std::string tmdb_body;
         std::string showBase, showTmdb; int showYear = 0;
@@ -1611,6 +1659,102 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::string still = extractJsonString(body, "still_path");
         std::string still_url = still.empty() ? "" : tmdbImageUrl("w300", still);
         reply(local.title.empty() ? name : local.title, local.plot.empty() ? overview : local.plot, art.empty() ? still_url : art);
+    });
+
+    // 6d. Fix match: the person picks the right TMDb entry for a movie / show that was matched wrongly (two films called Dredd,
+    //     a remake with the same name). search lists candidates, pin remembers the choice (poster + synopsis + TMDb id in
+    //     library.db; the background worker and rescans leave a pinned title alone), unpin goes back to the automatic match.
+    //     key = a movie's media id, or a show's title (as /api/shows lists it).
+    svr.Get("/api/match/search", [](const httplib::Request& req, httplib::Response& res) {
+        const std::string kind = req.get_param_value("kind");
+        const std::string q = req.get_param_value("q");
+        if (q.empty() || (kind != "movie" && kind != "show")) {
+            res.status = 400;
+            res.set_content("{\"error\": \"Missing kind or q\"}", "application/json");
+            return;
+        }
+        int year = 0;
+        try { year = std::stoi(req.get_param_value("year")); } catch (...) {}
+        const bool movie = kind == "movie";
+        std::string path = std::string(movie ? "/search/movie?query=" : "/search/tv?query=") + httplib::encode_uri_component(q);
+        if (year > 1800 && year < 2200) path += std::string(movie ? "&year=" : "&first_air_date_year=") + std::to_string(year);
+        std::string body;
+        if (!tmdbSearch(path, body)) {
+            res.status = 502;
+            res.set_content("{\"error\": \"TMDb lookup failed\"}", "application/json");
+            return;
+        }
+        std::string json = "{\"results\": [";
+        int n = 0;
+        for (const auto& r : splitTmdbResults(body)) {
+            const std::string id = extractJsonNumber(r, "id");
+            const std::string name = stringField(r, movie ? "title" : "name");
+            if (!allDigits(id) || name.empty()) continue;
+            const std::string date = stringField(r, movie ? "release_date" : "first_air_date");
+            const std::string poster_path = stringField(r, "poster_path");
+            if (n++) json += ",";
+            json += "{\"id\": \"" + id + "\", \"title\": \"" + jsonEscape(name) + "\", \"year\": " +
+                    (date.size() >= 4 && std::isdigit((unsigned char)date[0]) ? date.substr(0, 4) : "0") +
+                    ", \"poster\": \"" + jsonEscape(poster_path.empty() ? "" : tmdbImageUrl("w185", poster_path)) +
+                    "\", \"overview\": \"" + jsonEscape(stringField(r, "overview")) + "\"}";
+            if (n >= 20) break;
+        }
+        res.set_content(json + "]}", "application/json");
+    });
+
+    svr.Get("/api/match/state", [scanner](const httplib::Request& req, httplib::Response& res) {
+        const bool movie = req.get_param_value("kind") == "movie";
+        MediaScanner::Pin pin;
+        if (!scanner->artPinned(movie, req.get_param_value("key"), pin)) { res.set_content("{\"pinned\": false}", "application/json"); return; }
+        res.set_content("{\"pinned\": true, \"tmdb_id\": \"" + jsonEscape(pin.tmdb_id) + "\", \"title\": \"" + jsonEscape(pin.name) +
+                        "\", \"year\": " + std::to_string(pin.year) + "}", "application/json");
+    });
+
+    svr.Post("/api/match/pin", [scanner](const httplib::Request& req, httplib::Response& res) {
+        auto fail = [&](const char* msg) {
+            res.status = 400;
+            res.set_content(std::string("{\"ok\": false, \"error\": \"") + msg + "\"}", "application/json");
+        };
+        const std::string kind = req.get_param_value("kind");
+        const std::string key = req.get_param_value("key");
+        if ((kind != "movie" && kind != "show") || key.empty()) { fail("Missing kind or key"); return; }
+        MediaScanner::Pin pin;
+        pin.tmdb_id = req.get_param_value("tmdb_id");
+        if (!allDigits(pin.tmdb_id)) { fail("Not a TMDb id"); return; }
+        pin.name = req.get_param_value("title");
+        try { pin.year = std::stoi(req.get_param_value("year")); } catch (...) {}
+        pin.poster = req.get_param_value("poster");
+        pin.overview = req.get_param_value("overview");
+        // Only a picture from the TMDb proxy can be stored: this is not a way to point the grid at some other address.
+        const std::string posterPrefix = tmdbProxyUrl() + "/t/p/";
+        if (!pin.poster.empty() && pin.poster.compare(0, posterPrefix.size(), posterPrefix) != 0) pin.poster.clear();
+        const bool movie = kind == "movie";
+        // The person's own files still win (poster.jpg / .nfo plot next to the video), as everywhere else.
+        MediaScanner::Local local;
+        if (movie) {
+            MediaEntry entry;
+            if (!scanner->findById(key, entry) || entry.kind != MediaKind::Movie) { fail("Movie not found"); return; }
+            local = scanner->localMovie(entry);
+            if (!local.art.empty()) pin.poster = "/api/artwork?kind=movie&id=" + entry.id + artVersion(local);
+        } else {
+            local = scanner->localShow(key);
+            if (!local.art.empty()) pin.poster = "/api/artwork?kind=show&title=" + httplib::encode_uri_component(key) + artVersion(local);
+        }
+        if (!local.plot.empty()) pin.overview = local.plot;
+        scanner->artPin(movie, key, pin);
+        res.set_content("{\"ok\": true}", "application/json");
+    });
+
+    svr.Post("/api/match/unpin", [scanner](const httplib::Request& req, httplib::Response& res) {
+        const std::string kind = req.get_param_value("kind");
+        const std::string key = req.get_param_value("key");
+        if ((kind != "movie" && kind != "show") || key.empty()) {
+            res.status = 400;
+            res.set_content("{\"ok\": false, \"error\": \"Missing kind or key\"}", "application/json");
+            return;
+        }
+        scanner->artUnpin(kind == "movie", key);
+        res.set_content("{\"ok\": true}", "application/json");
     });
 
     // 6c2. The picture that sits next to a movie / show / episode (poster.jpg, <video>-poster.jpg, <video>-thumb.jpg ...),

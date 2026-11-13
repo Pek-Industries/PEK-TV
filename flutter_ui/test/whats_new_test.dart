@@ -31,6 +31,12 @@ void main() {
     expect(pick('2.2.1', '2.2.0'), isEmpty);
   });
 
+  test('an entry with no lines shows nothing', () {
+    const empty = ReleaseNotes('2.2.1', '', []);
+    expect([for (final r in WhatsNew.select([empty, c, b, a], '2.2.1', '2.2.0')) r.version], isEmpty);
+    expect([for (final r in WhatsNew.select([empty, c, b, a], '2.2.1', '2.0.0')) r.version], ['2.2.0', '2.1.0']);
+  });
+
   test('-debug and -dev.N suffixes and +build numbers are ignored', () {
     expect(pick('2.2.0-dev.4', '2.1.0'), ['2.2.0']);
     expect(pick('2.2.0-debug', '2.1.0+19'), ['2.2.0']);

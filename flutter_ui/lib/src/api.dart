@@ -907,6 +907,53 @@ class Api {
     }
   }
 
+  // ---------------------------------------------------------------- Fix match (backend /api/match/*, see fix_match.dart)
+
+  /// TMDb candidates for a movie / show the person is matching by hand. [kind] is 'movie' or 'show'; [year] 0 = any year.
+  static Future<List<MatchCandidate>> matchSearch(String kind, String query, {int year = 0}) async {
+    final j = await _get('/api/match/search?kind=$kind&q=${Uri.encodeQueryComponent(query)}${year > 0 ? '&year=$year' : ''}');
+    return (((j as Map)['results'] as List?) ?? const []).whereType<Map>().map((e) => MatchCandidate.fromJson(Map<String, dynamic>.from(e))).toList();
+  }
+
+  /// The match the person chose by hand for this title, or null when it is matched automatically. [key] is a movie's id, or a
+  /// show's title. Quiet: no loading ring, and a failure just means "no hand-picked match".
+  static Future<MatchCandidate?> matchState(String kind, String key) async {
+    try {
+      final j = await _getRaw('/api/match/state?kind=$kind&key=${Uri.encodeQueryComponent(key)}');
+      if (j is Map && j['pinned'] == true) return MatchCandidate.fromJson(Map<String, dynamic>.from(j));
+    } catch (_) {}
+    return null;
+  }
+
+  /// Remembers [c] as the match for this title (its poster and synopsis come from it from now on). Throws [ApiError].
+  static Future<void> matchPin(String kind, String key, MatchCandidate c) async {
+    await postForm('/api/match/pin', {'kind': kind, 'key': key, 'tmdb_id': c.id, 'title': c.title, 'year': '${c.year}', 'poster': c.poster, 'overview': c.overview});
+    await _afterMatchChange(kind, key);
+  }
+
+  /// Goes back to the automatic match. Throws [ApiError].
+  static Future<void> matchUnpin(String kind, String key) async {
+    await postForm('/api/match/unpin', {'kind': kind, 'key': key});
+    await _afterMatchChange(kind, key);
+  }
+
+  /// The saved poster / synopsis of this title is out of date: forget it here and on disk, and make the lists and detail pages read
+  /// it again (they listen to [artRevision]).
+  static Future<void> _afterMatchChange(String kind, String key) async {
+    final k = kind == 'movie' ? 'm:$key' : 's:$key';
+    _details.remove(k);
+    _noArt.remove(k);
+    _hasArt.remove(k);
+    try {
+      final m = await _disk();
+      if (m.remove(k) != null) {
+        _diskSave?.cancel();
+        _diskSave = Timer(const Duration(seconds: 1), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
+      }
+    } catch (_) {}
+    artRevision.value++;
+  }
+
   static String abs(String p) {
     if (p.isEmpty) return '';
     return p.startsWith('http') ? p : '$base$p';
@@ -1012,6 +1059,27 @@ class Show {
         title: '${j['showTitle'] ?? ''}',
         episodeCount: (j['episodeCount'] as num?)?.toInt() ?? 0,
         seasons: ((j['seasons'] as List?) ?? const []).map((e) => Season.fromJson(e as Map<String, dynamic>)).toList(),
+      );
+}
+
+/// One TMDb entry offered by Fix match (the poster is a full address on the TMDb proxy, or empty).
+class MatchCandidate {
+  const MatchCandidate({required this.id, required this.title, required this.year, this.poster = '', this.overview = ''});
+  final String id;
+  final String title;
+  final int year;
+  final String poster;
+  final String overview;
+
+  /// "Dredd (2012)", or just the title when TMDb has no year for it.
+  String get label => year > 0 ? '$title ($year)' : title;
+
+  factory MatchCandidate.fromJson(Map<String, dynamic> j) => MatchCandidate(
+        id: '${j['id'] ?? j['tmdb_id'] ?? ''}',
+        title: '${j['title'] ?? ''}',
+        year: (j['year'] as num?)?.toInt() ?? 0,
+        poster: '${j['poster'] ?? ''}',
+        overview: '${j['overview'] ?? ''}',
       );
 }
 

@@ -162,6 +162,12 @@ public:
     // Remembers a finished look-up (an empty poster = "tried, found nothing": asked again after a day).
     // `stamp` = localStamp() of the user's own files at that moment (what the poster / plot were taken from).
     void artStore(bool movie, const std::string& idOrTitle, const std::string& poster, const std::string& overview, const std::string& stamp);
+    // Fix match: a title matched to a TMDb entry by hand. Its poster and synopsis are kept under the stamp "pin:<tmdb id>", which
+    // the background worker, artRecheck() and every automatic artStore() leave alone, until artUnpin().
+    struct Pin { std::string tmdb_id, name, poster, overview; int year = 0; };
+    bool artPinned(bool movie, const std::string& idOrTitle, Pin& out);
+    void artPin(bool movie, const std::string& idOrTitle, const Pin& pin);
+    void artUnpin(bool movie, const std::string& idOrTitle);
     // A try that failed (offline ...) for a title that already has a poster: keeps the poster, asks again in 10 minutes.
     void artRetryLater(bool movie, const std::string& idOrTitle);
     // A re-check of an old TMDb poster found nothing different (or nothing at all): the stored poster stays, the next re-check is in 30 days.

@@ -133,3 +133,21 @@ Battlestar Galactica (2004) {tmdb-1972}/Season 1/...
   (`Battlestar Galactica (1978)`, `(2003)`, `(2004)`) so their episodes are no longer merged. A title that is unique stays plain.
 - Episode files can simply be named `S01E01`; the folder is what identifies the series.
 - If you already watched episodes of an affected show, its progress is under the old plain title and starts fresh under the new one.
+
+## Fix match (a movie or show with the wrong poster or synopsis)
+
+Open the movie's or show's page and press **Fix match**. The page lists TMDb results for the title (and year, when it has one);
+change the words or the year and press Search, then pick the right one. The poster and synopsis switch to it at once.
+
+- The choice is remembered in `library.db` (`match_pin`, and `title_art` with the stamp `pin:<TMDb id>`). Rescans, the background
+  poster worker and the 30-day TMDb re-check leave a chosen match alone.
+- Your own files still win, as everywhere: a `poster.jpg` or an `.nfo` plot next to the video is used instead of the TMDb one.
+- **Use the automatic match** on the same page removes the choice; the title is looked up like a new one.
+- A show is remembered by its title as the library lists it (`Battlestar Galactica (2003)`). If the title changes (a same-named
+  series is added and the years appear), choose again.
+- Not yet: episode pictures and synopses of a fixed show still come from the automatic match, and the title and year in the library
+  keep what the file name says.
+- API: `GET /api/match/search?kind=movie|show&q=&year=`, `GET /api/match/state?kind=&key=`, `POST /api/match/pin`
+  (`kind`, `key`, `tmdb_id`, `title`, `year`, `poster`, `overview`), `POST /api/match/unpin` (`kind`, `key`). `key` is a movie's
+  id or a show's title.
+
