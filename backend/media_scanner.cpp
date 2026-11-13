@@ -20,6 +20,7 @@
 #include <memory>
 #include <cstdio>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <system_error>
 
@@ -705,6 +706,8 @@ CREATE TABLE IF NOT EXISTS title_person(
 CREATE INDEX IF NOT EXISTS person_idx ON title_person(kind, norm);
 CREATE TABLE IF NOT EXISTS title_art(
   key TEXT PRIMARY KEY, poster TEXT NOT NULL, overview TEXT NOT NULL, tried INTEGER NOT NULL, stamp TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS file_runtime(
+  id TEXT PRIMARY KEY, minutes INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS match_pin(
   key TEXT PRIMARY KEY, tmdb_id TEXT NOT NULL, name TEXT NOT NULL, year INTEGER NOT NULL);
 )SQL";
@@ -733,6 +736,17 @@ bool writeEntries(pekdb::Db& db, const std::vector<MediaEntry>& all) {
               .i64(11, e.episode).text(12, normOf(e));
             if (!up.run()) return false;
             up.reset();
+        }
+    }
+    {   // the file's length (only known for files ffprobe has just read): kept apart, so the media table needs no migration
+        pekdb::Stmt rt(db, "INSERT OR REPLACE INTO file_runtime(id,minutes) VALUES(?,?)");
+        if (rt.ok()) {
+            for (const auto& e : all) {
+                if (e.duration_min <= 0) continue;
+                rt.text(1, e.id).i64(2, e.duration_min);
+                rt.run();
+                rt.reset();
+            }
         }
     }
     std::vector<std::string> gone;
@@ -903,6 +917,11 @@ void MediaScanner::probeAndClassify(MediaEntry& entry) {
         return;
     }
 
+    {   // format.duration is seconds as text ("5400.123000")
+        const std::string dur = extractTag(json, "duration");
+        if (!dur.empty()) { try { entry.duration_min = static_cast<int>(std::lround(std::stod(dur) / 60.0)); } catch (...) {} }
+    }
+
     std::string show = extractTag(json, "show");
     int season = extractTagInt(json, "season_number");
     int episode = extractTagInt(json, "episode_sort");
@@ -986,6 +1005,77 @@ void MediaScanner::classifyFromFilename(MediaEntry& entry, const std::vector<std
     }
 
     entry.kind = MediaKind::Unclassified;
+}
+
+void MediaScanner::resolveGuessedShows(std::vector<MediaEntry>& list) {
+    if (!show_resolver_) return;
+    auto folderOf = [](const MediaEntry& e) {
+        fs::path dir = fs::path(e.path).parent_path();
+        int season = 0;
+        if (parseSeasonFolder(dir.filename().string(), season)) dir = dir.parent_path();
+        return dir.string();
+    };
+    // folder -> its episodes, and the guessed show names in it
+    std::map<std::string, std::vector<const MediaEntry*>> episodesIn;
+    std::map<std::string, std::set<std::string>> guessedNamesIn;
+    for (const auto& e : list) {
+        if (e.kind != MediaKind::Episode) continue;
+        const std::string f = folderOf(e);
+        episodesIn[f].push_back(&e);
+        if (e.guessed) guessedNamesIn[f].insert(toLower(e.show_title));
+    }
+    struct Group { std::vector<MediaEntry*> members; };
+    std::map<std::pair<std::string, std::string>, Group> groups;          // (folder, lowercase guessed name)
+    for (auto& e : list)
+        if (e.guessed && e.kind == MediaKind::Episode) groups[{folderOf(e), toLower(e.show_title)}].members.push_back(&e);
+
+    for (auto& [id, group] : groups) {
+        const std::string& folder = id.first;
+        MediaEntry& first = *group.members.front();
+        // The votes: every episode of the folder, unless the folder mixes several guessed names (then only this name's own).
+        const bool wholeFolder = guessedNamesIn[folder].size() == 1;
+        std::vector<std::pair<int, int>> votes;
+        for (const MediaEntry* e : episodesIn[folder])
+            if (wholeFolder || toLower(e->show_title) == id.second) votes.push_back({e->season, e->episode});
+        std::sort(votes.begin(), votes.end());
+        votes.erase(std::unique(votes.begin(), votes.end()), votes.end());
+
+        const ShowHints hint = showHintsForPath(first.path);
+        std::string guess = first.show_title;
+        if (hint.year > 0) guess += " (" + std::to_string(hint.year) + ")";
+        if (!hint.tmdb.empty()) guess += " {tmdb-" + hint.tmdb + "}";
+        int maxSeason = 0;
+        for (const auto& v : votes) maxSeason = std::max(maxSeason, v.first);
+        // the same name in another folder is another question, and new episodes in the folder can change the answer
+        const std::string key = toLower(guess) + "|" + folder + "|" + std::to_string(maxSeason) + "|" + std::to_string(votes.size());
+        auto cached = resolved_names_.find(key);
+        if (cached == resolved_names_.end()) {
+            std::string official;
+            try { official = show_resolver_(guess, votes); } catch (...) {}
+            cached = resolved_names_.emplace(key, sanitizeField(official)).first;
+        }
+        if (!cached->second.empty())
+            for (MediaEntry* m : group.members) m->show_title = cached->second;
+    }
+}
+
+int MediaScanner::runtimeMinutes(const MediaEntry& entry) {
+    if (entry.part > 0) return 0;
+    if (!db_) return 0;   // (the database handle serializes its own calls)
+    long long nfo = 0;
+    { pekdb::Stmt st(*db_, "SELECT runtime FROM title_meta WHERE key=?"); st.text(1, "m:" + entry.id); if (st.step()) nfo = st.num(0); }
+    if (nfo > 0) return static_cast<int>(nfo);
+    pekdb::Stmt st(*db_, "SELECT minutes FROM file_runtime WHERE id=?");
+    st.text(1, entry.id);
+    return st.step() ? static_cast<int>(st.num(0)) : 0;
+}
+
+std::vector<std::pair<int, int>> MediaScanner::episodeNumbersForShow(const std::string& show_title) {
+    std::vector<std::pair<int, int>> out;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& e : entries_)
+        if (e.kind == MediaKind::Episode && e.show_title == show_title) out.push_back({e.season, e.episode});
+    return out;
 }
 
 void MediaScanner::setShowResolver(ShowResolver resolver) {
@@ -1224,25 +1314,8 @@ void MediaScanner::scan(bool onlyNewSources) {
                 }
             }
 
-            // Confirm guessed show names (once per distinct name) so
-            // "friends" becomes TMDb's "Friends". Tag-derived names and
-            // the no-key / offline case are left exactly as parsed.
-            if (entry.guessed && entry.kind == MediaKind::Episode && show_resolver_) {
-                // The folder's year and {tmdb-..} tag go along, so the 1978, 2003 and 2004 "Battlestar Galactica" are each looked up as
-                // themselves (the resolver understands a trailing " (YYYY)" and " {tmdb-N}").
-                const ShowHints hint = showHintsForPath(entry.path);
-                std::string guess = entry.show_title;
-                if (hint.year > 0) guess += " (" + std::to_string(hint.year) + ")";
-                if (!hint.tmdb.empty()) guess += " {tmdb-" + hint.tmdb + "}";
-                std::string key = toLower(guess);
-                auto cached = resolved_names_.find(key);
-                if (cached == resolved_names_.end()) {
-                    std::string official;
-                    try { official = show_resolver_(guess); } catch (...) {}
-                    cached = resolved_names_.emplace(key, sanitizeField(official)).first;
-                }
-                if (!cached->second.empty()) entry.show_title = cached->second;
-            }
+            // Guessed show names are confirmed against TMDb after the loop (resolveGuessedShows): the episodes of a folder
+            // vote on which series it is, so every file of the folder has to be classified first.
 
             if (entry.kind != MediaKind::Unclassified && entry.guessed) {
                 std::cout << "[MediaScanner]   -> guessed from filename: "
@@ -1255,6 +1328,7 @@ void MediaScanner::scan(bool onlyNewSources) {
     }
 
     size_t indexed = fresh.size();
+    resolveGuessedShows(fresh);
     disambiguateShows(fresh);   // same title, different series (year / id in the folder name): keep them apart
     groupParts(fresh);
     {

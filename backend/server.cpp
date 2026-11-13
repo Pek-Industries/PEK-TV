@@ -11,6 +11,7 @@
 #include "github_install.h"
 #include "skin_install.h"
 #include "subtitles.h"
+#include "tmdb_match.h"
 #include <iostream>
 #include <fstream>
 #include <functional>
@@ -565,6 +566,78 @@ static std::string artVersion(const MediaScanner::Local& local) {
     return std::string("&v=") + buf;
 }
 
+
+// ---- Choosing the TMDb entry: every candidate is scored, the first result is not taken on trust -------------------------------
+// (see tmdb_match.h for the score). A title is looked up with its year; when nothing good comes back the search is repeated
+// without the year filter, because TMDb's year filter drops the candidates that are one year off. The runtime of a movie file and
+// the season / episode numbers found in a show's folder are compared with the details of the best few candidates.
+struct TmdbPick {
+    bool ok = false;          // a candidate cleared the bar
+    bool failed = false;      // TMDb could not be asked (offline / rate limit): nothing is known, not "no match"
+    std::string id, name, overview, poster_path;
+};
+
+static void logTmdbPick(const char* what, const std::string& title, int year, const tmdbmatch::Candidate* c, const tmdbmatch::Score* s) {
+    std::cout << "[PEK Server] TMDb match " << what << " '" << title << "'" << (year > 0 ? " (" + std::to_string(year) + ")" : "") << " -> ";
+    if (!c) { std::cout << "no candidate was good enough" << std::endl; return; }
+    char buf[96];
+    std::snprintf(buf, sizeof buf, " score %.2f (title %.2f, year %.2f, runtime %.2f, fit %.2f, pop %.2f)", s->total, s->title, s->year, s->runtime, s->fit, s->popularity);
+    std::cout << "'" << c->title << "' (" << c->year << ") id " << c->id << buf << std::endl;
+}
+
+static TmdbPick tmdbPickFrom(const tmdbmatch::Query& q, std::vector<tmdbmatch::Candidate>& cands, bool& decided) {
+    TmdbPick out;
+    std::vector<tmdbmatch::Score> scores;
+    const bool movie = q.movie;
+    const int i = tmdbmatch::pick(q, cands, [movie](tmdbmatch::Candidate& c) {
+        std::string body;
+        if (!tmdbSearch(std::string(movie ? "/movie/" : "/tv/") + c.id, body)) return;   // no details: that part stays out of the score
+        if (movie) tmdbmatch::applyMovieDetails(c, body); else tmdbmatch::applyShowDetails(c, body);
+    }, 3, &scores);
+    decided = i >= 0;
+    if (i < 0) return out;
+    const auto& c = cands[static_cast<size_t>(i)];
+    logTmdbPick(movie ? "movie" : "show", q.title, q.year, &c, &scores[static_cast<size_t>(i)]);
+    out.ok = true; out.id = c.id; out.name = c.title; out.overview = c.overview; out.poster_path = c.poster_path;
+    return out;
+}
+
+static TmdbPick tmdbPickMovie(const std::string& title, int year, int fileMinutes) {
+    tmdbmatch::Query q;
+    q.movie = true; q.title = title; q.year = year; q.runtime = fileMinutes;
+    TmdbPick none;
+    for (int pass = 0; pass < (year > 0 ? 2 : 1); ++pass) {
+        std::string path = "/search/movie?query=" + httplib::encode_uri(title);
+        if (pass == 0 && year > 0) path += "&year=" + std::to_string(year);
+        std::string body;
+        if (!tmdbSearch(path, body)) { none.failed = true; return none; }
+        auto cands = tmdbmatch::parseCandidates(body, true);
+        bool decided = false;
+        TmdbPick p = tmdbPickFrom(q, cands, decided);
+        if (decided) return p;
+    }
+    logTmdbPick("movie", title, year, nullptr, nullptr);
+    return none;
+}
+
+static TmdbPick tmdbPickShow(const std::string& base, int year, const std::string& tmdbTag, const std::vector<std::pair<int, int>>& siblings) {
+    tmdbmatch::Query q;
+    q.movie = false; q.title = base; q.year = year; q.id_hint = tmdbTag; q.siblings = siblings;
+    TmdbPick none;
+    for (int pass = 0; pass < (year > 0 ? 2 : 1); ++pass) {
+        std::string path = "/search/tv?query=" + httplib::encode_uri(base);
+        if (pass == 0 && year > 0) path += "&first_air_date_year=" + std::to_string(year);
+        std::string body;
+        if (!tmdbSearch(path, body)) { none.failed = true; return none; }
+        auto cands = tmdbmatch::parseCandidates(body, false);
+        bool decided = false;
+        TmdbPick p = tmdbPickFrom(q, cands, decided);
+        if (decided) return p;
+    }
+    logTmdbPick("show", base, year, nullptr, nullptr);
+    return none;
+}
+
 // ---- Fix match: candidates from a TMDb search ----------------------------------------------------------------------------
 // The objects of the "results" array in a TMDb search answer, one string each (a brace counter that skips over strings, so
 // a "}" inside a synopsis does not end an object early). There is no JSON parser in this project.
@@ -607,7 +680,10 @@ static bool allDigits(const std::string& v) {
 
 static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, bool& askedTmdb) {
     askedTmdb = false;
-    std::string overview, art, path, stamp, tmdbStamp;
+    std::string overview, art, stamp, tmdbStamp;
+    int fileMinutes = 0, showYear = 0;
+    std::string showBase, showTmdb;
+    std::vector<std::pair<int, int>> siblings;
     if (job.movie) {
         MediaEntry entry;
         if (!scanner->findById(job.id, entry) || entry.kind != MediaKind::Movie) return 0;
@@ -615,8 +691,7 @@ static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, boo
         art = local.art.empty() ? "" : "/api/artwork?kind=movie&id=" + entry.id + artVersion(local);
         stamp = MediaScanner::localStamp(local);
         if (!local.plot.empty() && !art.empty()) { scanner->artStore(true, job.id, art, local.plot, stamp); return 1; }
-        path = "/search/movie?query=" + httplib::encode_uri(job.title);
-        if (job.year > 0) path += "&year=" + std::to_string(job.year);
+        fileMinutes = scanner->runtimeMinutes(entry);
         overview = local.plot;
         tmdbStamp = MediaScanner::tmdbStamp(local, job.title, job.year);
     } else {
@@ -624,10 +699,8 @@ static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, boo
         art = local.art.empty() ? "" : "/api/artwork?kind=show&title=" + httplib::encode_uri_component(job.title) + artVersion(local);
         stamp = MediaScanner::localStamp(local);
         if (!local.plot.empty() && !art.empty()) { scanner->artStore(false, job.title, art, local.plot, stamp); return 1; }
-        std::string showBase, showTmdb; int showYear = 0;
         splitShowGuess(job.title, showBase, showYear, showTmdb);      // "Battlestar Galactica (1978)": the year picks the right series
-        path = "/search/tv?query=" + httplib::encode_uri(showBase);
-        if (showYear > 0) path += "&first_air_date_year=" + std::to_string(showYear);
+        siblings = scanner->episodeNumbersForShow(job.title);          // the episodes in the folder vote on which series it is
         overview = local.plot;
         tmdbStamp = MediaScanner::tmdbStamp(local, job.title, 0);
     }
@@ -639,12 +712,10 @@ static int lookupArt(MediaScanner* scanner, const MediaScanner::ArtJob& job, boo
         scanner->artStore(job.movie, job.movie ? job.id : job.title, art, overview, "!");
     }
     askedTmdb = true;
-    std::string body;
-    if (!tmdbSearch(path, body)) return -1;
-    const size_t results_pos = body.find("\"results\"");
-    const std::string first = results_pos != std::string::npos ? body.substr(results_pos) : body;
-    const std::string tmdb_overview = extractJsonString(first, "overview");
-    const std::string poster_path = extractJsonString(first, "poster_path");
+    const TmdbPick pick = job.movie ? tmdbPickMovie(job.title, job.year, fileMinutes) : tmdbPickShow(showBase, showYear, showTmdb, siblings);
+    if (pick.failed) return -1;
+    const std::string tmdb_overview = pick.overview;
+    const std::string poster_path = pick.poster_path;
     const std::string poster = art.empty() ? (poster_path.empty() ? "" : tmdbImageUrl("w342", poster_path)) : art;
     const std::string key = job.movie ? job.id : job.title;
     // An old TMDb poster that TMDb no longer has anything for stays as it is (only the next check moves to 30 days from now).
@@ -702,48 +773,17 @@ static void startArtWorker(MediaScanner* scanner) {
     }).detach();
 }
 
-std::string PekServer::resolveShowName(const std::string& guess_in) {
+std::string PekServer::resolveShowName(const std::string& guess_in, const std::vector<std::pair<int, int>>& siblings) {
     if (guess_in.empty()) return "";
 
     std::string guess, tmdbId; int year = 0;
     splitShowGuess(guess_in, guess, year, tmdbId);
 
-    httplib::Client client(tmdbProxyUrl());
-
-    applyTls(client);
-    client.set_connection_timeout(5);
-    client.set_read_timeout(5);
-
-    // The year narrows the search to the right series when several share the name (1978 / 2003 / 2004 Battlestar Galactica).
-    std::string query = "/search/tv?query=" + httplib::encode_uri(guess);
-    if (year > 0) query += "&first_air_date_year=" + std::to_string(year);
-    auto res = client.Get(query.c_str());
-    if (!res || res->status != 200) return "";
-
-    size_t results_pos = res->body.find("\"results\"");
-    std::string results = results_pos != std::string::npos ? res->body.substr(results_pos) : res->body;
-
-    std::string a = normalizeName(guess);
-    // A {tmdb-N} tag names the exact series: take it when the search lists it.
-    if (!tmdbId.empty()) {
-        size_t at = results.find("\"id\":" + tmdbId + ",");
-        if (at == std::string::npos) at = results.find("\"id\": " + tmdbId + ",");
-        if (at != std::string::npos) {
-            std::string name = extractJsonString(results.substr(at), "name");
-            std::string b = normalizeName(name);
-            if (!b.empty() && !a.empty() && (a.find(b) != std::string::npos || b.find(a) != std::string::npos)) return name;
-        }
-    }
-
-    std::string name = extractJsonString(results, "name");
-    if (name.empty()) return "";
-
-    // Only trust a close match: "friends" -> "Friends" is fine, but an
-    // unrelated top hit must not rename the show.
-    std::string b = normalizeName(name);
-    if (a.empty() || b.empty()) return "";
-    if (a.find(b) == std::string::npos && b.find(a) == std::string::npos) return "";
-    return name;
+    // The year narrows the search to the right series when several share the name (1978 / 2003 / 2004 Battlestar Galactica), a
+    // {tmdb-N} tag names the exact one, and the episodes in the folder (siblings) must fit the series' seasons and episode counts.
+    // "friends" -> "Friends" is fine; an unrelated top hit, or a series the folder cannot belong to, must not rename the show.
+    const TmdbPick pick = tmdbPickShow(guess, year, tmdbId, siblings);
+    return pick.ok ? pick.name : "";
 }
 
 void PekServer::start(int port, const std::string& plugins_dir,
@@ -1551,26 +1591,17 @@ void PekServer::start(int port, const std::string& plugins_dir,
             if (scanner->artPinned(true, entry.id, pin)) { reply(local.plot.empty() ? pin.overview : local.plot, art.empty() ? pin.poster : art); return; }
         }
 
-        std::string query = "/search/movie?query=" + httplib::encode_uri(entry.title);
-        if (entry.year > 0) query += "&year=" + std::to_string(entry.year);
-
-        std::string tmdb_body;
-        if (!tmdbSearch(query, tmdb_body)) {
+        // Every candidate is scored (title, year, runtime, popularity); the first result is not taken on trust.
+        const TmdbPick pick = tmdbPickMovie(entry.title, entry.year, scanner->runtimeMinutes(entry));
+        if (pick.failed) {
             if (!local.plot.empty() || !art.empty()) { reply(local.plot, art); return; }   // half an answer beats none
             res.status = 502;
             res.set_content("{\"error\": \"TMDb lookup failed\"}", "application/json");
             return;
         }
 
-        // Grab the first result block only — good enough without a
-        // real JSON parser, same "top result" heuristic used
-        // elsewhere in this project.
-        const std::string& body = tmdb_body;
-        size_t results_pos = body.find("\"results\"");
-        std::string first_result = results_pos != std::string::npos ? body.substr(results_pos) : body;
-
-        std::string overview = extractJsonString(first_result, "overview");
-        std::string poster_path = extractJsonString(first_result, "poster_path");
+        std::string overview = pick.overview;
+        std::string poster_path = pick.poster_path;
         std::string poster_url = poster_path.empty() ? "" : (tmdbImageUrl("w342", poster_path));
 
         scanner->artStore(true, entry.id, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, entry.title, entry.year));   // kept for the list
@@ -1598,22 +1629,18 @@ void PekServer::start(int port, const std::string& plugins_dir,
             if (scanner->artPinned(false, title, pin)) { reply(local.plot.empty() ? pin.overview : local.plot, art.empty() ? pin.poster : art); return; }
         }
 
-        std::string tmdb_body;
         std::string showBase, showTmdb; int showYear = 0;
         splitShowGuess(title, showBase, showYear, showTmdb);
-        std::string showQuery = "/search/tv?query=" + httplib::encode_uri(showBase);
-        if (showYear > 0) showQuery += "&first_air_date_year=" + std::to_string(showYear);
-        if (!tmdbSearch(showQuery, tmdb_body)) {
+        // The episodes in the show's folder vote on which series it is; every candidate is scored, not just the first.
+        const TmdbPick pick = tmdbPickShow(showBase, showYear, showTmdb, scanner->episodeNumbersForShow(title));
+        if (pick.failed) {
             if (!local.plot.empty() || !art.empty()) { reply(local.plot, art); return; }
             res.status = 502;
             res.set_content("{\"error\": \"TMDb lookup failed\"}", "application/json");
             return;
         }
-        const std::string& body = tmdb_body;
-        size_t results_pos = body.find("\"results\"");
-        std::string first_result = results_pos != std::string::npos ? body.substr(results_pos) : body;
-        std::string overview = extractJsonString(first_result, "overview");
-        std::string poster_path = extractJsonString(first_result, "poster_path");
+        std::string overview = pick.overview;
+        std::string poster_path = pick.poster_path;
         std::string poster_url = poster_path.empty() ? "" : (tmdbImageUrl("w342", poster_path));
         scanner->artStore(false, title, art.empty() ? poster_url : art, local.plot.empty() ? overview : local.plot, MediaScanner::tmdbStamp(local, title, 0));   // kept for the list
         reply(local.plot.empty() ? overview : local.plot, art.empty() ? poster_url : art);
@@ -1786,7 +1813,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
     //     without anyone marking them. Show name -> TMDb id -> IMDb id -> IntroDB.
     //     Always answers 200 with {"found": bool, ...}; the raw database answer is passed on
     //     in "data" and the page picks the intro / recap out of it.
-    svr.Get("/api/skip-segments", [](const httplib::Request& req, httplib::Response& res) {
+    svr.Get("/api/skip-segments", [scanner](const httplib::Request& req, httplib::Response& res) {
         auto reply = [&](bool found, const std::string& imdb, const std::string& data) {
             std::string out = std::string("{\"found\": ") + (found ? "true" : "false") +
                               ", \"imdb\": \"" + jsonEscape(imdb) + "\"" +
@@ -1814,13 +1841,9 @@ void PekServer::start(int port, const std::string& plugins_dir,
             tm.set_read_timeout(6);
             std::string skipBase, skipTmdb; int skipYear = 0;
             splitShowGuess(show, skipBase, skipYear, skipTmdb);
-            std::string skipQuery = "/search/tv?query=" + httplib::encode_uri(skipBase);
-            if (skipYear > 0) skipQuery += "&first_air_date_year=" + std::to_string(skipYear);
-            auto s1 = tm.Get(skipQuery.c_str());
-            if (!s1 || s1->status != 200) { reply(false, "", ""); return; }
-            size_t rp = s1->body.find("\"results\"");
-            std::string tvId = extractJsonNumber(rp != std::string::npos ? s1->body.substr(rp) : s1->body, "id");
-            if (tvId.empty()) { reply(false, "", ""); return; }
+            const TmdbPick tvPick = tmdbPickShow(skipBase, skipYear, skipTmdb, scanner->episodeNumbersForShow(show));
+            if (!tvPick.ok) { reply(false, "", ""); return; }
+            const std::string tvId = tvPick.id;
             auto s2 = tm.Get(("/tv/" + tvId + "?append_to_response=external_ids").c_str());
             if (!s2 || s2->status != 200) { reply(false, "", ""); return; }
             imdb = extractJsonString(s2->body, "imdb_id");

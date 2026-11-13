@@ -49,6 +49,10 @@ struct MediaEntry {
     // the filename/folder fallback rather than embedded tags. Used to
     // decide which entries are worth confirming against TMDb.
     bool guessed = false;
+
+    // Runtime only (not persisted in the media table; kept in file_runtime): the file's length in whole minutes from ffprobe,
+    // 0 = not known (a file that came from the cache, a network share, a DVD). The TMDb match compares it with a movie's runtime.
+    int duration_min = 0;
 };
 
 // Classifies video files in layers, cheapest and most reliable first:
@@ -91,7 +95,9 @@ public:
     // official name (e.g. via TMDb). Return "" to keep the guess. Called
     // at most once per distinct guessed name per scan, on the scan thread,
     // so it may block on the network. The scanner itself stays network-free.
-    using ShowResolver = std::function<std::string(const std::string&)>;
+    // The second argument is the (season, episode) of every episode found in the same show folder: they vote on which series
+    // the folder is (a candidate with fewer seasons / episodes than the folder holds cannot be it).
+    using ShowResolver = std::function<std::string(const std::string&, const std::vector<std::pair<int, int>>&)>;
     void setShowResolver(ShowResolver resolver);
 
     // Called (on the scan thread, after the results are stored) at the end of every scan(). The music library uses it
@@ -137,6 +143,14 @@ public:
         std::string art;     // path or network URL of an image file; "" = none. Only ever read by readArtwork().
     };
     Local localMovie(const MediaEntry& entry);
+
+    // A movie's length in minutes for the TMDb match: its .nfo's <runtime>, else what ffprobe measured. 0 = not known (and always
+    // 0 for a file that is only one part of a split movie: its length is not the film's).
+    int runtimeMinutes(const MediaEntry& entry);
+
+    // (season, episode) of every episode file of the show as the library lists it (the title as /api/shows gives it, with the
+    // year when the show was told apart from same-named ones). They are the votes for which TMDb series it is.
+    std::vector<std::pair<int, int>> episodeNumbersForShow(const std::string& show_title);
 
     /// Called by the poster / synopsis / episode lookups. The background NFO reader (indexMetadata) waits a moment between
     /// batches while these are arriving, so a screenful of posters is answered before the reader takes the disk / network again.
@@ -256,6 +270,10 @@ private:
     // whatever tags are present. Leaves kind == Unclassified if the
     // needed tags aren't there.
     static void probeAndClassify(MediaEntry& entry);
+
+    // Confirms the guessed show names against TMDb, once per show FOLDER: the episodes in that folder are passed along, so they
+    // vote on which series it is. Runs after all files are classified.
+    void resolveGuessedShows(std::vector<MediaEntry>& list);
 
     // Fallback for files the tags couldn't identify (or tagged only with a
     // bare title but named like an episode): parses the filename and the

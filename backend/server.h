@@ -23,9 +23,10 @@ public:
     // the phone that finds 127.0.0.1:8080 gets 401 from every route.
 
     // Looks up a TV show name on TMDb and returns the official title, or
-    // "" if there is no TMDB_API_KEY, no network, or no close match.
+    // "" if there is no network, or no candidate that fits: the title (and year / {tmdb-N} tag in `guess`), and the season /
+    // episode numbers found in the same folder (`siblings`). Every search result is scored; see tmdb_match.h.
     // Pass to MediaScanner::setShowResolver().
-    static std::string resolveShowName(const std::string& guess);
+    static std::string resolveShowName(const std::string& guess, const std::vector<std::pair<int, int>>& siblings);
 };
 
 #endif
