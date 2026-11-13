@@ -72,7 +72,7 @@ const Map<String, String> stringsPt = {
   'Simple or Advanced layout, and music mode': 'Layout simples ou avançado e modo música',
   'Library': 'Biblioteca',
   'The folders and network folders PEK TV scans for music': 'As pastas e pastas de rede que o PEK TV analisa em busca de música',
-  'The folders PEK TV scans for movies, shows and music': 'As pastas que o PEK TV analisa em busca de filmes, séries e músicas',
+  'The folders PEK TV scans for movies, shows and music, and the sort order': 'As pastas que o PEK TV analisa em busca de filmes, séries e músicas, e a ordem de classificação',
   'Account': 'Conta',
   'Sign in, profiles and sync': 'Login, perfis e sincronização',
   'Sign in, profiles, sync and Discord': 'Login, perfis, sincronização e Discord',
