@@ -81,9 +81,13 @@ android {
         }
         release {
             debuggable false
-            // R8 off for the first beta: the JNI bridge and Chaquopy are easy to break with shrinking.
-            minifyEnabled false
-            shrinkResources false
+            // R8 + resource shrinking ON (shrinkResources requires minifyEnabled). Keep rules for the JNI bridge, libmpv,
+            // Chaquopy and the Class.forName lookups are in proguard-rules.pro. If a release build misbehaves, build with
+            // -PpekMinify=false to turn both off again without editing this file.
+            def pekMinify = project.findProperty('pekMinify') != 'false'
+            minifyEnabled pekMinify
+            shrinkResources pekMinify
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig pekKs ? signingConfigs.release : signingConfigs.debug
             if (!pekKs) logger.warn('WARNING: PEK_KEYSTORE_FILE not set - release signed with DEBUG key')
         }
@@ -98,6 +102,8 @@ android {
     packaging {
         jniLibs {
             pickFirsts += ['**/libc++_shared.so']
+            // Compress the .so files inside the APK (smaller download). They are extracted to disk at install instead.
+            useLegacyPackaging = true
         }
     }
 }
