@@ -4,6 +4,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import 'onboarding_flow.dart' show LayoutChoice, SignInStep;
 import 'recs.dart';
+import 'l10n.dart';
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
@@ -165,7 +166,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                       decoration: BoxDecoration(color: i <= _i ? t.accent : t.border, borderRadius: BorderRadius.circular(99)),
                     ),
                   const Spacer(),
-                  if (!last) PekButton(compact: true, shrink: true, label: 'Skip', onTap: widget.onDone),
+                  if (!last) PekButton(compact: true, shrink: true, label: 'Skip'.tr, onTap: widget.onDone),
                 ]),
               ),
               Expanded(
@@ -183,9 +184,9 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
               Padding(
                 padding: EdgeInsets.fromLTRB(rem, 0.5 * rem, rem, 0.75 * rem),
                 child: Row(children: [
-                  if (_i > 0) PekButton(compact: true, shrink: true, label: 'Back', onTap: () => _go(_i - 1)),
+                  if (_i > 0) PekButton(compact: true, shrink: true, label: 'Back'.tr, onTap: () => _go(_i - 1)),
                   const Spacer(),
-                  PekButton(primary: true, shrink: true, autofocus: true, label: last ? 'Get started' : 'Next', onTap: _next),
+                  PekButton(primary: true, shrink: true, autofocus: true, label: last ? 'Get started'.tr : 'Next'.tr, onTap: _next),
                 ]),
               ),
             ]),
@@ -242,11 +243,11 @@ class _Copy extends StatelessWidget {
           margin: EdgeInsets.only(bottom: 0.6 * rem),
           padding: EdgeInsets.symmetric(horizontal: 0.7 * rem, vertical: 0.25 * rem),
           decoration: BoxDecoration(color: t.accent.withAlpha(36), borderRadius: BorderRadius.circular(99), border: Border.all(color: t.accent)),
-          child: Text('Coming soon', style: TextStyle(fontSize: 0.8 * rem, fontWeight: FontWeight.w700, color: t.accent)),
+          child: Text('Coming soon'.tr, style: TextStyle(fontSize: 0.8 * rem, fontWeight: FontWeight.w700, color: t.accent)),
         ).animate(onPlay: (c) => c.repeat(), delay: 600.ms).shimmer(duration: 1800.ms, color: Colors.white54),
-      Text(slide.title, style: TextStyle(fontSize: 1.7 * rem, fontWeight: FontWeight.w800, height: 1.15)),
+      Text(slide.title.tr, style: TextStyle(fontSize: 1.7 * rem, fontWeight: FontWeight.w800, height: 1.15)),
       SizedBox(height: 0.6 * rem),
-      Text(slide.body, style: TextStyle(fontSize: 1.0 * rem, height: 1.45, color: t.textMuted)),
+      Text(slide.body.tr, style: TextStyle(fontSize: 1.0 * rem, height: 1.45, color: t.textMuted)),
     ]);
   }
 }
@@ -303,9 +304,9 @@ class _Art extends StatelessWidget {
           SizedBox(width: 0.9 * rem),
           Flexible(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(slide.noteTitle!, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.0 * rem)),
+              Text(slide.noteTitle!.tr, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.0 * rem)),
               SizedBox(height: 0.15 * rem),
-              Text(slide.noteText ?? '', style: TextStyle(color: t.textMuted, fontSize: 0.85 * rem)),
+              Text((slide.noteText ?? '').tr, style: TextStyle(color: t.textMuted, fontSize: 0.85 * rem)),
             ]),
           ),
         ]),

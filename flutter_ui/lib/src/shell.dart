@@ -37,6 +37,7 @@ import 'store.dart';
 import 'tokens.dart';
 import 'tv_nav.dart';
 import 'weather.dart' show Weather;
+import 'l10n.dart';
 import 'widgets.dart';
 
 /// NAV_ITEMS in app_config.js. Watch History also holds what Resume Watching used to; Updates is the news feed.
@@ -68,7 +69,7 @@ const _swipeLabel = {'dashboard': 'Home', 'movies': 'Movies', 'shows': 'Shows', 
 /// Everything that is not a swipe page.
 const _moreIds = ['search', 'history', 'favorites', 'duplicates', 'unknown', 'plugins', 'settings'];
 
-String _titleOf(String id) => _navItems.firstWhere((e) => e.$1 == id, orElse: () => ('', 'PEK TV')).$2;
+String _titleOf(String id) => _navItems.firstWhere((e) => e.$1 == id, orElse: () => ('', 'PEK TV')).$2.tr;
 
 /// `.pek-shell`: on phones and tablets the pages sit side by side in a PageView (swipe left / right, or tap the bottom
 /// bar); on a TV the left sidebar switches the content, because a remote has no swipe.
@@ -311,13 +312,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Are you sure you want to exit?', style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700)),
+              Text('Are you sure you want to exit?'.tr, style: TextStyle(fontSize: 1.25 * rem, fontWeight: FontWeight.w700)),
               SizedBox(height: 0.75 * rem),
-              Text('PEK TV will stop running and its temporary cache will be cleared.', style: TextStyle(color: t.textMuted)),
+              Text('PEK TV will stop running and its temporary cache will be cleared.'.tr, style: TextStyle(color: t.textMuted)),
               SizedBox(height: 1.25 * rem),
               Wrap(spacing: 0.75 * rem, runSpacing: 0.75 * rem, children: [
-                PekButton(label: 'Yes, exit', primary: true, onTap: () => Navigator.pop(c, true)),
-                PekButton(label: 'Close', autofocus: true, onTap: () => Navigator.pop(c, false)),
+                PekButton(label: 'Yes, exit'.tr, primary: true, onTap: () => Navigator.pop(c, true)),
+                PekButton(label: 'Close'.tr, autofocus: true, onTap: () => Navigator.pop(c, false)),
               ]),
             ],
           ),
@@ -439,7 +440,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               for (var i = 0; i < pages.length; i++)
                 Expanded(
                   child: _BarItem(
-                    label: nav.labels[pages[i]] ?? _swipeLabel[pages[i]]!,
+                    label: nav.labels[pages[i]] ?? _swipeLabel[pages[i]]!.tr,
                     icon: SkinIcons.byName(nav.icons[pages[i]]) ?? _swipeIcon[pages[i]]!,
                     showIcon: showIcon,
                     showLabel: showLabel,
@@ -535,7 +536,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final id = items[i].$1;
       return _NavItem(
         paint: id == _tab ? navActive : navPaint,
-        label: items[i].$2,
+        label: items[i].$2.tr,
         icon: SkinIcons.byName(nav.icons[id]) ?? SkinIcons.forScreen(id),
         showIcon: showIcon,
         showLabel: showLabel,

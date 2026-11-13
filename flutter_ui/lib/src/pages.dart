@@ -5,8 +5,11 @@ import 'package:flutter/material.dart';
 import 'account_pages.dart';
 import 'activity.dart';
 import 'all_files_access.dart';
+import 'a11y.dart';
 import 'audio_fx.dart';
 import 'backups_manager.dart';
+import 'l10n.dart';
+import 'l10n_ui.dart';
 import 'layouts.dart';
 import 'api.dart';
 import 'common.dart';
@@ -443,15 +446,15 @@ class SettingsPage extends StatelessWidget {
     final t = context.pek.tokens;
     Widget row(String title, String subtitle, IconData icon, Widget Function() body) => ListRow(
           leading: Icon(icon, color: t.accent),
-          title: title,
-          subtitle: subtitle,
+          title: title.tr,
+          subtitle: subtitle.tr,
           trailing: Icon(Icons.chevron_right, color: t.textMuted),
-          onTap: () => _open(context, title, body),
+          onTap: () => _open(context, title.tr, body),
         );
     // Music mode: only the music-related settings are listed (no plugins, no video / subtitle / skip-intro options).
     final music = Store.musicMode;
     return ListView(padding: padding, children: [
-      Heading('Settings', weather: !music),
+      Heading('Settings'.tr, weather: !music),
       row('Mode', music ? 'Music mode is on. Switch back to regular PEK TV here' : 'Simple or Advanced layout, and music mode', Icons.dashboard_customize_outlined, () => _SettingsList(children: [if (!music) const InterfaceSection(), const ModeSection()])),
       row('Library', music ? 'The folders and network folders PEK TV scans for music' : 'The folders PEK TV scans for movies, shows and music', Icons.folder_outlined, () => _LibrarySettings(music: music)),
       row('Account', music ? 'Sign in, profiles and sync' : 'Sign in, profiles, sync and Discord', Icons.person_outline, () => _SettingsList(children: [const AccountSection(), if (!music) const DiscordSection()])),
@@ -459,9 +462,11 @@ class SettingsPage extends StatelessWidget {
       if (music)
         ValueListenableBuilder<int>(
           valueListenable: News.unread,
-          builder: (context, n, _) => row('Updates', n > 0 ? '$n new' : 'News, offers and coupon codes', Icons.campaign_outlined, () => const _SettingsList(children: [NewsSection()])),
+          builder: (context, n, _) => row('Updates', n > 0 ? '{n} new'.trp({'n': n}) : 'News, offers and coupon codes', Icons.campaign_outlined, () => const _SettingsList(children: [NewsSection()])),
         ),
       row('Appearance', 'Skins, layout and the activity display', Icons.palette_outlined, () => const _SettingsList(children: [AppearanceSection(), LayoutSection(), ActivitySection()])),
+      row('Language', 'Choose the language of the app', Icons.language, () => const _SettingsList(children: [LanguageSection()])),
+      row('Accessibility', 'Text size, motion and focus outline', Icons.accessibility_new, () => const _SettingsList(children: [AccessibilitySection()])),
       row('Sounds', 'Navigation sounds for taps and the remote', Icons.volume_up_outlined, () => const _SettingsList(children: [NavSoundSection()])),
       // Not inside a category: pair a phone as remote and keyboard (on a TV), or use this phone as the remote.
       row('Remote', 'Pair your phone as a remote and keyboard', Icons.settings_remote_outlined, () => RemotePage(padding: context.pek.pagePad)),
@@ -504,11 +509,11 @@ class _ExitSettings extends StatelessWidget {
       barrierColor: p.tokens.overlay,
       builder: (c) => AlertDialog(
         backgroundColor: p.tokens.glassStrong,
-        title: const Text('Are you sure you want to exit?'),
-        content: const Text('PEK TV will stop running and its temporary cache will be cleared.'),
+        title: Text('Are you sure you want to exit?'.tr),
+        content: Text('PEK TV will stop running and its temporary cache will be cleared.'.tr),
         actions: [
-          TextButton(autofocus: true, onPressed: () => Navigator.pop(c, false), child: const Text('Close')),
-          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Yes, exit')),
+          TextButton(autofocus: true, onPressed: () => Navigator.pop(c, false), child: Text('Close'.tr)),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: Text('Yes, exit'.tr)),
         ],
       ),
     );
@@ -518,7 +523,7 @@ class _ExitSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SettingsList(children: [
-      Section(title: 'Exit', children: [Align(alignment: Alignment.centerLeft, child: PekButton(label: 'Exit PEK TV', onTap: () => _exit(context)))]),
+      Section(title: 'Exit'.tr, children: [Align(alignment: Alignment.centerLeft, child: PekButton(label: 'Exit PEK TV'.tr, onTap: () => _exit(context)))]),
     ]);
   }
 }

@@ -7,6 +7,7 @@ import 'activity.dart';
 import 'api.dart';
 import 'art_cache.dart';
 import 'cloud.dart';
+import 'l10n.dart';
 import 'store.dart';
 import 'tokens.dart';
 import 'weather.dart';
@@ -117,7 +118,7 @@ class NetDot extends StatelessWidget {
             if (v == null) return const SizedBox.shrink();
             final c = v ? const Color(0xFF3FB950) : const Color(0xFFF85149);
             return Semantics(
-              label: v ? 'Online' : 'Offline mode: local library only',
+              label: v ? 'Online'.tr : 'Offline mode: local library only'.tr,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 width: 10,

@@ -31,11 +31,15 @@ class ToggleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.pek.tokens;
-    return ListRow(
-      title: title,
-      subtitle: subtitle,
-      onTap: onTap,
-      trailing: Icon(on ? Icons.toggle_on : Icons.toggle_off, size: 40, color: on ? t.accent : t.textMuted),
+    // toggled: a screen reader says "on" / "off" (the switch is only a picture)
+    return Semantics(
+      toggled: on,
+      child: ListRow(
+        title: title,
+        subtitle: subtitle,
+        onTap: onTap,
+        trailing: Icon(on ? Icons.toggle_on : Icons.toggle_off, size: 40, color: on ? t.accent : t.textMuted),
+      ),
     );
   }
 }

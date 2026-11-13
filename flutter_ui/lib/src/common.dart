@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'music.dart' show MiniPlayer;
+import 'l10n.dart';
 import 'music_controller.dart';
 import 'tokens.dart';
 import 'weather.dart' show WeatherBadge, weatherActions;
@@ -35,7 +36,7 @@ class Heading extends StatelessWidget {
           child: FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
-            child: Text(title, maxLines: 1, softWrap: false, style: TextStyle(fontSize: (p.narrow ? 1.6 : 2.2) * p.rem, fontWeight: FontWeight.w700, letterSpacing: -0.6, height: 1.1)),
+            child: Semantics(header: true, child: Text(title, maxLines: 1, softWrap: false, style: TextStyle(fontSize: (p.narrow ? 1.6 : 2.2) * p.rem, fontWeight: FontWeight.w700, letterSpacing: -0.6, height: 1.1))),
           ),
         ),
         if (trailing != null) ...[SizedBox(width: 0.75 * p.rem), trailing!],
@@ -187,7 +188,7 @@ class RowAction extends StatelessWidget {
       padding: EdgeInsets.only(left: 0.2 * rem),
       child: Semantics(
         button: true,
-        label: label,
+        label: label.tr,
         child: PekFocusable(
           onTap: onTap,
           radius: 999,
@@ -213,7 +214,7 @@ class Section extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(bottom: 1.5 * rem),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2)),
+        Semantics(header: true, child: Text(title, style: TextStyle(fontSize: 1.1 * rem, fontWeight: FontWeight.w600, letterSpacing: -0.2))),
         if (hint != null) Padding(padding: EdgeInsets.only(top: 0.25 * rem), child: Text(hint!, style: TextStyle(color: p.tokens.textMuted, fontSize: 0.9 * rem))),
         SizedBox(height: 0.75 * rem),
         ...children,

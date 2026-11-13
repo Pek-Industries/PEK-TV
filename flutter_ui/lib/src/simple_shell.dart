@@ -7,6 +7,7 @@ import 'api.dart';
 import 'art_cache.dart';
 import 'common.dart';
 import 'detail.dart';
+import 'l10n.dart';
 import 'library_pages.dart';
 import 'music.dart' show MiniPlayer;
 import 'news.dart';
@@ -420,6 +421,119 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     return t != null ? _backdropDetails(t) : resumeArtFor(r);
   }
 
+  // ---------------------------------------------------------------- build
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.pek;
+    final size = MediaQuery.sizeOf(context);
+    _wideNow = p.sidebar || size.width >= 900;
+    _featured ??= _pickFeatured();
+    return _wideNow ? _wide(context) : _phone(context);
+  }
+
+  Widget _note(BuildContext context, String title, String text, {List<Widget> buttons = const []}) {
+    final p = context.pek;
+    final rem = p.rem;
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 2 * rem),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 1.3 * rem, fontWeight: FontWeight.w800)),
+        SizedBox(height: 0.6 * rem),
+        Text(text, textAlign: TextAlign.center, style: TextStyle(color: p.tokens.textMuted)),
+        if (buttons.isNotEmpty) ...[SizedBox(height: rem), Wrap(alignment: WrapAlignment.center, spacing: 0.75 * rem, runSpacing: 0.5 * rem, children: buttons)],
+      ]),
+    );
+  }
+
+  /// The rows under the banner. Both homes start with Continue Watching and My List. Then: For You = the TMDb rows ("Because you
+  /// liked ...", genres, trending / popular); My Library = Recently Added and a row per genre. [landscape] (TV): every card is a wide
+  /// 16:9 picture (SimpleShelf makes the slot wider to match); on a phone the cards are portrait posters.
+  List<Widget> _rows(BuildContext context, {required double cardW, bool landscape = false}) {
+    final lib = _libOrEmpty;
+    final src = _source;
+    final p = context.pek;
+    _pm = SimpleProgress.now();
+    final resume = Store.resumeItems().take(12).toList();
+    final mine = lib.myList.take(20).toList();
+    final rows = <Widget>[
+      if (src.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
+      if (resume.isNotEmpty)
+        SimpleShelf(
+          title: 'Continue Watching',
+          memoryKey: 'simple/continue',
+          cardW: cardW,
+          landscape: landscape,
+          // Portrait: an episode shows its own wide still, so its card is wider than a poster. Landscape: all cards are the same width.
+          widthFactors: landscape ? null : [for (final r in resume) resumeShowsStill(r) ? 1.7 : 1.0],
+          cards: [
+            for (final r in resume)
+              PosterCard(
+                onLongPress: () => unawaited(_resumeMenu(r)),
+                holdSelect: true,
+                title: r.title,
+                subtitle: r.duration > 0 ? '${(100 * r.position / r.duration).round()}% watched' : formatTime(r.position),
+                poster: landscape ? _resumeWide(r, lib) : resumeArtFor(r),
+                aspectRatio: landscape || resumeShowsStill(r) ? 16 / 9 : 2 / 3,
+                fallbackImage: r.image,
+                inLibrary: r.kind == 'episode' ? lib.showByTitle(r.showTitle) != null : lib.movieById(r.id) != null,
+                progress: r.duration > 0 ? r.position / r.duration : null,
+                onTap: () => unawaited(_cover(() => playResumeOrStart(context, r))),
+              ),
+          ],
+        ),
+      if (mine.isNotEmpty) SimpleShelf(title: 'My List'.tr, memoryKey: 'simple/mylist', cardW: cardW, landscape: landscape, cards: [for (final t in mine) _card(t, landscape: landscape)]),
+    ];
+    if (src == 'foryou') {
+      for (final r in _recRows) {
+        rows.add(SimpleShelf(title: r.title, memoryKey: 'simple/rec/${r.title}', cardW: cardW, landscape: landscape, cards: [for (final i in r.items) _card(lib.fromRec(i), landscape: landscape)]));
+      }
+      if (_recRows.isEmpty) {
+        rows.add(_feedLoading
+            ? _note(context, 'Finding movies and shows for you', 'This takes a moment.')
+            : _note(context, 'No suggestions yet', 'Check your internet connection and try again.', buttons: [PekButton(label: 'Try again', primary: true, shrink: true, onTap: () => _loadFeed(force: true))]));
+      }
+    } else if (src == 'library') {
+      if (_libError) {
+        rows.add(_note(context, 'Could not load your library', 'Check that PEK TV is running, then try again.', buttons: [PekButton(label: 'Try again', primary: true, shrink: true, onTap: () => setState(_load))]));
+      } else if (lib.isEmpty) {
+        rows.add(_note(context, 'Your library is empty', 'Add a folder with your movies and shows in Settings, or look at suggestions for you.', buttons: [
+          PekButton(label: 'Open Settings', primary: true, shrink: true, onTap: _settings),
+          PekButton(label: 'See For You', shrink: true, onTap: () => _setSource('foryou')),
+        ]));
+      } else {
+        if (lib.movies.isNotEmpty) rows.add(SimpleShelf(title: 'Recently Added Movies', memoryKey: 'simple/movies', cardW: cardW, landscape: landscape, cards: [for (final t in lib.recentMovies) _card(t, landscape: landscape)]));
+        if (lib.shows.isNotEmpty) rows.add(SimpleShelf(title: 'Recently Added Shows', memoryKey: 'simple/shows', cardW: cardW, landscape: landscape, cards: [for (final t in lib.recentShows) _card(t, landscape: landscape)]));
+        for (final g in _genreRows) {
+          rows.add(SimpleShelf(title: g.name, memoryKey: 'simple/genre/${g.name}', cardW: cardW, landscape: landscape, cards: [for (final t in g.items) _card(t, landscape: landscape)]));
+        }
+      }
+    }
+    rows.add(SizedBox(height: 2 * p.rem));
+    return rows;
+  }
+
+  /// One title's card. Resting on it (remote) lets the banner follow; a suggestion also has a long-press menu. [landscape] shows the
+  /// title's wide picture (a 16:9 card) instead of its poster.
+  Widget _card(SimpleTitle t, {bool landscape = false}) => Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onFocusChange: (f) {
+          if (f) _focused(t);
+        },
+        child: PosterCard(
+          title: t.title,
+          subtitle: t.subtitle,
+          poster: landscape ? _backdropDetails(t) : t.details,
+          aspectRatio: landscape ? 16 / 9 : 2 / 3,
+          onTap: () => _openTitle(t),
+          onLongPress: () => unawaited(t.inLibrary ? _libMenu(t) : _recMenu(t)),
+          holdSelect: true,
+          inLibrary: t.inLibrary,
+          progress: _pm.of(t),
+        ),
+      );
+
   Widget _hero(BuildContext context, {required bool wide, required double height, required double sidePad}) {
     return ValueListenableBuilder<int>(
       valueListenable: _heroTick,
@@ -474,7 +588,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
           child: Row(children: [
             Text('PEK', style: TextStyle(color: t.accent, fontSize: 1.5 * rem, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
             SizedBox(width: 0.6 * rem),
-            Text('Home', style: TextStyle(fontSize: 1.5 * rem, fontWeight: FontWeight.w800)),
+            Text('Home'.tr, style: TextStyle(fontSize: 1.5 * rem, fontWeight: FontWeight.w800)),
             const Spacer(),
             _UpdatesButton(onTap: _updates, rem: rem),
             _IconButton(icon: Icons.settings_outlined, label: 'Settings', onTap: _settings, rem: rem),
@@ -489,7 +603,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
           child: ListView(
             scrollDirection: Axis.horizontal,
             padding: EdgeInsets.symmetric(horizontal: rem, vertical: 0.35 * rem),
-            children: [chip('Movies', _movies), chip('Shows', _shows), chip('New', _new), chip('Categories', _categories, arrow: true)],
+            children: [chip('Movies'.tr, _movies), chip('Shows'.tr, _shows), chip('New'.tr, _new), chip('Categories'.tr, _categories, arrow: true)],
           ),
         ),
         Expanded(
@@ -588,14 +702,14 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
         child: Row(children: [
           Text('PEK TV', style: TextStyle(color: p.tokens.accent, fontSize: 1.5 * rem, fontWeight: FontWeight.w900, letterSpacing: -0.5, shadows: shadows)),
           SizedBox(width: 1.5 * rem),
-          item('For You', () => _setSource('foryou'), on: src == 'foryou'),
-          item('My Library', () => _setSource('library'), on: src == 'library'),
+          item('For You'.tr, () => _setSource('foryou'), on: src == 'foryou'),
+          item('My Library'.tr, () => _setSource('library'), on: src == 'library'),
           SizedBox(width: 0.5 * rem),
-          item('Shows', _shows),
-          item('Movies', _movies),
-          item('New', _new),
-          item('My List', _myList),
-          item('Categories', _categories, arrow: true),
+          item('Shows'.tr, _shows),
+          item('Movies'.tr, _movies),
+          item('New'.tr, _new),
+          item('My List'.tr, _myList),
+          item('Categories'.tr, _categories, arrow: true),
           const Spacer(),
           _IconButton(icon: Icons.search, label: 'Search', onTap: _search, rem: rem, light: light),
           _UpdatesButton(onTap: _updates, rem: rem, light: light),
@@ -656,7 +770,7 @@ class _IconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: label,
+      label: label.tr,
       child: PekFocusable(
         radius: 40,
         padding: EdgeInsets.all(0.55 * rem),

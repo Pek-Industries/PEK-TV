@@ -36,6 +36,8 @@ class WhatsNew {
   /// Newest first.
   static const releases = <ReleaseNotes>[
     ReleaseNotes('2.2.5', 'Smarter matching and a smoother start', [
+      'Language: choose English, Spanish, French, German or Portuguese at first start or any time in Settings > Language. The welcome tour, sign in, Settings and the main menus are translated first; other screens follow in later updates.',
+      'Accessibility: Settings > Accessibility has bigger text, reduced motion and a stronger focus outline, and screen readers like TalkBack now read posters, headings and switches properly.',
       'Movies and shows are now matched to the right title more reliably, so you get the correct poster and details.',
       'Subtitles now display properly on top of HDR video.',
       'The Skip Intro button works again.',

@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
+import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'src/a11y.dart';
 import 'src/deep_link.dart';
 import 'src/dev_console.dart';
 import 'src/activity.dart';
 import 'src/app_update.dart';
 import 'src/api.dart';
 import 'src/key_guard.dart';
+import 'src/l10n.dart';
 import 'src/cloud.dart';
 import 'src/profile_pages.dart';
 import 'src/profiles.dart';
@@ -45,6 +48,7 @@ Future<void> main() async {
       // Asked right away so it runs alongside the storage load instead of after it.
       final phoneAsk = PekPlayer.isPhone();
       await Store.init();
+      L10n.init(); // the saved language, before the first screen is built
       DevConsole.init();
       NavSounds.install(); // the move sound (nav_sound.dart); select and back are hooked in PekFocusable and the navigator
       Profiles.load();
@@ -72,7 +76,7 @@ class PekApp extends StatelessWidget {
   Widget build(BuildContext context) {
     // The skin belongs to the profile: it changes with the picker and with Settings > Appearance.
     return ListenableBuilder(
-      listenable: Listenable.merge([Skins.changes, Store.profile]),
+      listenable: Listenable.merge([Skins.changes, Store.profile, L10n.choice, A11y.changes]),
       builder: (context, _) {
         final tokens = Skins.tokens;
         return MaterialApp(
@@ -82,8 +86,12 @@ class PekApp extends StatelessWidget {
           navigatorKey: DeepLink.navKey,
           navigatorObservers: NavSounds.observers,
           theme: pekTheme(tokens),
+          // The app's language (Settings > Language). null follows the device. Material's own texts (dialogs, pickers) follow it too.
+          locale: L10n.locale,
+          supportedLocales: L10n.supportedLocales,
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
-          builder: (context, child) => PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()])))),
+          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()]))))),
           home: const _Boot(),
         );
       },
@@ -158,7 +166,7 @@ class _BootState extends State<_Boot> {
             listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Store.simpleModeN, Recs.changed, Welcome.changed]),
             builder: (context, _) {
               if (Profiles.gateNeeded) return const ProfileGate();
-              // First launch: the welcome tour (welcome.dart), the taste picker (recs_onboarding.dart), the Simple / Advanced question and sign in,
+              // First launch: the language question (l10n_ui.dart), the welcome tour (welcome.dart), the taste picker (recs_onboarding.dart), the Simple / Advanced question and sign in,
               // each sliding in after the one before (onboarding_flow.dart); the last answer opens the app. A new profile on an old
               // install only gets the taste picker, and "Skip" there goes straight to the app.
               if (Welcome.pending || Recs.onboardingPending || LayoutChoice.pending || SignInStep.pending) return OnboardingFlow(key: ValueKey('onboarding-${Profiles.currentId}'));

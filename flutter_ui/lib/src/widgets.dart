@@ -4,7 +4,9 @@ import 'dart:ui' show ImageFilter, TileMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'a11y.dart';
 import 'api.dart' show Api, Details;
+import 'l10n.dart';
 import 'layouts.dart';
 import 'nav_sound.dart';
 import 'skin_button.dart';
@@ -39,6 +41,7 @@ class PekFocusable extends StatefulWidget {
     this.surface,
     this.glow,
     this.borderWidth = 1,
+    this.semanticLabel,
   });
 
   final Widget child;
@@ -71,6 +74,10 @@ class PekFocusable extends StatefulWidget {
 
   /// The thickness of the [borderColor] outline.
   final double borderWidth;
+
+  /// What a screen reader says for this box instead of reading what is inside it (a poster card: title, year, rating ...).
+  /// null = the text inside is read, which is right for buttons and rows.
+  final String? semanticLabel;
 
   @override
   State<PekFocusable> createState() => _PekFocusableState();
@@ -141,9 +148,13 @@ class _PekFocusableState extends State<PekFocusable> {
     final p = context.pek;
     final t = p.tokens;
     final focused = _focus && widget.enabled;
+    // Reduce motion (Settings > Accessibility, or the device's own switch): the box changes at once instead of easing.
+    final still = MediaQuery.disableAnimationsOf(context);
+    final strong = A11y.strongFocus;
+    final ringWidth = strong ? (0.22 * p.rem < 3.0 ? 3.0 : 0.22 * p.rem) : 0.16 * p.rem;
     // On a TV the focus ring is drawn ON TOP of the box (foregroundDecoration). A solid BoxShadow behind a see-through focus
     // fill shines through it and turns the whole row deep orange. The ring crossfades quickly (150 ms), like Netflix / Prime.
-    final ringColor = (widget.focusBackground != null && widget.focusBackground != Colors.transparent ? t.text : t.borderFocus).withAlpha(210);
+    final ringColor = strong ? t.text : (widget.focusBackground != null && widget.focusBackground != Colors.transparent ? t.text : t.borderFocus).withAlpha(210);
     // With a [surface] the padding / alignment / minimum height move inside it, so the paint reaches the box's edges.
     final layered = widget.surface != null;
     final shadows = <BoxShadow>[
@@ -151,7 +162,7 @@ class _PekFocusableState extends State<PekFocusable> {
       if (focused && !p.isTv) BoxShadow(color: t.accentGlow, blurRadius: 10),
     ];
     final box = AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
+      duration: still ? Duration.zero : const Duration(milliseconds: 150),
       curve: Curves.easeOutCubic,
       padding: layered ? null : widget.padding,
       alignment: layered ? null : widget.alignment,
@@ -163,8 +174,8 @@ class _PekFocusableState extends State<PekFocusable> {
         border: widget.borderColor == null ? null : Border.all(color: focused ? t.borderFocus : widget.borderColor!, width: widget.borderWidth),
         boxShadow: shadows.isEmpty ? null : shadows,
       ),
-      foregroundDecoration: focused && p.isTv
-          ? BoxDecoration(borderRadius: BorderRadius.circular(widget.radius), border: Border.all(color: ringColor, width: 0.16 * p.rem))
+      foregroundDecoration: focused && (p.isTv || strong)
+          ? BoxDecoration(borderRadius: BorderRadius.circular(widget.radius), border: Border.all(color: ringColor, width: ringWidth))
           : null,
       child: layered
           ? Stack(children: [
@@ -178,7 +189,7 @@ class _PekFocusableState extends State<PekFocusable> {
             ])
           : widget.child,
     );
-    return FocusableActionDetector(
+    final detector = FocusableActionDetector(
       autofocus: widget.autofocus,
       enabled: widget.enabled,
       focusNode: _node,
@@ -200,15 +211,25 @@ class _PekFocusableState extends State<PekFocusable> {
             ? Stack(clipBehavior: Clip.none, fit: StackFit.passthrough, children: [
                 // Invisible, a little bigger than the card, never takes a touch: only used by _revealMargin.
                 Positioned(left: -widget.focusMargin, right: -widget.focusMargin, top: -widget.focusMargin, bottom: -widget.focusMargin, child: IgnorePointer(child: SizedBox(key: _revealKey))),
-                AnimatedScale(scale: focused ? widget.focusScale : 1.0, duration: const Duration(milliseconds: 180), curve: Curves.easeOutCubic, child: box),
+                AnimatedScale(scale: focused ? widget.focusScale : 1.0, duration: still ? Duration.zero : const Duration(milliseconds: 180), curve: Curves.easeOutCubic, child: box),
               ])
             : AnimatedScale(
                 scale: focused ? widget.focusScale : 1.0,
-                duration: const Duration(milliseconds: 180),
+                duration: still ? Duration.zero : const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
                 child: box,
               ),
       ),
+    );
+    // Screen readers: a button (or a labelled box), with its focus state. The text inside is merged into it unless a label replaces it.
+    return Semantics(
+      button: widget.onTap != null,
+      enabled: widget.enabled,
+      focusable: widget.enabled,
+      focused: focused,
+      label: widget.semanticLabel,
+      excludeSemantics: widget.semanticLabel != null,
+      child: detector,
     );
   }
 }
@@ -556,6 +577,21 @@ class _PosterCardState extends State<PosterCard> {
     });
   }
 
+  /// What a screen reader says for the card: title, year, rating, library badge and progress (the picture and badges are skipped).
+  /// Only worked out while a screen reader is on, so a normal start pays nothing for it.
+  String? _semanticLabel(BuildContext context) {
+    if (!MediaQuery.accessibleNavigationOf(context)) return null;
+    final r = _rating();
+    final pr = widget.progress;
+    return [
+      widget.title,
+      if (widget.subtitle.isNotEmpty) widget.subtitle,
+      if (r > 0) 'rated {n} out of {max}'.trp({'n': r, 'max': Ratings.max}),
+      if (widget.inLibrary) 'in your library'.tr,
+      if (pr != null && pr > 0) '{n} percent watched'.trp({'n': (pr.clamp(0.0, 1.0) * 100).round()}),
+    ].join(', ');
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Details>(
@@ -584,6 +620,7 @@ class _PosterCardState extends State<PosterCard> {
           onLongPress: widget.onLongPress,
           holdSelect: widget.holdSelect,
           focusScale: p.isTv ? 1.07 : 1.03,
+          semanticLabel: _semanticLabel(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

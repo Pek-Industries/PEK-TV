@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter                    # Material / widget texts (dialogs, pickers, tooltips) in the chosen language (l10n.dart)
   http: ^1.2.0
   http2: ^2.2.0                     # HTTP/2 for the poster downloads: one connection carries every picture (h2_fetch.dart)
   shared_preferences: ^2.2.3

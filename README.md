@@ -33,8 +33,9 @@ PEK TV running at 1920x1080.
 - **Profiles and PEK Cloud:** profiles with their own history and favorites, plus optional paid cloud backup and sync (monthly, yearly or lifetime; see the Plans page on the website).
 - **Skins:** install a skin from a `.zip`. Skins cannot run code or reach the network.
 - **Sandboxed plugins:** plugins declare what they may do and run in a locked-down sandbox.
+- **Languages and accessibility:** English, Spanish, French, German and Portuguese (chosen first thing at setup, or in Settings), bigger text, reduced motion, a stronger focus outline and screen-reader support. See `LANGUAGES.md`.
 
-See `PLUGINS.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md`, `MUSIC.md`, `DVD.md`, `DISCORD.md` and `MULTI_PART.md` for details.
+See `PLUGINS.md`, `LANGUAGES.md`, `SKINS.md`, `SUBTITLES.md`, `LOCAL_METADATA.md`, `MUSIC.md`, `DVD.md`, `DISCORD.md` and `MULTI_PART.md` for details.
 
 ## Project layout
 

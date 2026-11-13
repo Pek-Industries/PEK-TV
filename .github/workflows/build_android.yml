@@ -82,6 +82,10 @@ jobs:
       - name: Signing tests
         run: python3 tools/test_signing.py
 
+      # The translation tables must agree with each other and with the text in the app (a typo would just stay English).
+      - name: Translation check
+        run: python3 tools/check_l10n.py
+
       - name: Work out version name
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then

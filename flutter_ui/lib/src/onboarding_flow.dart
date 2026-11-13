@@ -5,6 +5,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'account_pages.dart';
 import 'cloud.dart';
 import 'common.dart';
+import 'l10n.dart';
+import 'l10n_ui.dart';
 import 'link_login.dart';
 import 'plan_ui.dart' show openSignUpPage;
 import 'profiles.dart';
@@ -53,9 +55,9 @@ class SignInStep {
   }
 }
 
-enum _Step { welcome, recs, layout, signIn }
+enum _Step { language, welcome, recs, layout, signIn }
 
-/// First launch, start to finish: the welcome tour, the taste picker, the layout question, then sign in / sign up. Each screen slides in
+/// First launch, start to finish: the language question (first, so everything after it is already in the person's language), the welcome tour, the taste picker, the layout question, then sign in / sign up. Each screen slides in
 /// from the right when the one before it is answered (or skipped); the last one (signing in, or "Sign in later") opens the app
 /// (main.dart stops showing this).
 /// Only the steps that are still needed are shown, so a new profile on an old install just gets the taste picker.
@@ -68,6 +70,8 @@ class OnboardingFlow extends StatefulWidget {
 
 class _OnboardingFlowState extends State<OnboardingFlow> {
   late final List<_Step> _steps = [
+    // Only on a brand new install (an update keeps the device language, Settings > Language changes it) and only until it was answered.
+    if (Welcome.pending && !L10n.chosen) _Step.language,
     if (Welcome.pending) _Step.welcome,
     if (Recs.onboardingPending) _Step.recs,
     if (LayoutChoice.pending || Welcome.pending) _Step.layout,
@@ -82,6 +86,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
 
   Widget _screen(_Step s) {
     switch (s) {
+      case _Step.language:
+        return LanguageChoiceScreen(key: const ValueKey(_Step.language), onDone: _next);
       case _Step.welcome:
         return WelcomeScreen(key: const ValueKey(_Step.welcome), onDone: () async {
           await Welcome.markSeen();
@@ -151,9 +157,9 @@ class _LayoutChoiceScreenState extends State<LayoutChoiceScreen> {
           child: Padding(
             padding: EdgeInsets.all(rem),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('How do you want PEK TV to look?', style: TextStyle(fontSize: 1.7 * rem, fontWeight: FontWeight.w800, height: 1.15)).animate().fadeIn(duration: 350.ms).slideY(begin: 0.2, end: 0, duration: 450.ms, curve: Curves.easeOutCubic),
+              Text('How do you want PEK TV to look?'.tr, style: TextStyle(fontSize: 1.7 * rem, fontWeight: FontWeight.w800, height: 1.15)).animate().fadeIn(duration: 350.ms).slideY(begin: 0.2, end: 0, duration: 450.ms, curve: Curves.easeOutCubic),
               SizedBox(height: 0.5 * rem),
-              Text('Pick one. You can change it any time in Settings, under Mode.', style: TextStyle(color: t.textMuted, fontSize: rem, height: 1.4)),
+              Text('Pick one. You can change it any time in Settings, under Mode.'.tr, style: TextStyle(color: t.textMuted, fontSize: rem, height: 1.4)),
               SizedBox(height: 1.25 * rem),
               Expanded(
                 child: wide
@@ -184,10 +190,10 @@ class _LayoutCard extends StatelessWidget {
     final wide = p.isTv || p.size.width > p.size.height;
     final preview = Expanded(child: Padding(padding: EdgeInsets.all(0.25 * rem), child: _Preview(simple: simple)));
     final text = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-      Text(simple ? 'Simple' : 'Advanced', style: TextStyle(fontSize: 1.3 * rem, fontWeight: FontWeight.w800)),
+      Text(simple ? 'Simple'.tr : 'Advanced'.tr, style: TextStyle(fontSize: 1.3 * rem, fontWeight: FontWeight.w800)),
       SizedBox(height: 0.25 * rem),
       Text(
-        simple ? 'A big banner, rows of movie and show cards and trailers, like a streaming app. Pick one and press Play.' : 'The full PEK TV: dashboard, filters, plugins, music and every setting.',
+        (simple ? 'A big banner, rows of movie and show cards and trailers, like a streaming app. Pick one and press Play.' : 'The full PEK TV: dashboard, filters, plugins, music and every setting.').tr,
         style: TextStyle(color: t.textMuted, fontSize: 0.9 * rem, height: 1.35),
       ),
     ]);
@@ -291,17 +297,17 @@ class SignInScreen extends StatelessWidget {
                     ),
                   ).animate().fadeIn(duration: 450.ms).scale(begin: const Offset(0.94, 0.94), end: const Offset(1, 1), duration: 500.ms, curve: Curves.easeOutCubic),
                   SizedBox(height: 1.25 * rem),
-                  Text('Sign in to PEK TV', textAlign: TextAlign.center, style: TextStyle(color: t.text, fontSize: 1.7 * rem, fontWeight: FontWeight.w800)),
+                  Text('Sign in to PEK TV'.tr, textAlign: TextAlign.center, style: TextStyle(color: t.text, fontSize: 1.7 * rem, fontWeight: FontWeight.w800)),
                   SizedBox(height: 0.5 * rem),
                   Text(
-                    'Keep your watch history and resume points on every device, and give everyone at home their own profile.',
+                    'Keep your watch history and resume points on every device, and give everyone at home their own profile.'.tr,
                     textAlign: TextAlign.center,
                     style: TextStyle(color: t.textMuted, fontSize: rem, height: 1.4),
                   ),
                   SizedBox(height: 1.5 * rem),
-                  PekButton(label: tv ? 'Sign in with your phone' : 'Sign in', primary: true, autofocus: true, onTap: () => push(tv ? const LinkScreen() : const AccountScreen(mode: AccountMode.signIn))),
+                  PekButton(label: tv ? 'Sign in with your phone'.tr : 'Sign in'.tr, primary: true, autofocus: true, onTap: () => push(tv ? const LinkScreen() : const AccountScreen(mode: AccountMode.signIn))),
                   SizedBox(height: 0.6 * rem),
-                  PekButton(label: 'Sign up', onTap: () {
+                  PekButton(label: 'Sign up'.tr, onTap: () {
                     if (tv) {
                       push(const SignUpQrScreen());
                     } else {
@@ -309,7 +315,7 @@ class SignInScreen extends StatelessWidget {
                     }
                   }),
                   SizedBox(height: 0.9 * rem),
-                  Center(child: PekButton(compact: true, shrink: true, label: 'Sign in later', onTap: SignInStep.finish)),
+                  Center(child: PekButton(compact: true, shrink: true, label: 'Sign in later'.tr, onTap: SignInStep.finish)),
                 ]).animate().fadeIn(delay: 150.ms, duration: 400.ms).slideY(begin: 0.08, end: 0, duration: 450.ms, curve: Curves.easeOutCubic),
               ),
             ),
