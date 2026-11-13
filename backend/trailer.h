@@ -1,6 +1,6 @@
 // trailer.h - plays YouTube trailers without YouTube's embedded player.
 //
-//   GET /api/trailer?id=<11-char YouTube id>
+//   GET /api/trailer?id=<11-char YouTube id>[&mh=<tallest picture wanted, 240..1080, default 1080>]
 //       -> {"ok":true,"video":"/api/trailer/stream?id=..&k=v","audio":"" | "/api/trailer/stream?id=..&k=a",
 //           "hasAudio":true|false,"height":720}        (or {"ok":false,"error":".."})
 //   GET /api/trailer/stream?id=..&k=v|a     a byte-range proxy of that stream, so the page can use a plain <video>.
@@ -131,7 +131,7 @@ inline bool splitHttps(const std::string& url, std::string& host, std::string& p
     return ends(".googlevideo.com") || ends(".youtube.com");
 }
 
-inline bool queryPlayer(const std::string& id, const Client& cl, Pick& out) {
+inline bool queryPlayer(const std::string& id, const Client& cl, int maxh, Pick& out) {
     httplib::SSLClient cli("www.youtube.com", 443);
     caBundle(cli);
     cli.set_connection_timeout(8); cli.set_read_timeout(15);
@@ -161,7 +161,7 @@ inline bool queryPlayer(const std::string& id, const Client& cl, Pick& out) {
             if (url.empty() || (mime.rfind("video/mp4", 0) != 0 && mime.rfind("audio/mp4", 0) != 0)) continue;   // direct MP4 / M4A only
             int hgt = (int)num(f.get("height")); double len = num(f.get("contentLength"));
             if (mime.rfind("audio/", 0) == 0) { double br = num(f.get("bitrate")); if (br > bestA) { bestA = br; aUrl = url; aTot = len; } continue; }
-            if (hgt > 1080) continue;
+            if (hgt > maxh) continue;
             if (!adaptive && f.get("audioQuality")) { if (hgt > bestC && hgt <= 720) { bestC = hgt; cUrl = url; cTot = len; } }
             else if (adaptive && mime.find("avc1") != std::string::npos) { if (hgt > bestV) { bestV = hgt; vUrl = url; vTot = len; } }
         }
@@ -176,19 +176,25 @@ inline bool queryPlayer(const std::string& id, const Client& cl, Pick& out) {
     return false;
 }
 
-inline bool resolve(const std::string& id, Pick& out) {
+// A weak TV box (Chromecast) cannot keep a 1080p picture and a separate sound stream in step inside a web view, so the app asks
+// for less with &mh=. The answer is kept per id AND height.
+inline int clampH(const std::string& v) { int h = v.empty() ? 1080 : std::atoi(v.c_str()); return h < 240 ? 240 : (h > 1080 ? 1080 : h); }
+inline std::string keyOf(const std::string& id, int maxh) { return id + "|" + std::to_string(maxh); }
+
+inline bool resolve(const std::string& id, int maxh, Pick& out) {
+    const std::string key = keyOf(id, maxh);
     {
         std::lock_guard<std::mutex> lk(mx());
-        auto it = cache().find(id);
+        auto it = cache().find(key);
         if (it != cache().end() && std::chrono::steady_clock::now() - it->second.at < std::chrono::minutes(40)) { out = it->second; return true; }
     }
     for (const Client& cl : CLIENTS) {
         Pick p;
-        try { if (!queryPlayer(id, cl, p)) continue; } catch (...) { continue; }
+        try { if (!queryPlayer(id, cl, maxh, p)) continue; } catch (...) { continue; }
         p.at = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lk(mx());
         if (cache().size() > 80) cache().clear();
-        cache()[id] = p; out = p; return true;
+        cache()[key] = p; out = p; return true;
     }
     return false;
 }
@@ -201,8 +207,9 @@ inline void registerTrailerRoutes(httplib::Server& svr) {
         if (!validId(id)) { res.status = 400; res.set_content("{\"ok\":false,\"error\":\"bad id\"}", "application/json"); return; }
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
         Pick p;
-        if (!resolve(id, p)) { res.status = 502; res.set_content("{\"ok\":false,\"error\":\"no direct stream\"}", "application/json"); return; }
-        std::string base = "/api/trailer/stream?id=" + id + "&k=";
+        const int mh = clampH(req.get_param_value("mh"));
+        if (!resolve(id, mh, p)) { res.status = 502; res.set_content("{\"ok\":false,\"error\":\"no direct stream\"}", "application/json"); return; }
+        std::string base = "/api/trailer/stream?id=" + id + "&mh=" + std::to_string(mh) + "&k=";
         res.set_content("{\"ok\":true,\"video\":\"" + base + "v\",\"audio\":\"" + (p.audio.empty() || p.combined ? "" : base + "a") +
                         "\",\"hasAudio\":" + (p.combined ? "true" : "false") + ",\"height\":" + std::to_string(p.height) + "}", "application/json");
 #else
@@ -215,7 +222,8 @@ inline void registerTrailerRoutes(httplib::Server& svr) {
         if (!validId(id) || (k != "v" && k != "a")) { res.status = 400; return; }
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
         Pick p;
-        if (!resolve(id, p)) { res.status = 502; return; }
+        const int mh = clampH(req.get_param_value("mh"));
+        if (!resolve(id, mh, p)) { res.status = 502; return; }
         const std::string url = k == "v" ? p.video : p.audio; double total = k == "v" ? p.vTotal : p.aTotal;
         std::string host, path;
         if (url.empty() || !splitHttps(url, host, path)) { res.status = 502; return; }
@@ -229,7 +237,7 @@ inline void registerTrailerRoutes(httplib::Server& svr) {
         cli.set_connection_timeout(8); cli.set_read_timeout(20); cli.set_follow_location(true);
         httplib::Headers h = {{"User-Agent", p.ua}, {"Range", "bytes=" + std::to_string(a) + "-" + std::to_string(b)}};
         auto r = cli.Get(path, h);
-        if (!r || (r->status != 200 && r->status != 206)) { std::lock_guard<std::mutex> lk(mx()); cache().erase(id); res.status = 502; return; }
+        if (!r || (r->status != 200 && r->status != 206)) { std::lock_guard<std::mutex> lk(mx()); cache().erase(keyOf(id, mh)); res.status = 502; return; }
         long long got = (long long)r->body.size();
         if (r->status == 200) {                                            // the server ignored the range: cut it ourselves
             if (a >= got) { res.status = 416; return; }

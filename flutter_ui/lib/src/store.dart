@@ -67,7 +67,7 @@ class Store {
   }
 
   /// ... with the sound off unless this is on (default off, like a streaming app's banner).
-  static bool get simpleSound => _p.getBool('pek_simple_sound') ?? false;
+  static bool get simpleSound => _p.getBool('pek_simple_sound') ?? true;
   static Future<void> setSimpleSound(bool on) async {
     await _p.setBool('pek_simple_sound', on);
     _bump();

@@ -571,6 +571,29 @@ class RecFeed {
 
   static Future<List<RecItem>> genreList(RecGenre g) => _forGenre(g);
 
+  /// TMDb answers 20 titles a page. The browse grids (a category, Popular Movies / Shows, Trending) fetch several pages at once and
+  /// join them, so the list does not stop after one page. A title that shows up on two pages is kept once.
+  static Future<List<RecItem>> _pages(Future<List<RecItem>> Function(int page) one, {int pages = 5}) async {
+    final r = await Future.wait([for (var pg = 1; pg <= pages; pg++) one(pg).catchError((Object _) => <RecItem>[])]);
+    final seen = <String>{};
+    return [for (final l in r) for (final i in l) if (seen.add(i.key)) i];
+  }
+
+  /// A whole category's grid: movies and shows of the genre, most popular first, several pages deep.
+  static Future<List<RecItem>> genreGrid(RecGenre g, {int pages = 5}) => _pages((pg) async {
+        String path(String kind, int id) => '/discover/$kind?with_genres=$id&sort_by=popularity.desc&vote_count.gte=300&include_adult=false&page=$pg';
+        final movies = g.movie > 0 ? await _get(path('movie', g.movie)) : null;
+        final shows = g.tv > 0 ? await _get(path('tv', g.tv)) : null;
+        return interleave(parseResults(movies, false), parseResults(shows, true));
+      }, pages: pages);
+
+  static Future<List<RecItem>> popularGrid(bool tv, {int pages = 5}) => _pages((pg) => popularList(tv, page: pg), pages: pages);
+
+  static Future<List<RecItem>> trendingGrid({int pages = 5}) => _pages((pg) async {
+        final r = await Future.wait([_get('/trending/movie/week?page=$pg'), _get('/trending/tv/week?page=$pg')]);
+        return interleave(parseResults(r[0], false), parseResults(r[1], true));
+      }, pages: pages);
+
   /// The Simple layout's "For You" rows: one "Because you liked X" row per thing the person liked, newest like first (the titles
   /// picked on the taste picker, favorites, 7+ ratings, then what was watched), a row per picked genre, and, when that makes fewer
   /// than [wanted] rows (nothing liked yet, or offline for a while), random trending / popular / top-rated / genre rows to fill up.

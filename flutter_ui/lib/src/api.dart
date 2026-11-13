@@ -300,9 +300,10 @@ class Api {
 
   /// The plain video stream of a YouTube trailer (the server looks it up and proxies it: backend/trailer.h). null = not
   /// available for this one, and the caller falls back to the YouTube frame. Quiet: no loading ring.
-  static Future<Map<String, dynamic>?> trailerStream(String id) async {
+  /// [maxHeight]: the tallest picture wanted. 720 by default: 1080p plus a separate sound stream is too much for a Chromecast's web view.
+  static Future<Map<String, dynamic>?> trailerStream(String id, {int maxHeight = 720}) async {
     try {
-      final j = await _getRaw('/api/trailer?id=${Uri.encodeQueryComponent(id)}', const Duration(seconds: 15));
+      final j = await _getRaw('/api/trailer?id=${Uri.encodeQueryComponent(id)}&mh=$maxHeight', const Duration(seconds: 15));
       if (j is Map && j['ok'] == true && '${j['video'] ?? ''}'.isNotEmpty) return Map<String, dynamic>.from(j);
     } catch (_) {}
     return null;

@@ -60,6 +60,8 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   SimpleProgress _pm = SimpleProgress.empty(); // how far along each title is, refreshed with every build of the rows
   int _gen = 0;
   Timer? _dwell;
+  /// Bumped when the banner follows the remote to another title: only the banner rebuilds (not every row under it).
+  final ValueNotifier<int> _heroTick = ValueNotifier<int>(0);
 
   bool get _trailerOn => Store.simpleTrailers && !_covered && !_background;
   SimpleLib get _libOrEmpty => _lib ?? SimpleLib(const [], const []);
@@ -88,6 +90,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     Recs.changed.removeListener(_recsChanged);
     _dwell?.cancel();
+    _heroTick.dispose();
     _gen++;
     _feedGen++;
     super.dispose();
@@ -148,6 +151,8 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
         _feedLoading = false;
         if (_source == 'foryou') _featured = null; // re-picked from the new rows
       });
+      // The first rows' pictures are fetched ahead, so they are already there when the rows scroll into view.
+      ArtCache.prefetch([for (final r in rows.take(4)) for (final i in r.items.take(10)) (_wideNow ? (i.banner ?? i.image) : i.image)]);
     }, onError: (Object _) {
       if (mounted && gen == _feedGen) setState(() => _feedLoading = false);
     }));
@@ -222,7 +227,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   void _movies() {
     final lib = _libOrEmpty;
     if (_source == 'foryou') {
-      _grid('Popular Movies', () async => [for (final i in await RecFeed.popularList(false)) lib.fromRec(i)], empty: _offline);
+      _grid('Popular Movies', () async => [for (final i in await RecFeed.popularGrid(false)) lib.fromRec(i)], empty: _offline);
     } else {
       _grid('Movies', () async => [for (final m in lib.movies) SimpleTitle.movie(m)], empty: 'No movies yet. Add a folder in Settings.');
     }
@@ -231,7 +236,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   void _shows() {
     final lib = _libOrEmpty;
     if (_source == 'foryou') {
-      _grid('Popular Shows', () async => [for (final i in await RecFeed.popularList(true)) lib.fromRec(i)], empty: _offline);
+      _grid('Popular Shows', () async => [for (final i in await RecFeed.popularGrid(true)) lib.fromRec(i)], empty: _offline);
     } else {
       _grid('TV Shows', () async => [for (final s in lib.shows) SimpleTitle.show(s)], empty: 'No shows yet. Add a folder in Settings.');
     }
@@ -240,7 +245,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   void _new() {
     final lib = _libOrEmpty;
     if (_source == 'foryou') {
-      _grid('Trending', () async => [for (final i in await RecFeed.trendingList()) lib.fromRec(i)], empty: _offline);
+      _grid('Trending', () async => [for (final i in await RecFeed.trendingGrid()) lib.fromRec(i)], empty: _offline);
     } else {
       _grid('New', () async => lib.recentMixed, empty: 'Nothing new yet.');
     }
@@ -287,7 +292,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     if (pick == null || !mounted) return;
     if (forYou) {
       final g = recGenres.firstWhere((g) => g.name == pick);
-      _grid(pick, () async => [for (final i in await RecFeed.genreList(g)) lib.fromRec(i)], empty: _offline);
+      _grid(pick, () async => [for (final i in await RecFeed.genreGrid(g)) lib.fromRec(i)], empty: _offline);
     } else {
       _grid(pick, () async {
         final r = await Api.librarySearch('', genre: pick, limit: 500);
@@ -393,131 +398,48 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     if (!_wideNow) return;
     _dwell?.cancel();
     if (_featured?.key == t.key) return;
-    _dwell = Timer(const Duration(milliseconds: 900), () {
-      if (mounted) setState(() => _featured = t);
+    // Ask for the title's details right away, so they are usually there by the time the banner switches.
+    unawaited(SimpleMeta.of(t));
+    // The banner switches almost at once (a short wait only so a fast run along a row does not flash through every title). Only the
+    // banner is rebuilt, and its picture and text fade in; the trailer still starts a moment later.
+    _dwell = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
+      _featured = t;
+      _heroTick.value++;
     });
   }
 
-  // ---------------------------------------------------------------- build
+  Future<Details> _backdropDetails(SimpleTitle t) => simpleBackdropDetails(t);
 
-  @override
-  Widget build(BuildContext context) {
-    final p = context.pek;
-    final size = MediaQuery.sizeOf(context);
-    _wideNow = p.sidebar || size.width >= 900;
-    _featured ??= _pickFeatured();
-    return _wideNow ? _wide(context) : _phone(context);
+  /// A Continue Watching card's wide picture: an episode's own still, else the movie's or show's wide picture.
+  Future<Details> _resumeWide(Progress r, SimpleLib lib) {
+    if (resumeShowsStill(r)) return resumeArtFor(r);
+    final show = r.kind == 'episode' ? lib.showByTitle(r.showTitle) : null;
+    final movie = r.kind == 'episode' ? null : lib.movieById(r.id);
+    final SimpleTitle? t = show != null ? SimpleTitle.show(show) : (movie != null ? SimpleTitle.movie(movie) : null);
+    return t != null ? _backdropDetails(t) : resumeArtFor(r);
   }
-
-  Widget _note(BuildContext context, String title, String text, {List<Widget> buttons = const []}) {
-    final p = context.pek;
-    final rem = p.rem;
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 2 * rem),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 1.3 * rem, fontWeight: FontWeight.w800)),
-        SizedBox(height: 0.6 * rem),
-        Text(text, textAlign: TextAlign.center, style: TextStyle(color: p.tokens.textMuted)),
-        if (buttons.isNotEmpty) ...[SizedBox(height: rem), Wrap(alignment: WrapAlignment.center, spacing: 0.75 * rem, runSpacing: 0.5 * rem, children: buttons)],
-      ]),
-    );
-  }
-
-  /// The rows under the banner. Both homes start with Continue Watching and My List. Then: For You = the TMDb rows ("Because you
-  /// liked ...", genres, trending / popular); My Library = Recently Added and a row per genre.
-  List<Widget> _rows(BuildContext context, {required double cardW}) {
-    final lib = _libOrEmpty;
-    final src = _source;
-    final p = context.pek;
-    _pm = SimpleProgress.now();
-    final resume = Store.resumeItems().take(12).toList();
-    final mine = lib.myList.take(20).toList();
-    final rows = <Widget>[
-      if (src.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
-      if (resume.isNotEmpty)
-        SimpleShelf(
-          title: 'Continue Watching',
-          memoryKey: 'simple/continue',
-          cardW: cardW,
-          widthFactors: [for (final r in resume) resumeShowsStill(r) ? 1.7 : 1.0],
-          cards: [
-            for (final r in resume)
-              PosterCard(
-                onLongPress: () => unawaited(_resumeMenu(r)),
-                holdSelect: true,
-                title: r.title,
-                subtitle: r.duration > 0 ? '${(100 * r.position / r.duration).round()}% watched' : formatTime(r.position),
-                poster: resumeArtFor(r),
-                aspectRatio: resumeShowsStill(r) ? 16 / 9 : 2 / 3,
-                fallbackImage: r.image,
-                inLibrary: r.kind == 'episode' ? lib.showByTitle(r.showTitle) != null : lib.movieById(r.id) != null,
-                progress: r.duration > 0 ? r.position / r.duration : null,
-                onTap: () => unawaited(_cover(() => playResumeOrStart(context, r))),
-              ),
-          ],
-        ),
-      if (mine.isNotEmpty) SimpleShelf(title: 'My List', memoryKey: 'simple/mylist', cardW: cardW, cards: [for (final t in mine) _card(t)]),
-    ];
-    if (src == 'foryou') {
-      for (final r in _recRows) {
-        rows.add(SimpleShelf(title: r.title, memoryKey: 'simple/rec/${r.title}', cardW: cardW, cards: [for (final i in r.items) _card(lib.fromRec(i))]));
-      }
-      if (_recRows.isEmpty) {
-        rows.add(_feedLoading
-            ? _note(context, 'Finding movies and shows for you', 'This takes a moment.')
-            : _note(context, 'No suggestions yet', 'Check your internet connection and try again.', buttons: [PekButton(label: 'Try again', primary: true, shrink: true, onTap: () => _loadFeed(force: true))]));
-      }
-    } else if (src == 'library') {
-      if (_libError) {
-        rows.add(_note(context, 'Could not load your library', 'Check that PEK TV is running, then try again.', buttons: [PekButton(label: 'Try again', primary: true, shrink: true, onTap: () => setState(_load))]));
-      } else if (lib.isEmpty) {
-        rows.add(_note(context, 'Your library is empty', 'Add a folder with your movies and shows in Settings, or look at suggestions for you.', buttons: [
-          PekButton(label: 'Open Settings', primary: true, shrink: true, onTap: _settings),
-          PekButton(label: 'See For You', shrink: true, onTap: () => _setSource('foryou')),
-        ]));
-      } else {
-        if (lib.movies.isNotEmpty) rows.add(SimpleShelf(title: 'Recently Added Movies', memoryKey: 'simple/movies', cardW: cardW, cards: [for (final t in lib.recentMovies) _card(t)]));
-        if (lib.shows.isNotEmpty) rows.add(SimpleShelf(title: 'Recently Added Shows', memoryKey: 'simple/shows', cardW: cardW, cards: [for (final t in lib.recentShows) _card(t)]));
-        for (final g in _genreRows) {
-          rows.add(SimpleShelf(title: g.name, memoryKey: 'simple/genre/${g.name}', cardW: cardW, cards: [for (final t in g.items) _card(t)]));
-        }
-      }
-    }
-    rows.add(SizedBox(height: 2 * p.rem));
-    return rows;
-  }
-
-  /// One title's card. Resting on it (remote) lets the banner follow; a suggestion also has a long-press menu.
-  Widget _card(SimpleTitle t) => Focus(
-        canRequestFocus: false,
-        skipTraversal: true,
-        onFocusChange: (f) {
-          if (f) _focused(t);
-        },
-        child: PosterCard(
-          title: t.title,
-          subtitle: t.subtitle,
-          poster: t.details,
-          onTap: () => _openTitle(t),
-          onLongPress: () => unawaited(t.inLibrary ? _libMenu(t) : _recMenu(t)),
-          holdSelect: true,
-          inLibrary: t.inLibrary,
-          progress: _pm.of(t),
-        ),
-      );
 
   Widget _hero(BuildContext context, {required bool wide, required double height, required double sidePad}) {
-    final t = _featured;
-    if (t == null) return SizedBox(height: height);
-    return _Hero(
-      key: ValueKey('hero-${t.key}'),
-      title: t,
-      height: height,
-      wide: wide,
-      sidePad: sidePad,
-      trailerOn: _trailerOn,
-      onPlay: () => _playTitle(t),
-      onInfo: () => _openTitle(t),
+    return ValueListenableBuilder<int>(
+      valueListenable: _heroTick,
+      builder: (context, _, __) {
+        final t = _featured;
+        if (t == null) return SizedBox(height: height);
+        // One banner for the whole page: it switches title inside itself (picture and text fade), instead of being rebuilt from scratch.
+        return RepaintBoundary(
+          child: _Hero(
+            key: const ValueKey('hero'),
+            title: t,
+            height: height,
+            wide: wide,
+            sidePad: sidePad,
+            trailerOn: _trailerOn,
+            onPlay: () => _playTitle(t),
+            onInfo: () => _openTitle(t),
+          ),
+        );
+      },
     );
   }
 
@@ -635,8 +557,8 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
       Expanded(
         child: ListView(
           padding: EdgeInsets.fromLTRB(side, 0.5 * rem, side, p.safeY),
-          cacheExtent: 500,
-          children: _rows(context, cardW: 6 * rem),
+          cacheExtent: 1400, // the first rows stay built (and their pictures decoded) beside the visible ones
+          children: _rows(context, cardW: 6 * rem, landscape: true),
         ),
       ),
       const MiniPlayer(),
@@ -765,19 +687,40 @@ class _UpdatesButton extends StatelessWidget {
   }
 }
 
+final Map<String, Future<Details>> _wideArt = {};
+
+/// The wide (16:9) picture of a title for a TV card: a suggestion already carries it; a library title asks TMDb once (kept, so a
+/// card never asks twice). Without one, its poster.
+Future<Details> simpleBackdropDetails(SimpleTitle t) {
+  return _wideArt.putIfAbsent(t.key, () async {
+    final r = t.rec;
+    if (r != null && r.banner != null) return Details(overview: r.overview, poster: r.banner!);
+    try {
+      final m = await SimpleMeta.of(t);
+      if (m.backdrop.isNotEmpty) return Details(overview: m.overview, poster: m.backdrop.replaceFirst('/w1280/', '/w780/'));
+    } catch (_) {}
+    _wideArt.remove(t.key); // no picture this time: ask again next time
+    return t.details;
+  });
+}
+
 /// A titled line of cards. [widthFactors] widens single cards (Continue Watching shows an episode's own wide picture).
 class SimpleShelf extends StatelessWidget {
-  const SimpleShelf({super.key, required this.title, required this.memoryKey, required this.cardW, required this.cards, this.widthFactors});
+  const SimpleShelf({super.key, required this.title, required this.memoryKey, required this.cardW, required this.cards, this.widthFactors, this.landscape = false});
   final String title;
   final String memoryKey;
   final double cardW;
   final List<Widget> cards;
   final List<double>? widthFactors;
 
+  /// TV: every card is a wide 16:9 picture (1.75 times the poster width) instead of a portrait poster.
+  final bool landscape;
+
   @override
   Widget build(BuildContext context) {
     final p = context.pek;
     final rem = p.rem;
+    final slotW = landscape ? cardW * 1.75 : cardW;
     // Room under the poster for the title / subtitle line, growing with the phone's text size (same as the Advanced dashboard).
     final textRoom = (0.4 + 2.7 * MediaQuery.textScalerOf(context).scale(1.0)) * rem;
     return Padding(
@@ -789,14 +732,14 @@ class SimpleShelf extends StatelessWidget {
           memoryKey: memoryKey,
           rowEndStops: true,
           child: SizedBox(
-            height: cardW * 1.5 + textRoom,
+            height: (landscape ? slotW * 9 / 16 : cardW * 1.5) + textRoom,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
               cacheExtent: 500, // cards kept built beside the visible ones: each holds a decoded poster, and a TV box has little memory
               itemCount: cards.length,
               separatorBuilder: (_, __) => SizedBox(width: 0.6 * rem),
-              itemBuilder: (_, i) => SizedBox(width: cardW * (widthFactors != null && i < widthFactors!.length ? widthFactors![i] : 1.0), child: Align(alignment: Alignment.topCenter, child: cards[i])),
+              itemBuilder: (_, i) => SizedBox(width: slotW * (!landscape && widthFactors != null && i < widthFactors!.length ? widthFactors![i] : 1.0), child: Align(alignment: Alignment.topCenter, child: cards[i])),
             ),
           ),
         ),
@@ -822,7 +765,15 @@ class _Hero extends StatefulWidget {
 }
 
 class _HeroState extends State<_Hero> {
-  late final Future<SimpleMeta> _meta = SimpleMeta.of(widget.title);
+  late Future<SimpleMeta> _meta = SimpleMeta.of(widget.title);
+  Widget? _pic; // the picture last built for a finished lookup (kept while the next title's lookup is out, so there is no flash)
+  String _picKey = '';
+
+  @override
+  void didUpdateWidget(_Hero old) {
+    super.didUpdateWidget(old);
+    if (old.title.key != widget.title.key) _meta = SimpleMeta.of(widget.title);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -836,7 +787,9 @@ class _HeroState extends State<_Hero> {
       child: FutureBuilder<SimpleMeta>(
         future: _meta,
         builder: (context, snap) {
-          final m = snap.data ?? SimpleMeta.none;
+          // A lookup still out belongs to the title now shown, never to the one before it.
+          final done = snap.connectionState == ConnectionState.done;
+          final m = (done ? snap.data : null) ?? SimpleMeta.none;
           final facts = m.ok ? m.facts(title) : title.subtitle;
           Widget picture() {
             Widget poster() => FutureBuilder<Details>(
@@ -855,8 +808,22 @@ class _HeroState extends State<_Hero> {
             return ArtImage(m.backdrop, fit: BoxFit.cover, cacheWidth: wide ? 1280 : 780, errorBuilder: (_, __, ___) => poster());
           }
 
+          if (done || _pic == null) {
+            _picKey = 'pic-${title.key}-${m.backdrop}';
+            _pic = picture();
+          }
+          final picKey = ValueKey<String>(_picKey);
+          final textKey = ValueKey<String>('txt-${title.key}');
           return Stack(fit: StackFit.expand, children: [
-            Positioned.fill(child: picture()),
+            // The new picture fades in over the old one (which stays until it is fully covered).
+            Positioned.fill(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 500),
+                layoutBuilder: (cur, prev) => Stack(fit: StackFit.expand, children: [...prev, if (cur != null) cur]),
+                transitionBuilder: (child, anim) => child.key == picKey ? FadeTransition(opacity: anim, child: child) : child,
+                child: KeyedSubtree(key: picKey, child: _pic!),
+              ),
+            ),
             if (widget.trailerOn && m.trailer.isNotEmpty) Positioned.fill(child: _DelayedTrailer(key: ValueKey('trailer-${m.trailer}'), videoId: m.trailer, muted: !Store.simpleSound)),
             // Dark on the left (wide) or at the bottom (phone) so the text reads on any picture; fades into the page at the bottom edge.
             Positioned.fill(
@@ -892,7 +859,14 @@ class _HeroState extends State<_Hero> {
               left: widget.sidePad,
               bottom: wide ? 1.6 * rem : 1.1 * rem,
               width: wide ? MediaQuery.sizeOf(context).width * 0.45 : MediaQuery.sizeOf(context).width - 2 * widget.sidePad,
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                layoutBuilder: (cur, prev) => Stack(alignment: Alignment.bottomLeft, children: [...prev, if (cur != null) cur]),
+                // The old title's text is gone at once; the new text fades in the moment the banner switches.
+                transitionBuilder: (child, anim) => child.key == textKey ? FadeTransition(opacity: anim.drive(CurveTween(curve: Curves.easeOut)), child: child) : const SizedBox.shrink(),
+                child: KeyedSubtree(
+                  key: textKey,
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 Text(title.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white, fontSize: (wide ? 2.6 : 1.9) * rem, fontWeight: FontWeight.w900, height: 1.05, shadows: const [Shadow(blurRadius: 12, color: Colors.black87)])),
                 SizedBox(height: 0.5 * rem),
                 Row(children: [
@@ -912,6 +886,8 @@ class _HeroState extends State<_Hero> {
                   _HeroButton(icon: Icons.info_outline, label: 'More Info', primary: false, onTap: widget.onInfo, rem: rem),
                 ]),
               ]),
+                ),
+              ),
             ),
           ]);
         },
@@ -919,16 +895,26 @@ class _HeroState extends State<_Hero> {
     );
   }
 
-  /// The description: TMDb's when it has one, else the library's own (an .nfo plot).
+  /// The description: TMDb's when it has one, else the library's own (an .nfo plot). Its room is kept from the start and the text
+  /// fades in when it arrives, so nothing under it jumps.
   Widget _overview(SimpleMeta m, double rem, bool wide) {
-    Widget text(String s) => Padding(
+    final lines = wide ? 3 : 2;
+    Widget text(String s) => Text(s, maxLines: lines, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withAlpha(230), fontSize: 0.9 * rem, height: 1.35, shadows: const [Shadow(blurRadius: 8, color: Colors.black87)]));
+    Widget box(String s) => Padding(
           padding: EdgeInsets.only(top: 0.5 * rem),
-          child: Text(s, maxLines: wide ? 3 : 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withAlpha(230), fontSize: 0.9 * rem, height: 1.35, shadows: const [Shadow(blurRadius: 8, color: Colors.black87)])),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: lines * 0.9 * rem * 1.35),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 350),
+              layoutBuilder: (cur, prev) => Stack(alignment: Alignment.topLeft, children: [...prev, if (cur != null) cur]),
+              child: s.isEmpty ? const SizedBox.shrink(key: ValueKey('none')) : KeyedSubtree(key: ValueKey(s), child: text(s)),
+            ),
+          ),
         );
-    if (m.overview.isNotEmpty) return text(m.overview);
+    if (m.overview.isNotEmpty) return box(m.overview);
     return FutureBuilder<Details>(
       future: widget.title.details,
-      builder: (_, s) => (s.data?.overview ?? '').isEmpty ? const SizedBox.shrink() : text(s.data!.overview),
+      builder: (_, s) => box(s.data?.overview ?? ''),
     );
   }
 }
@@ -1041,31 +1027,50 @@ class _SimpleGridPageState extends State<SimpleGridPage> {
           if (snap.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
           final items = snap.data ?? const <SimpleTitle>[];
           if (items.isEmpty) return Center(child: Padding(padding: EdgeInsets.all(2 * rem), child: Text(snap.hasError ? 'Could not load this list.' : widget.empty, textAlign: TextAlign.center, style: TextStyle(color: t.textMuted))));
-          final w = p.sidebar ? 6 * rem : 7.5 * rem;
+          // TV / wide screen: wide 16:9 pictures like the home rows; phone: portrait posters. The cell is sized from the real card
+          // (picture + the title and year lines under it), so nothing overflows, and the last row has room to breathe.
+          final wide = p.sidebar;
+          final maxW = wide ? 10.5 * rem : 7.5 * rem;
+          final aspect = wide ? 16 / 9 : 2 / 3;
+          final gapX = 0.7 * rem;
+          final padX = rem + p.safeX;
+          final textRoom = (0.9 + 2.7 * MediaQuery.textScalerOf(context).scale(1.0)) * rem;
           final pm = SimpleProgress.now();
           return TvNav.region(
             memoryKey: 'simple/grid/${widget.title}',
-            child: GridView.builder(
-              padding: EdgeInsets.fromLTRB(rem + p.safeX, 0.5 * rem, rem + p.safeX, 2 * rem + p.safeY),
-              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: w, mainAxisSpacing: 0.9 * rem, crossAxisSpacing: 0.7 * rem, childAspectRatio: 2 / 3.35),
-              itemCount: items.length,
-              itemBuilder: (context, i) {
-                final it = items[i];
-                // Align loosens the grid cell, so the card keeps its own 2:3 shape (the rows do the same).
-                return Align(
-                  alignment: Alignment.topCenter,
-                  child: PosterCard(
-                    autofocus: i == 0 && p.isTv,
-                    title: it.title,
-                    subtitle: it.subtitle,
-                    poster: it.details,
-                    inLibrary: it.inLibrary,
-                    progress: pm.of(it),
-                    onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => SimpleDetailScreen(title: it, lib: null))),
-                  ),
-                );
-              },
-            ),
+            child: LayoutBuilder(builder: (context, box) {
+              final avail = box.maxWidth - 2 * padX;
+              final cols = math.max(1, ((avail + gapX) / (maxW + gapX)).ceil());
+              final cardW = (avail - (cols - 1) * gapX) / cols;
+              return ShaderMask(
+                // The bottom edge fades out instead of cutting the last row off.
+                shaderCallback: (r) => const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.white, Colors.white, Color(0x00FFFFFF)], stops: [0.0, 0.94, 1.0]).createShader(r),
+                blendMode: BlendMode.dstIn,
+                child: GridView.builder(
+                  padding: EdgeInsets.fromLTRB(padX, 0.5 * rem, padX, 4 * rem + p.safeY),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: cols, mainAxisSpacing: 0.6 * rem, crossAxisSpacing: gapX, mainAxisExtent: cardW / aspect + textRoom),
+                  cacheExtent: 800,
+                  itemCount: items.length,
+                  itemBuilder: (context, i) {
+                    final it = items[i];
+                    // Align loosens the grid cell, so the card keeps its own shape (the rows do the same).
+                    return Align(
+                      alignment: Alignment.topCenter,
+                      child: PosterCard(
+                        autofocus: i == 0 && p.isTv,
+                        title: it.title,
+                        subtitle: it.subtitle,
+                        poster: wide ? simpleBackdropDetails(it) : it.details,
+                        aspectRatio: aspect,
+                        inLibrary: it.inLibrary,
+                        progress: pm.of(it),
+                        onTap: () => Navigator.push<void>(context, MaterialPageRoute<void>(builder: (_) => SimpleDetailScreen(title: it, lib: null))),
+                      ),
+                    );
+                  },
+                ),
+              );
+            }),
           );
         },
       ),

@@ -1101,7 +1101,8 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     final bg = holder.seeThrough ? 'transparent' : '#000';
     final css = 'html,body{margin:0;height:100%;background:$bg;overflow:hidden}'
         'video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .4s}'
-        'video.on{opacity:1}';
+        'video.on{opacity:1}'
+        'video::-webkit-media-controls,video::-webkit-media-controls-start-playback-button,video::-webkit-media-controls-overlay-play-button,video::-webkit-media-controls-panel{display:none!important;-webkit-appearance:none}';
     final js = "var v=document.getElementById('v'),a=document.getElementById('a'),want=${play ? 'true' : 'false'},muted=${muted ? 'true' : 'false'},ok=false;"
         "function bad(){if(!ok){ok=true;try{PekTrailer.postMessage('error')}catch(e){}}}"
         "v.muted=a?true:muted;if(a)a.muted=muted;"
@@ -1115,7 +1116,7 @@ class _PluginTrailerState extends State<_PluginTrailer> {
         "setTimeout(function(){if(!ok)bad()},12000);go();";
     final html = '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
         '<style>$css</style></head><body>'
-        '<video id="v" src="$video" loop playsinline preload="auto"></video>'
+        '<video id="v" src="$video" loop playsinline preload="auto" poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" disablepictureinpicture controlslist="nodownload nofullscreen noremoteplayback"></video>'
         '${audio.isEmpty ? '' : '<audio id="a" src="$audio" loop preload="auto"></audio>'}'
         '<script>$js</script></body></html>';
     await c.loadHtmlString(html, baseUrl: '${Api.base}/');
