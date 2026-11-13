@@ -578,6 +578,16 @@ struct TmdbPick {
 };
 
 static void logTmdbPick(const char* what, const std::string& title, int year, const tmdbmatch::Candidate* c, const tmdbmatch::Score* s) {
+    if (!c) {
+        // The same title can be asked many times in a row (every card on screen); say it once every 10 minutes, not on every request.
+        static std::mutex logMutex;
+        static std::map<std::string, long long> lastLogged;
+        const long long now = nowMs();
+        std::lock_guard<std::mutex> lock(logMutex);
+        long long& last = lastLogged[std::string(what) + "|" + title + "|" + std::to_string(year)];
+        if (last != 0 && now - last < 10 * 60 * 1000) return;
+        last = now;
+    }
     std::cout << "[PEK Server] TMDb match " << what << " '" << title << "'" << (year > 0 ? " (" + std::to_string(year) + ")" : "") << " -> ";
     if (!c) { std::cout << "no candidate was good enough" << std::endl; return; }
     char buf[96];

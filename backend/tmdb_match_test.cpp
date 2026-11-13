@@ -21,7 +21,8 @@ int main() {
     // title similarity
     CHECK(titleSimilarity("The Office", "Office") == 1.0);
     CHECK(titleSimilarity("Law & Order", "Law and Order") == 1.0);
-    CHECK(titleSimilarity("Friends", "Friends: The Reunion") < kMinTitle);
+    CHECK(titleSimilarity("Friends", "Friends: The Reunion") < 1.0 && titleSimilarity("Friends", "Friends: The Reunion") < kStrongTitle);   // usable, but the plain "Friends" wins whenever it is a candidate
+    CHECK(titleSimilarity("Lioness", "Special Ops: Lioness") >= kMinTitle && titleSimilarity("Special Ops Lioness", "Special Ops: Lioness") == 1.0);
     CHECK(titleSimilarity("Dredd", "Judge Dredd") < 0.8);
     CHECK(titleSimilarity("Dredd", "Frozen") < 0.3);
     // year / runtime / popularity
@@ -75,7 +76,7 @@ int main() {
       auto v = shows; int i = pick(q, v, details); CHECK(i >= 0 && v[i].id == "1972"); }
     { Query q; q.movie = false; q.title = "Battlestar Galactica";
       q.siblings = {{9, 1}, {9, 2}, {9, 3}};                                // nine seasons: no candidate has them
-      auto v = shows; CHECK(pick(q, v, details) < 0); }
+      auto v = shows; CHECK(pick(q, v, details) >= 0); }   // an exact title is kept even when no season count fits (TMDb may not list the newest season yet)
     { Query q; q.movie = false; q.title = "Battlestar Galactica"; q.siblings = {{0, 1}, {1, 1}, {1, 2}};   // a special does not vote
       auto v = shows; int i = pick(q, v, details); CHECK(i >= 0); }
     // 8. a failed details request leaves the vote undecided, not failed

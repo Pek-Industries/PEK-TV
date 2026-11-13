@@ -199,7 +199,15 @@ inline double titleSimilarity(const std::string& a, const std::string& b) {
         for (size_t j = 0; j < wb.size(); ++j)
             if (!used[j] && wb[j] == x) { used[j] = true; ++shared; break; }
     const double dice = 2.0 * shared / static_cast<double>(wa.size() + wb.size());
-    return 0.6 * dice + 0.4 * editRatio(ja, jb);
+    double sim = 0.6 * dice + 0.4 * editRatio(ja, jb);
+    // One title inside the other (\"Lioness\" / \"Special Ops: Lioness\", \"Shogun\" / \"Shogun 2024\"): files and folders often carry only
+    // the short form or an extra tag. Every word of the shorter one has to be in the longer one, and it must be at least 5 letters
+    // long (or 2 words), so a one-word title like \"Up\" does not match everything that has \"up\" in it.
+    const bool aShort = wa.size() <= wb.size();
+    const auto& sh = aShort ? wa : wb;
+    const auto& lg = aShort ? wb : wa;
+    if (shared == static_cast<int>(sh.size()) && (sh.size() >= 2 || joined(sh).size() >= 5)) sim = std::max(sim, 0.7);
+    return sim;
 }
 
 // Year: exact 1.0, one off 0.7, further 0. Returns -1 when either year is unknown (the part drops out).
@@ -257,9 +265,10 @@ struct Score {
     bool usable = false;                            // clears the title bar and, for a show, the season / episode vote
 };
 
-constexpr double kMinTitle = 0.6;     // below this the candidate is a different title, whatever else matches
-constexpr double kMinTotal = 0.55;
-constexpr double kMinFit = 0.6;       // share of the folder's episodes the series must be able to contain
+constexpr double kMinTitle = 0.5;     // below this the candidate is a different title, whatever else matches
+constexpr double kMinTotal = 0.40;
+constexpr double kMinFit = 0.4;       // share of the folder's episodes the series must be able to contain
+constexpr double kStrongTitle = 0.85; // a title this close is accepted even when the year, runtime or season / episode numbers disagree
 
 inline Score scoreCandidate(const Query& q, const Candidate& c) {
     Score s;
@@ -280,7 +289,10 @@ inline Score scoreCandidate(const Query& q, const Candidate& c) {
     double sum = 0, weight = 0;
     for (const auto& p : parts) if (p.v >= 0) { sum += p.v * p.w; weight += p.w; }
     s.total = weight > 0 ? sum / weight : 0;
-    s.usable = s.title >= kMinTitle && s.total >= kMinTotal && !(s.fit >= 0 && s.fit < kMinFit);
+    // A strong title match is not thrown out by the season / episode vote alone (absolute numbering, specials, a season TMDb has not
+    // listed yet and the like make that vote unreliable); a weak title still needs it.
+    const bool strong = s.title >= kStrongTitle;
+    s.usable = s.title >= kMinTitle && (strong || s.total >= kMinTotal) && (strong || !(s.fit >= 0 && s.fit < kMinFit));
     return s;
 }
 

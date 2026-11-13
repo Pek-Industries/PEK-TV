@@ -35,7 +35,7 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
-    ReleaseNotes('2.2.5', 'Smarter matching and a smoother start', [
+    ReleaseNotes('2.2.6', 'Smarter matching and a smoother start', [
       'Language: choose English, Spanish, French, German or Portuguese at first start or any time in Settings > Language. The welcome tour, sign in, Settings and the main menus are translated first; other screens follow in later updates.',
       'Accessibility: Settings > Accessibility has bigger text, reduced motion and a stronger focus outline, and screen readers like TalkBack now read posters, headings and switches properly.',
       'Movies and shows are now matched to the right title more reliably, so you get the correct poster and details.',
@@ -44,6 +44,7 @@ class WhatsNew {
       'A new welcome screen helps you get set up the first time you open the app.',
       'Small tweaks and fixes across the interface.',
       'New layout options are available in Settings.',
+      'Persistent sort: the sort order you pick for Movies and TV Shows is kept when you close and reopen the app. You can switch it off in Settings > Library.',
     ]),
   ];
 

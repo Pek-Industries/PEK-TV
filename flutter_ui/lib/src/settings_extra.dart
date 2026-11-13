@@ -260,6 +260,26 @@ class _SubtitleSectionState extends State<SubtitleSection> {
   }
 }
 
+// ====================================================================== Settings > Library sort
+
+class SortMemorySection extends StatelessWidget {
+  const SortMemorySection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: Store.changed,
+      builder: (context, _, __) => Section(
+        title: 'Sort order',
+        hint: 'Keep the sort order chosen on the Movies and TV Shows tabs when the app is closed and opened again.',
+        children: [
+          ToggleRow(title: 'Remember sort order', subtitle: Store.rememberSort ? 'On' : 'Off', on: Store.rememberSort, onTap: () => Store.setRememberSort(!Store.rememberSort)),
+        ],
+      ),
+    );
+  }
+}
+
 // ====================================================================== Settings > Skip intro / recap
 
 class SkipSection extends StatelessWidget {

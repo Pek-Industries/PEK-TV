@@ -119,7 +119,22 @@ List<T> sortedBy<T>(List<T> items, LibrarySort sort, int seed, {required String 
 /// One controller per list. The Movies and TV Shows tabs keep theirs while the app runs (leave the tab and come back, the
 /// choices are still there); Watch History makes its own.
 class LibraryFilters extends ChangeNotifier {
-  LibraryFilters({this.only, this.sorts = LibrarySort.movies});
+  LibraryFilters({this.only, this.sorts = LibrarySort.movies}) {
+    // Movies / TV Shows tabs keep their sort order between launches (Settings > Library > Remember sort order).
+    if (only == 'movies' || only == 'shows') {
+      restoreSort();
+      Store.profile.addListener(restoreSort); // another profile has its own saved order
+    }
+  }
+
+  /// Puts the saved sort order back (or "Default" when none is kept, e.g. another profile or the setting is off).
+  void restoreSort() {
+    final tab = only;
+    if (tab == null) return;
+    final saved = Store.savedSort(tab);
+    final want = sorts.firstWhere((x) => x.name == saved, orElse: () => LibrarySort.standard);
+    if (want != sort) setSort(want, save: false);
+  }
 
   /// 'movies' | 'shows' | null (both, for Watch History): which of the library's facets and results are read.
   final String? only;
@@ -208,10 +223,11 @@ class LibraryFilters extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setSort(LibrarySort s) {
+  void setSort(LibrarySort s, {bool save = true}) {
     if (s == sort) return;
     final before = sort.server;
     sort = s;
+    if (save && only != null) Store.saveSort(only!, s.name);
     if (s == LibrarySort.random) seed = math.Random().nextInt(1 << 30); // choosing Random is a fresh shuffle
     if (s.server != before) {
       _refresh(); // one of the server's orders (or back to the device's): ask again

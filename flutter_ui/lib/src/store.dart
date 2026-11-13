@@ -73,6 +73,30 @@ class Store {
     _bump();
   }
 
+  /// Library > Movies / TV Shows: keep the chosen sort order when the app is closed and opened again (default on). Switched off, the
+  /// order starts at "Default" on every launch. The order itself is kept per profile, one for each tab.
+  static bool get rememberSort => _p.getBool('pek_remember_sort') ?? true;
+  static Future<void> setRememberSort(bool on) async {
+    await _p.setBool('pek_remember_sort', on);
+    if (!on) {
+      for (final t in const ['movies', 'shows']) {
+        await _p.remove(_sc('pek_sort_$t'));
+      }
+    }
+    _bump();
+  }
+
+  /// The saved sort of one tab ('movies' | 'shows') as the LibrarySort's name, or '' when nothing is kept (or the switch is off).
+  static String savedSort(String tab) => rememberSort ? (_p.getString(_sc('pek_sort_$tab')) ?? '') : '';
+  static Future<void> saveSort(String tab, String name) async {
+    if (!rememberSort) return;
+    if (name.isEmpty || name == 'standard') {
+      await _p.remove(_sc('pek_sort_$tab'));
+    } else {
+      await _p.setString(_sc('pek_sort_$tab'), name);
+    }
+  }
+
   static void _bump() => changed.value++;
 
   // ---------------------------------------------------------------- profiles (scoping)
@@ -107,7 +131,7 @@ class Store {
   static Future<void> removeProfileData(String id, {bool keepFavorites = false}) async {
     ColdHistory.wipe(id);
     if (id == 'p1') {
-      for (final k in const ['pek_history_v1', 'pek_progress_v1', 'pek_favorites_v1', 'pek_dashboard_v1', 'pek_dashboard_v3', 'pek_dash_v2', 'pek_skip_auto', 'pek_skip_online', 'pek_skin', 'pek_custom_skins', 'pek_skin_tombs', 'pek_layout', 'pek_poster', 'pek_sync_cursor', 'pek_sync_arch', 'pek_sync_last', 'pek_sync_seen', 'pek_sync_pending', 'pek_sync_pendingf', 'pek_sync_setmeta', 'pek_fav_tombs', 'pek_plugin_favs_v1', 'pek_ratings_v1']) {
+      for (final k in const ['pek_history_v1', 'pek_progress_v1', 'pek_favorites_v1', 'pek_dashboard_v1', 'pek_dashboard_v3', 'pek_dash_v2', 'pek_skip_auto', 'pek_skip_online', 'pek_skin', 'pek_custom_skins', 'pek_skin_tombs', 'pek_layout', 'pek_poster', 'pek_sync_cursor', 'pek_sync_arch', 'pek_sync_last', 'pek_sync_seen', 'pek_sync_pending', 'pek_sync_pendingf', 'pek_sync_setmeta', 'pek_fav_tombs', 'pek_plugin_favs_v1', 'pek_ratings_v1', 'pek_sort_movies', 'pek_sort_shows']) {
         if (keepFavorites && (k == 'pek_favorites_v1' || k == 'pek_fav_tombs' || k == 'pek_plugin_favs_v1')) continue;
         await _p.remove(k);
       }

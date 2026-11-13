@@ -456,7 +456,7 @@ class SettingsPage extends StatelessWidget {
     return ListView(padding: padding, children: [
       Heading('Settings'.tr, weather: !music),
       row('Mode', music ? 'Music mode is on. Switch back to regular PEK TV here' : 'Simple or Advanced layout, and music mode', Icons.dashboard_customize_outlined, () => _SettingsList(children: [if (!music) const InterfaceSection(), const ModeSection()])),
-      row('Library', music ? 'The folders and network folders PEK TV scans for music' : 'The folders PEK TV scans for movies, shows and music', Icons.folder_outlined, () => _LibrarySettings(music: music)),
+      row('Library', music ? 'The folders and network folders PEK TV scans for music' : 'The folders PEK TV scans for movies, shows and music, and the sort order', Icons.folder_outlined, () => _LibrarySettings(music: music)),
       row('Account', music ? 'Sign in, profiles and sync' : 'Sign in, profiles, sync and Discord', Icons.person_outline, () => _SettingsList(children: [const AccountSection(), if (!music) const DiscordSection()])),
       // Regular mode: Updates is a main screen (bottom bar on a phone, side menu on a TV). Music mode has no such bar entry.
       if (music)
@@ -571,6 +571,7 @@ class _LibrarySettingsState extends State<_LibrarySettings> {
     final t = context.pek.tokens;
     final rem = context.pek.rem;
     return _SettingsList(children: [
+      if (!widget.music) const SortMemorySection(),
       Section(
         title: 'Media sources',
         hint: widget.music ? 'Folders PEK TV scans for music. Removing one only forgets it; no files are deleted.' : 'Folders PEK TV scans for movies, shows and music. Removing one only forgets it; no files are deleted.',
