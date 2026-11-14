@@ -1,7 +1,7 @@
 # Contributing to PEK TV
 
 Thanks for helping. PEK TV is a media center with a sandboxed plugin system, network library support and a TV-first
-interface. It is in beta, so there is plenty to fix and polish.
+interface. It is still early, so there is plenty to fix and polish.
 
 ## Licence
 

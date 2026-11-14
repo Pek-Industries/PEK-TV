@@ -32,8 +32,8 @@ class UpdateCheck {
 /// Looks for a newer release of the app itself, downloads its apk and hands it to Android to install.
 ///
 ///  * A release is a tag push (v2.2.0) built by .github/workflows/build_android.yml, which attaches
-///    PEK-TV-<version>-release-<arm64-v8a|armeabi-v7a>.apk. Those are marked "pre-release", which GitHub's /releases/latest
-///    skips, so the release LIST is read and the newest one with a matching apk wins.
+///    PEK-TV-<version>-release-<arm64-v8a|armeabi-v7a>.apk. The release LIST is read (not /releases/latest)
+///    so the newest one with a matching apk for this device wins.
 ///  * The CPU type comes from the installed versionCode (build.gradle: ...1 = 32-bit, ...2 = 64-bit), so an update never
 ///    swaps a 64-bit install for a 32-bit one.
 ///  * Nothing is remembered: "Not now" only hides the screen for this run, and it comes back at the next start.
@@ -47,7 +47,7 @@ class AppUpdate {
   /// At most this long at start-up: a slow connection must not hold the app back.
   static const checkTimeout = Duration(seconds: 4);
 
-  /// "2.1.9" is newer than "2.1.8"; "2.1.9" is newer than "2.1.9-beta.2"; "-beta.10" is newer than "-beta.9".
+  /// "2.1.9" is newer than "2.1.8"; "2.1.9" is newer than "2.1.9-rc.2"; "-rc.10" is newer than "-rc.9".
   static int compare(String a, String b) {
     ({List<int> core, List<String> pre}) split(String v) {
       var t = v.trim().replaceFirst(RegExp(r'^[vV]'), '');

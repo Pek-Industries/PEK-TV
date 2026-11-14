@@ -84,7 +84,7 @@ class PluginUpdates {
     unseen.value = 0;
   }
 
-  /// 1.10.0 is newer than 1.9.2; a missing number counts as 0. Letters after a number are ignored (1.2.0-beta = 1.2.0).
+  /// 1.10.0 is newer than 1.9.2; a missing number counts as 0. Letters after a number are ignored (1.2.0-rc = 1.2.0).
   static bool newer(String a, String b) {
     List<int> parts(String v) => v.trim().replaceFirst(RegExp(r'^[vV]'), '').split(RegExp(r'[.\-+]')).map((e) => int.tryParse(RegExp(r'^\d+').stringMatch(e) ?? '') ?? 0).toList();
     final x = parts(a), y = parts(b);

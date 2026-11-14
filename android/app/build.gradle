@@ -74,7 +74,7 @@ android {
 
     buildTypes {
         debug {
-            // Installs NEXT TO the beta (different app id) so you can keep both.
+            // Installs NEXT TO the release app (different app id) so you can keep both.
             applicationIdSuffix '.debug'
             versionNameSuffix '-debug'
             debuggable true
