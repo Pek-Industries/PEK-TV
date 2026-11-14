@@ -61,6 +61,7 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   SimpleProgress _pm = SimpleProgress.empty(); // how far along each title is, refreshed with every build of the rows
   int _gen = 0;
   Timer? _dwell;
+  Timer? _libTimer; // waits for a burst of library changes to settle before reading the library again
   /// Bumped when the banner follows the remote to another title: only the banner rebuilds (not every row under it).
   final ValueNotifier<int> _heroTick = ValueNotifier<int>(0);
 
@@ -81,6 +82,9 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     Recs.changed.addListener(_recsChanged);
+    // A folder added or removed, a finished scan and new posters all say so here (the Movies / TV Shows pages listen too).
+    Api.libraryRevision.addListener(_libraryChanged);
+    Api.artRevision.addListener(_libraryChanged);
     _load();
     _loadFeed();
     _ready = true;
@@ -90,6 +94,9 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     Recs.changed.removeListener(_recsChanged);
+    Api.libraryRevision.removeListener(_libraryChanged);
+    Api.artRevision.removeListener(_libraryChanged);
+    _libTimer?.cancel();
     _dwell?.cancel();
     _heroTick.dispose();
     _gen++;
@@ -105,6 +112,51 @@ class _SimpleHomeState extends State<SimpleHome> with WidgetsBindingObserver {
 
   void _recsChanged() {
     if (mounted) _loadFeed();
+  }
+
+  /// The library changed under us. Adding or removing a folder says so twice (when the scan starts and when it has finished),
+  /// and a scan can report new posters many times: wait for the burst to settle, then read once.
+  void _libraryChanged() {
+    _libTimer?.cancel();
+    _libTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) _reload();
+    });
+  }
+
+  /// [_load] without blanking the screen: what is showing stays until the new lists are there, then titles that are gone from the
+  /// library are dropped (a removed folder must not leave tappable cards) and new ones appear. A failed read keeps what is showing.
+  void _reload() {
+    final gen = ++_gen;
+    unawaited(SimpleLib.load().then((lib) async {
+      if (!mounted || gen != _gen) return;
+      bool has(SimpleTitle t) => t.rec != null || (t.show != null ? lib.showByTitle(t.show!.title) != null : lib.movieById(t.movie!.id) != null);
+      setState(() {
+        _lib = lib;
+        _libError = false;
+        final f = _featured;
+        if (f != null && !has(f)) _featured = null; // re-picked from the new library
+        _genreRows = [
+          for (final r in _genreRows)
+            (name: r.name, items: [for (final i in r.items) if (has(i)) i]),
+        ];
+      });
+      final facets = await Api.libraryFacets('');
+      if (!mounted || gen != _gen) return;
+      final names = [for (final g in facets?.genres ?? const <MapEntry<String, int>>[]) g.key];
+      final rows = <({String name, List<SimpleTitle> items})>[];
+      for (final g in names.take(6)) {
+        final r = await Api.librarySearch('', genre: g, limit: 30);
+        if (!mounted || gen != _gen) return;
+        if (r == null) continue;
+        final items = lib.fromSearch(r);
+        if (items.length < 3) continue;
+        rows.add((name: g, items: items));
+      }
+      setState(() {
+        _genres = names;
+        _genreRows = rows;
+      });
+    }, onError: (Object _) {}));
   }
 
   void _load() {
