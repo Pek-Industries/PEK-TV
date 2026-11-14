@@ -1,6 +1,7 @@
 #include "music_tags.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
