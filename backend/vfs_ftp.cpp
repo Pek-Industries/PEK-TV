@@ -19,10 +19,11 @@
 #include <ctime>
 #include <sstream>
 
-namespace vfs {
 #ifdef _WIN32
 #include "pek_socket.h"   // Windows: the POSIX socket calls below become Winsock ones (windows/backend/compat)
 #endif
+
+namespace vfs {
 
 namespace {
 
