@@ -1,12 +1,13 @@
 import 'dart:async';
 
-import 'dart:ui' show Rect;
+import 'dart:ui' show Rect, Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show BuildContext, ColoredBox, Colors, Navigator, PageRouteBuilder;
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter/services.dart';
 import 'api.dart' show Api;
+import 'platform.dart';
 
 class Chapter {
   const Chapter(this.title, this.time);
@@ -54,6 +55,24 @@ class PekPlayer {
   /// where libmpv cannot draw subtitles itself: the player screen draws this text over the picture instead (see SubtitleOverlay).
   final subtitleText = ValueNotifier<String>('');
 
+  /// Windows: id of the Flutter texture the host draws the picture into (null until [ensureSurface] ran, and on Android, where the
+  /// picture is a native surface behind Flutter). [PekVideoSurface] (video_surface.dart) shows it.
+  final surfaceId = ValueNotifier<int?>(null);
+
+  /// Windows: size of the picture in pixels (0 x 0 until known); the texture is shown with this shape.
+  final videoSize = ValueNotifier<Size>(Size.zero);
+
+  /// Windows: the corner rectangle the live TV guide shrinks the picture into (logical pixels); null = full screen.
+  final miniRect = ValueNotifier<Rect?>(null);
+
+  /// Windows: asks the host for the texture (once). Safe to call on any platform; it does nothing where the picture is native.
+  Future<void> ensureSurface() async {
+    if (!PekPlatform.videoAsTexture || surfaceId.value != null) return;
+    try {
+      surfaceId.value = await _method.invokeMethod<int>('surface');
+    } catch (_) {}
+  }
+
   void _onEvent(dynamic e) {
     if (e is! Map) return;
     final data = (e['data'] is Map) ? Map<String, dynamic>.from(e['data'] as Map) : <String, dynamic>{};
@@ -77,6 +96,9 @@ class PekPlayer {
       case 'subtitle':
         subtitleText.value = '${data['text'] ?? ''}';
         break;
+      case 'size':
+        videoSize.value = Size(((data['width'] as num?) ?? 0).toDouble(), ((data['height'] as num?) ?? 0).toDouble());
+        break;
       case 'ended':
         ended.value = true;
         break;
@@ -94,7 +116,12 @@ class PekPlayer {
   }
 
   /// [dvdDevice]: for a "dvd://" or "dvd://<title>" url, the folder that holds VIDEO_TS or the .iso file to play it from.
-  Future<void> load(String url, {double startSec = 0, String title = '', String? dvdDevice}) =>
+  Future<void> load(String url, {double startSec = 0, String title = '', String? dvdDevice}) async {
+    await ensureSurface();
+    return _load(url, startSec, title, dvdDevice);
+  }
+
+  Future<void> _load(String url, double startSec, String title, String? dvdDevice) =>
       _method.invokeMethod('load', {'url': Api.withToken(url), 'startSec': startSec, 'title': title, 'dvdDevice': dvdDevice});
   Future<void> play() => _method.invokeMethod('play');
   Future<void> pause() => _method.invokeMethod('pause');
@@ -107,8 +134,15 @@ class PekPlayer {
 
   /// Shrinks the picture into a rectangle (logical pixels from the top left of the screen): the live TV guide uses it to
   /// keep the channel playing in the top left corner. [fullscreen] puts it back. A new [load] always starts full screen.
-  Future<void> setMiniRect(Rect r) => _method.invokeMethod('setMiniRect', {'left': r.left, 'top': r.top, 'width': r.width, 'height': r.height});
-  Future<void> fullscreen() => _method.invokeMethod('fullscreen');
+  Future<void> setMiniRect(Rect r) {
+    if (PekPlatform.videoAsTexture) miniRect.value = r;
+    return _method.invokeMethod('setMiniRect', {'left': r.left, 'top': r.top, 'width': r.width, 'height': r.height});
+  }
+
+  Future<void> fullscreen() {
+    if (PekPlatform.videoAsTexture) miniRect.value = null;
+    return _method.invokeMethod('fullscreen');
+  }
 
   Future<void> togglePause() => playing.value ? pause() : play();
 
@@ -122,6 +156,8 @@ class PekPlayer {
     subtitles.value = const [];
     chapters.value = const [];
     subtitleText.value = '';
+    videoSize.value = Size.zero;
+    miniRect.value = null;
     ended.value = false;
     failed.value = false;
   }

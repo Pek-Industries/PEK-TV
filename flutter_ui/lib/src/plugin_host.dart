@@ -10,6 +10,7 @@ import 'ratings.dart';
 import 'skins.dart';
 import 'store.dart';
 import 'weather.dart' show Weather;
+import 'platform.dart';
 
 /// The Dart end of the plugin bridge (see FLUTTER_PLUGINS.md).
 ///
@@ -138,7 +139,8 @@ class PluginHost {
 
   /// An https link in the YouTube app or the browser. Returns false when nothing could open it.
   static Future<bool> openUrl(String url) async {
-    if (!url.startsWith('https://')) return false;
+    // Windows also opens e-mail addresses (mailto:) in the default mail app; Android's host only takes https.
+    if (!url.startsWith('https://') && !(PekPlatform.isWindows && url.startsWith('mailto:'))) return false;
     try {
       return (await _channel.invokeMethod<bool>('openUrl', url)) ?? false;
     } catch (_) {

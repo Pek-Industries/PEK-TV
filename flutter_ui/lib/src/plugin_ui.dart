@@ -27,6 +27,7 @@ import 'watched.dart';
 import 'weather.dart' show Weather, WeatherBadge;
 import 'widgets.dart';
 import 'art_cache.dart';
+import 'platform.dart';
 
 /// Opens a plugin's screen on top of the current one (a phone, or a TV from a place that is not the sidebar).
 Future<void> openPluginScreen(BuildContext context, {required String pluginId, required String title, Map<String, dynamic>? launch}) {
@@ -1053,7 +1054,7 @@ class _PluginTrailerState extends State<_PluginTrailer> {
   void initState() {
     super.initState();
     // A web view that already exists (the widget was rebuilt after scrolling back, or after a page was closed) is reused as it is.
-    if (widget.autoplay && _controller == null) _start(play: true);
+    if (PekPlatform.hasWebView && widget.autoplay && _controller == null) _start(play: true);
   }
 
   void _start({required bool play}) {
@@ -1167,6 +1168,7 @@ class _PluginTrailerState extends State<_PluginTrailer> {
 
   @override
   Widget build(BuildContext context) {
+    if (!PekPlatform.hasWebView) return const SizedBox.shrink(); // Windows has no web view: no trailers, the picture under it stays
     final p = context.pek;
     final c = _controller;
     return ClipRect(

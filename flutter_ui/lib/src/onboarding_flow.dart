@@ -17,6 +17,7 @@ import 'store.dart';
 import 'tokens.dart';
 import 'welcome.dart';
 import 'widgets.dart';
+import 'link_text.dart';
 
 /// First-launch question: Simple or Advanced layout (simple_shell.dart / the dashboard). Asked once per device, after the welcome tour
 /// and taste picker. [Welcome.markSeen] arms it; an install that was updated from an older version never is.
@@ -338,7 +339,7 @@ class SignUpQrScreen extends StatelessWidget {
     final site = Cloud.siteUrl.replaceFirst('https://', '');
     final steps = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('1. Scan the QR code with your phone, or open', style: TextStyle(color: t.textMuted, fontSize: rem)),
-      Text(site, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.05 * rem)),
+      LinkText(site, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.05 * rem)),
       SizedBox(height: 0.5 * rem),
       Text('2. Create your account on that page.', style: TextStyle(color: t.textMuted, fontSize: rem)),
       SizedBox(height: 0.5 * rem),

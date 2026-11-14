@@ -34,7 +34,16 @@ const std::vector<std::string> kVideoExtensions = {
 };
 
 // Adjust if ffprobe is bundled at a fixed path rather than on PATH.
+#ifdef _WIN32
+// The Windows app ships ffprobe.exe next to itself and tells the server where it is (PEK_FFPROBE, set by dll_entry.cpp).
+std::string ffprobeBinary() {
+    const char* p = std::getenv("PEK_FFPROBE");
+    return (p && *p) ? "\"" + std::string(p) + "\"" : std::string("ffprobe");
+}
+#define kFfprobeBinary ffprobeBinary()
+#else
 const std::string kFfprobeBinary = "ffprobe";
+#endif
 
 // First line of the cache file. Bump when classification logic changes
 // enough that old cached results should be recomputed.
@@ -46,6 +55,10 @@ std::string toLower(std::string s) {
     return s;
 }
 
+#ifdef _WIN32
+// Windows: no shell. The path is wrapped in double quotes for CreateProcess (a file name cannot contain one).
+std::string shellEscape(const std::string& path) { return "\"" + path + "\""; }
+#else
 std::string shellEscape(const std::string& path) {
     // Wrap in single quotes and escape any embedded single quotes,
     // so filenames with spaces/parentheses/etc. survive the shell
@@ -58,7 +71,42 @@ std::string shellEscape(const std::string& path) {
     out += "'";
     return out;
 }
+#endif
 
+#ifdef _WIN32
+// Windows: CreateProcess with a pipe instead of popen(), because popen() opens a console window for every call from a GUI app.
+std::string runCommand(const std::string& cmd) {
+    std::string result;
+    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) return result;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, &sa, OPEN_EXISTING, 0, nullptr);
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    si.hStdError = nul != INVALID_HANDLE_VALUE ? nul : wr;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    int n = MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(), -1, nullptr, 0);
+    std::wstring wcmd(static_cast<size_t>(n > 0 ? n : 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(), -1, &wcmd[0], n);
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(nullptr, &wcmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(wr);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    if (ok) {
+        char buf[4096];
+        DWORD got = 0;
+        while (ReadFile(rd, buf, sizeof buf, &got, nullptr) && got > 0) result.append(buf, got);
+        WaitForSingleObject(pi.hProcess, 5000);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+    CloseHandle(rd);
+    return result;
+}
+#else
 std::string runCommand(const std::string& cmd) {
     std::array<char, 4096> buffer;
     std::string result;
@@ -70,6 +118,7 @@ std::string runCommand(const std::string& cmd) {
     }
     return result;
 }
+#endif
 
 // Not a general JSON parser — ffprobe's tag vocabulary here is
 // small and well-known, so a targeted regex per key is simpler and
@@ -907,7 +956,11 @@ void MediaScanner::probeAndClassify(MediaEntry& entry) {
         return;
     }
     std::string cmd = kFfprobeBinary + " -v quiet -print_format json -show_format " +
-                       shellEscape(entry.path) + " 2>/dev/null";
+                       shellEscape(entry.path)
+#ifndef _WIN32
+                       + " 2>/dev/null"
+#endif
+                       ;
     std::string json = runCommand(cmd);
 
     if (json.empty()) {

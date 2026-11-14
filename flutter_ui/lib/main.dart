@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'src/video_surface.dart';
 import 'src/a11y.dart';
 import 'src/deep_link.dart';
 import 'src/dev_console.dart';
@@ -91,7 +92,7 @@ class PekApp extends StatelessWidget {
           supportedLocales: L10n.supportedLocales,
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
-          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()]))))),
+          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [const PekVideoSurface(), child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()]))))),
           home: const _Boot(),
         );
       },

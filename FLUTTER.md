@@ -18,7 +18,7 @@ The Flutter UI is the only UI.
 
 ## One branch, one folder per platform
 Everything lives on `main`. `flutter_ui/` (screens) and `backend/` (C++ server) are shared; each platform has its own host folder
-next to them. Today that is `android/` with its workflow `.github/workflows/build_android.yml`. A new platform adds its own folder (for
+next to them. Today that is `android/` with its workflow `.github/workflows/build_android.yml`, and `windows/` with `.github/workflows/build_windows.yml` (see WINDOWS.md). A new platform adds its own folder (for
 example `linux/` or `windows/`) and its own workflow file; it does not need a branch. A host has to provide what Android's host
 does: start the backend on `127.0.0.1:8080`, and answer the `pek/*` platform channels (`pek/mpv`, `pek/music`, `pek/host`, `pek/pip` (Picture in picture: Home or the player's top bar button shrinks the app into a small floating window that keeps playing; `pip.dart`, FlutterHostActivity; no controls, Skip or Next episode card in the small window),
 `pek/plugins`, `pek/output`) that `flutter_ui/lib/src/` calls. Some pieces here are Android-only today (the Kotlin side of those

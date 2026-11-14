@@ -10,6 +10,7 @@ import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'voice_models.dart';
+import 'platform.dart';
 
 /// What a spoken sentence asks for.
 /// play / search / open / resume: the library. seek / skip / pause: the player ("skip to 3 minutes in", "back 30 seconds").
@@ -291,7 +292,8 @@ class Voice {
     }
   }
 
-  /// Asks Android for the microphone (the first time only shows the system box).
+  /// Asks the host for the microphone: Android shows its permission box the first time; Windows says no when the person has
+  /// switched microphone access off in Settings > Privacy (voice.dart then explains it).
   Future<bool> micAllowed() async {
     try {
       return (await _host.invokeMethod<bool>('micPermission')) ?? false;
@@ -303,6 +305,7 @@ class Voice {
   /// The phone's own recognizer (the Google keyboard's engine): live words through [onPartial], no model to ship.
   /// Returns null when it is not usable here (no recognizer, offline without a language pack, ...): the caller then uses the bundled model.
   Future<String?> _listenSystem({void Function(double level)? onLevel, void Function(String text)? onPartial, List<String> bias = const []}) async {
+    if (!PekPlatform.hasSystemRecognizer) return null; // Windows & co: the bundled model listens
     try {
       if (!(await _sys.invokeMethod<bool>('available') ?? false)) return null;
     } catch (_) {

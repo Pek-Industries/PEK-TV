@@ -154,6 +154,39 @@ static bool listableDir(const std::string& p) {
     return !ec;
 }
 
+#ifdef _WIN32
+// Windows: the picker starts from the drives (C:\, D:\, a USB stick, ...) and the user's own Videos / Music / Downloads folders.
+static std::vector<StorageRoot> storageRoots() {
+    std::vector<StorageRoot> out;
+    auto addPath = [&out](const std::string& label, const std::string& path) {
+        if (path.empty() || !listableDir(path)) return;
+        for (const auto& r : out) if (r.path == path) return;
+        out.push_back({label, path});
+    };
+    if (const char* home = std::getenv("USERPROFILE")) {
+        const std::string h = home;
+        addPath("Videos", h + "\\Videos");
+        addPath("Music", h + "\\Music");
+        addPath("Downloads", h + "\\Downloads");
+        addPath("Pictures", h + "\\Pictures");
+    }
+    DWORD mask = GetLogicalDrives();
+    for (int i = 0; i < 26; ++i) {
+        if (!(mask & (1u << i))) continue;
+        std::string root = std::string(1, static_cast<char>('A' + i)) + ":\\";
+        UINT type = GetDriveTypeA(root.c_str());
+        if (type == DRIVE_NO_ROOT_DIR) continue;
+        std::string kind = type == DRIVE_REMOVABLE ? "USB / SD" : type == DRIVE_CDROM ? "Disc drive" : type == DRIVE_REMOTE ? "Network drive" : "Local disk";
+        addPath(kind + " (" + root.substr(0, 2) + ")", root);
+    }
+    return out;
+}
+static std::string defaultBrowsePath() {
+    const auto roots = storageRoots();
+    return roots.empty() ? std::string("@roots") : roots.front().path;
+}
+#else
+static std::string defaultBrowsePath() { return "/storage/emulated/0"; }
 static std::vector<StorageRoot> storageRoots() {
     std::vector<StorageRoot> out;
     auto add = [&out](const std::string& label, std::string path) {
@@ -198,6 +231,7 @@ static std::vector<StorageRoot> storageRoots() {
     }
     return out;
 }
+#endif
 
 // The folder above `p` the picker may show, or "@roots" (the list of storage roots) when `p` is a root or
 // its parent is somewhere an app cannot list (/storage, /storage/emulated, /).
@@ -206,6 +240,9 @@ static std::string pickerParent(const std::string& p, const std::vector<StorageR
     fs::path par = fs::path(p).parent_path();
     if (par.empty() || par == fs::path(p)) return "@roots";
     std::string ps = par.string();
+#ifdef _WIN32
+    return ps;   // a drive root (C:\) is in the list of roots, so it already answered "@roots" above
+#endif
     if (ps == "/" || ps == "/storage" || ps == "/storage/emulated" || ps == "/mnt" || ps == "/mnt/media_rw") return "@roots";
     return ps;
 }
@@ -1138,6 +1175,9 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::error_code ec;
         if (fs::is_directory("/storage/emulated/0", ec)) return "/storage/emulated/0";
         const char* h = std::getenv("HOME");
+#ifdef _WIN32
+        if (!(h && *h)) h = std::getenv("USERPROFILE");
+#endif
         if (h && *h && fs::is_directory(h, ec)) return h;
         return "/";
     };
@@ -1942,7 +1982,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
             res.set_content(json + "]}", "application/json");
             return;
         }
-        if (path.empty()) path = "/storage/emulated/0";
+        if (path.empty()) path = defaultBrowsePath();
 
         std::vector<std::string> dirs;
         if (!MediaScanner::listSubdirectories(path, dirs)) {
@@ -1952,7 +1992,8 @@ void PekServer::start(int port, const std::string& plugins_dir,
                     "\", \"roots\": " + rj + "}", "application/json");
                 return;
             }
-            path = "/storage/emulated/0"; // invalid path — fall back rather than error, so the picker never gets stuck
+            path = defaultBrowsePath(); // invalid path — fall back rather than error, so the picker never gets stuck
+            if (path == "@roots") { res.set_content("{\"path\": \"\", \"parent\": \"\", \"roots\": " + rj + ", \"directories\": []}", "application/json"); return; }
             MediaScanner::listSubdirectories(path, dirs);
         }
 

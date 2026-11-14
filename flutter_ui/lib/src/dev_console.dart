@@ -281,9 +281,9 @@ Commands run as the app's user, with no root. They can break the app. Stop kills
   }
 
   static Future<void> _shell(String cmd) async {
-    final exe = Platform.isAndroid ? '/system/bin/sh' : 'sh';
+    final exe = Platform.isAndroid ? '/system/bin/sh' : (Platform.isWindows ? 'cmd.exe' : 'sh');
     final dir = await _dir();
-    final p = await Process.start(exe, ['-c', cmd], workingDirectory: Directory(dir).existsSync() ? dir : null);
+    final p = await Process.start(exe, [Platform.isWindows ? '/c' : '-c', cmd], workingDirectory: Directory(dir).existsSync() ? dir : null);
     _proc = p;
     final out = p.stdout.transform(const Utf8Decoder(allowMalformed: true)).transform(const LineSplitter()).listen(add);
     final err = p.stderr.transform(const Utf8Decoder(allowMalformed: true)).transform(const LineSplitter()).listen(add);

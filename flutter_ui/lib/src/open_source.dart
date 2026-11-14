@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'common.dart';
 import 'plugin_host.dart' show PluginHost;
 import 'tokens.dart';
+import 'link_text.dart';
 
 /// One open source library PEK TV is built with.
 class OssLib {
@@ -64,7 +65,7 @@ Future<void> _openLicense(BuildContext context, OssLib lib) async {
     builder: (c) => AlertDialog(
       backgroundColor: p.tokens.glassStrong,
       title: Text('${lib.name} licence'),
-      content: SelectableText('No browser is available on this device. The licence is at:\n\n${lib.url}'),
+      content: LinkText('No browser is available on this device. The licence is at:\n\n${lib.url}'),
       actions: [TextButton(autofocus: true, onPressed: () => Navigator.pop(c), child: const Text('Close'))],
     ),
   );

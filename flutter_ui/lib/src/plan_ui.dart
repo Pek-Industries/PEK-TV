@@ -9,6 +9,7 @@ import 'common.dart';
 import 'plugin_host.dart';
 import 'tokens.dart';
 import 'widgets.dart';
+import 'link_text.dart';
 
 /// The PEK Cloud prices, shown in the app. The real prices live on the website (Stripe); keep these in step with it.
 class PlanPrices {
@@ -243,7 +244,7 @@ Future<void> showUpgradeDialog(BuildContext context, {String? why}) async {
 Future<void> openSitePage(BuildContext context, String url) async {
   final ok = await PluginHost.openUrl(url);
   if (!ok && context.mounted) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not open a browser here. Go to $url on your phone or computer.')));
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: LinkText('Could not open a browser here. Go to $url on your phone or computer.')));
   }
 }
 

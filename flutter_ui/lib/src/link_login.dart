@@ -10,6 +10,7 @@ import 'cloud.dart';
 import 'common.dart';
 import 'tokens.dart';
 import 'widgets.dart';
+import 'link_text.dart';
 
 /// Sign in without typing: this screen shows a 6-digit code and a QR code. On the website's verify page (the QR code opens it
 /// with the code already filled in) the person signs in, checks the name of this device and taps Approve. This screen asks the
@@ -107,7 +108,7 @@ class _LinkScreenState extends State<LinkScreen> {
 
     final steps = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('1. Scan the QR code with your phone, or open', style: TextStyle(color: t.textMuted, fontSize: 1.0 * rem)),
-      Text(site, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.05 * rem)),
+      LinkText(site, style: TextStyle(fontWeight: FontWeight.w700, fontSize: 1.05 * rem)),
       SizedBox(height: 0.5 * rem),
       Text('2. Sign in if it asks, then enter this code:', style: TextStyle(color: t.textMuted, fontSize: 1.0 * rem)),
       SizedBox(height: 0.4 * rem),

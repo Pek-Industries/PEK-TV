@@ -11,6 +11,7 @@ import 'plugin_updates.dart';
 import 'store.dart';
 import 'tokens.dart';
 import 'widgets.dart';
+import 'link_text.dart';
 
 /// One message from Settings > Updates (news, an update note or a coupon code). You post them with the sync worker
 /// (`POST /v1/news/post`, or the news-admin page on the website); the app only reads them.
@@ -159,16 +160,16 @@ class _NewsSectionState extends State<NewsSection> {
               Flexible(
                 child: SingleChildScrollView(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    if (i.body.isNotEmpty) Text(i.body, style: TextStyle(color: p.tokens.textMuted)),
+                    if (i.body.isNotEmpty) LinkText(i.body, style: TextStyle(color: p.tokens.textMuted)),
                     if (i.code.isNotEmpty) ...[
                       SizedBox(height: 0.8 * p.rem),
                       SelectableText(i.code, style: TextStyle(fontSize: 1.4 * p.rem, fontWeight: FontWeight.w800, letterSpacing: 2, color: p.tokens.accent)),
                       SizedBox(height: 0.3 * p.rem),
-                      Text('Enter this code on the payment page at ${Cloud.accountPage}', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * p.rem)),
+                      LinkText('Enter this code on the payment page at ${Cloud.accountPage}', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * p.rem)),
                     ],
                     if (i.link.isNotEmpty) ...[
                       SizedBox(height: 0.6 * p.rem),
-                      SelectableText(i.link, style: TextStyle(color: p.tokens.accent, fontSize: 0.9 * p.rem)),
+                      LinkText(i.link, style: TextStyle(color: p.tokens.accent, fontSize: 0.9 * p.rem)),
                     ],
                   ]),
                 ),

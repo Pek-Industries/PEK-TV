@@ -22,6 +22,10 @@
 #include <set>
 #include <thread>
 
+#ifdef _WIN32
+#include "pek_socket.h"   // Windows: the POSIX socket calls below become Winsock ones (windows/backend/compat)
+#endif
+
 namespace {
 
 using Clock = std::chrono::steady_clock;

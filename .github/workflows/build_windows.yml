@@ -1,0 +1,207 @@
+name: Build PEK TV (Windows)
+
+# Tag push  (v0.1.3)  -> signed RELEASE zips + attached to the GitHub release (next to the Android apks)
+# Manual run (Actions tab / gh) -> pick debug or release, optional publish
+#
+# One zip per CPU type, like the Android workflow's two apks:
+#   PEK-TV-<version>-windows-x64.zip     64-bit Intel / AMD   (normal PCs)
+#   PEK-TV-<version>-windows-arm64.zip   64-bit ARM           (Snapdragon / Copilot+ PCs, Windows on ARM)
+# There is NO 32-bit (x86) zip: Flutter cannot build 32-bit Windows apps at all (its Windows engine exists for x64 and ARM64 only),
+# so the Windows split is x64 / ARM64 instead of Android's arm64-v8a / armeabi-v7a. See WINDOWS.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'debug = fast, unsigned official plugins | release = signed plugins (needs PEK_PLUGIN_SIGNING_KEY)'
+        type: choice
+        options: [debug, release]
+        default: debug
+      torrent:
+        description: 'Build in torrent streaming (libtorrent) - needed for stream playback'
+        type: boolean
+        default: true
+      publish:
+        description: 'Release builds only: also publish a GitHub release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            msystem: CLANG64
+            mpv: x86_64
+            ffmpeg: win64
+            python: amd64
+          - arch: arm64
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            mpv: aarch64
+            ffmpeg: winarm64
+            python: arm64
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_TYPE: ${{ github.event_name == 'push' && 'release' || inputs.build_type }}
+      WANT_TORRENT: ${{ github.event_name == 'workflow_dispatch' && inputs.torrent || github.event_name == 'push' && 'true' || 'false' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ---- Version (same checks as the Android build) -------------------------
+      - name: Check release numbers agree
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            python tools/check_version.py --tag "${GITHUB_REF_NAME}"
+          else
+            python tools/check_version.py
+          fi
+
+      - name: Signing tests
+        run: python tools/test_signing.py
+
+      - name: Translation check
+        run: python tools/check_l10n.py
+
+      - name: Work out version name
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(grep -oP "versionName.*: '\K[^']+" android/app/build.gradle)-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION_NAME=$V" >> "$GITHUB_ENV"
+          echo "Version: $V  (type: $BUILD_TYPE, ${{ matrix.arch }})"
+
+      # ---- The C++ server as pek_server.dll (MSYS2 clang, the compiler family the Android NDK uses) ----
+      - name: Set up MSYS2 (${{ matrix.msystem }})
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          pacboy: >-
+            toolchain:p
+            cmake:p
+            ninja:p
+            openssl:p
+            sqlite3:p
+            libtorrent-rasterbar:p
+            boost:p
+
+      - name: Build pek_server.dll
+        shell: msys2 {0}
+        run: |
+          T=""
+          [ "$WANT_TORRENT" = true ] && T="-DPEK_TORRENT=ON"
+          if ! { cmake -S windows/backend -B build/backend -G Ninja -DCMAKE_BUILD_TYPE=Release $T && cmake --build build/backend; }; then
+            if [ "$WANT_TORRENT" = true ]; then
+              echo "::error::The server did not build with torrent support. Not falling back silently: that would ship an app that cannot play torrents."
+              exit 1
+            fi
+            exit 1
+          fi
+          ls -l build/backend/pek_server.dll
+
+      # ---- Things that ship next to the exe -------------------------------------
+      - name: Fetch libmpv
+        run: bash windows/scripts/fetch-libmpv.sh ${{ matrix.mpv }}
+
+      - name: Fetch ffprobe
+        run: bash windows/scripts/fetch-ffprobe.sh ${{ matrix.ffmpeg }}
+
+      - name: Fetch embeddable Python
+        run: bash windows/scripts/fetch-python.sh ${{ matrix.python }}
+
+      - name: Cache voice model (bundled speech to text)
+        uses: actions/cache@v4
+        with:
+          path: assets/bundled/voice
+          key: voice-stt-${{ hashFiles('tools/fetch-voice-model.sh') }}
+
+      - name: Ensure voice model
+        run: bash tools/fetch-voice-model.sh
+
+      - name: Stage app files
+        env:
+          PEK_PLUGIN_SIGNING_KEY: ${{ secrets.PEK_PLUGIN_SIGNING_KEY }}
+        run: bash windows/scripts/stage-assets.sh "$VERSION_NAME"
+
+      # ---- Flutter ---------------------------------------------------------------
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Same pin as the Android workflow: raise both together.
+          flutter-version: '3.47.9'
+          cache: true
+
+      - name: Prepare the Windows project (build/windows_app)
+        run: bash windows/scripts/prepare-flutter-host.sh
+
+      - name: flutter pub get
+        working-directory: build/windows_app
+        run: flutter pub get
+
+      - name: Build Windows app
+        working-directory: build/windows_app
+        run: flutter build windows --release --target-platform windows-${{ matrix.arch }}
+
+      - name: Package
+        run: bash windows/scripts/package.sh ${{ matrix.arch }} "$VERSION_NAME" "$BUILD_TYPE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PEK-TV-${{ env.VERSION_NAME }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}
+          path: dist/*.zip
+          retention-days: 30
+
+  # One publish step after BOTH zips exist (two jobs creating the same release at once would race).
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    if: ${{ (github.event_name == 'push' || inputs.publish) && (github.event_name == 'push' || inputs.build_type == 'release') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Work out version name
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="$(grep -oP "versionName.*: '\K[^']+" android/app/build.gradle)-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "VERSION_NAME=$V" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: PEK-TV-*-windows-*
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - name: GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', env.VERSION_NAME) }}
+          name: PEK TV ${{ env.VERSION_NAME }}
+          prerelease: false
+          generate_release_notes: true
+          files: dist/*.zip

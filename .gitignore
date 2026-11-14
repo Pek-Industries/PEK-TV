@@ -49,3 +49,9 @@ dist/
 
 # speech-to-text model bundled in every build; fetched by tools/fetch-voice-model.sh (never commit the model files)
 assets/bundled/voice/
+
+# Windows build inputs and output (fetched / made by windows/scripts/*.sh and the workflow)
+build/
+windows/libmpv/
+windows/ffmpeg/
+windows/python-embed/

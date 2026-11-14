@@ -99,10 +99,12 @@ class AppUpdate {
       if (info == null) return const UpdateCheck(null, "Couldn't read this app's version.");
       final name = '${info['versionName']}';
       final code = (info['versionCode'] as num?)?.toInt() ?? 0;
+      final winArch = '${info['windowsArch'] ?? ''}'; // Windows host: 'x64' or 'arm64'
       if (info['debuggable'] == true || name.endsWith('-debug') || name.contains('-dev.')) {
         return UpdateCheck(null, 'This is a debug or dev build ($name). Those never look for updates. Install a release build to test updating.');
       }
-      final abi = switch (code % 10) { 1 => 'armeabi-v7a', 2 => 'arm64-v8a', _ => null };
+      final abi = winArch.isNotEmpty ? winArch : switch (code % 10) { 1 => 'armeabi-v7a', 2 => 'arm64-v8a', _ => null };
+      final suffix = winArch.isNotEmpty ? '-windows-$winArch.zip' : '-release-$abi.apk'; // Windows ships a zip per CPU type, Android an apk
       if (abi == null) return UpdateCheck(null, 'This looks like a local build (version code $code), not an installed release, so it cannot update itself.');
 
       final r = await http
@@ -135,7 +137,7 @@ class AppUpdate {
           final file = '${a['name'] ?? ''}';
           final url = '${a['browser_download_url'] ?? ''}';
           final size = (a['size'] as num?)?.toInt() ?? 0;
-          if (!file.endsWith('-release-$abi.apk') || !url.toLowerCase().startsWith(prefix) || size <= 0) continue;
+          if (!file.endsWith(suffix) || !url.toLowerCase().startsWith(prefix) || size <= 0) continue;
           final digest = '${a['digest'] ?? ''}'; // "sha256:<hex>" on current GitHub releases
           best = AppRelease(
             tag: tag,
@@ -152,7 +154,7 @@ class AppUpdate {
         if (!found && (noApk == null || compare(version, noApk) > 0)) noApk = version;
       }
       if (best != null) return UpdateCheck(best, 'PEK TV ${best.version} is available (you have $name).');
-      if (noApk != null) return UpdateCheck(null, 'Version $noApk is on GitHub but has no file ending in -release-$abi.apk attached, so it cannot be installed here.');
+      if (noApk != null) return UpdateCheck(null, 'Version $noApk is on GitHub but has no file ending in $suffix attached, so it cannot be installed here.');
       return UpdateCheck(null, "You're up to date ($name). No newer release was found on GitHub.");
     } on TimeoutException {
       return const UpdateCheck(null, 'GitHub did not answer in time. Check the internet connection and try again.');
@@ -167,7 +169,7 @@ class AppUpdate {
     final dir = Directory('${info?['cacheDir']}/update');
     if (dir.existsSync()) dir.deleteSync(recursive: true); // older downloads
     dir.createSync(recursive: true);
-    final file = File('${dir.path}/PEK-TV-${rel.version.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}.apk');
+    final file = File('${dir.path}/PEK-TV-${rel.version.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}.${Platform.isWindows ? 'zip' : 'apk'}');
 
     final client = http.Client();
     try {
