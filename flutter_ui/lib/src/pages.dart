@@ -517,7 +517,7 @@ class _ExitSettings extends StatelessWidget {
         ],
       ),
     );
-    if (yes == true) await PekPlayer.exitApp();
+    if (yes == true && context.mounted) await PekPlayer.exitAppCovered(context);
   }
 
   @override

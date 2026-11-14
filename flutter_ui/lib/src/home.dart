@@ -38,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
         });
         break;
       case 'exit':
-        await PekPlayer.exitApp();
+        await PekPlayer.exitAppCovered(context);
         break;
     }
   }
@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-    if (yes == true) await PekPlayer.exitApp();
+    if (yes == true && mounted) await PekPlayer.exitAppCovered(context);
   }
 
   @override

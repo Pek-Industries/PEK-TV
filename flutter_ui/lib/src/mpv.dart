@@ -3,6 +3,8 @@ import 'dart:async';
 import 'dart:ui' show Rect;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show BuildContext, ColoredBox, Colors, Navigator, PageRouteBuilder;
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter/services.dart';
 import 'api.dart' show Api;
 
@@ -142,6 +144,20 @@ class PekPlayer {
   }
 
   static Future<void> exitApp() => _host.invokeMethod('exit');
+
+  /// Exit with a black cover on screen first, so the page behind a closed dialog never flashes while Android tears the app down.
+  static Future<void> exitAppCovered(BuildContext context) async {
+    try {
+      unawaited(Navigator.of(context, rootNavigator: true).push(PageRouteBuilder<void>(
+        opaque: true,
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+        pageBuilder: (_, __, ___) => const ColoredBox(color: Colors.black),
+      )));
+      await SchedulerBinding.instance.endOfFrame;
+    } catch (_) {}
+    await exitApp();
+  }
 }
 
 /// What the screen / TV / receiver can do, and the switches for it (Settings > Video output / Audio output).

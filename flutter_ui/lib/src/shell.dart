@@ -325,7 +325,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (yes == true) await PekPlayer.exitApp();
+    if (yes == true && mounted) await PekPlayer.exitAppCovered(context);
   }
 
   @override

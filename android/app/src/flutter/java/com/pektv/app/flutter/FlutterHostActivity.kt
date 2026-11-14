@@ -802,11 +802,14 @@ class FlutterHostActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "exit" -> {
-                    mpv?.destroy()
                     result.success(null)
-                    finishAndRemoveTask()
+                    finishAndRemoveTask()   // close the window first: nothing may show while the player is torn down
+                    overridePendingTransition(0, 0)
                     // The server and the Python plugins run on their own threads; ending the process stops them.
-                    Handler(Looper.getMainLooper()).postDelayed({ Process.killProcess(Process.myPid()) }, 300)
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try { mpv?.destroy() } catch (_: Throwable) {}
+                        Process.killProcess(Process.myPid())
+                    }, 300)
                 }
                 else -> result.notImplemented()
             }
