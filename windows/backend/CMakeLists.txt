@@ -62,8 +62,54 @@ else()
     message(STATUS "PEK: torrent streaming OFF")
 endif()
 
-# SMB (libsmb2) and NFS (libnfs) are not built on Windows yet: the app then says "no SMB support" / "no NFS support" for those
-# network folder types, exactly as an Android build without those libraries does. FTP, WebDAV and DLNA work.
+# SMB (libsmb2) and NFS (libnfs) network folders, built from source like the Android build does (android/app/src/main/cpp/CMakeLists.txt).
+# The CI workflow clones them to windows/libsmb2 and windows/libnfs. When a folder is missing, or the workflow's retry removed it
+# because it would not build, that protocol is simply left out: the app then says "no SMB support" / "no NFS support" for it, exactly
+# as an Android build without the library does. FTP, WebDAV and DLNA do not depend on either.
+set(LIBSMB2_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../libsmb2)
+set(LIBNFS_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/../libnfs)
+
+if(EXISTS ${LIBSMB2_DIR}/CMakeLists.txt)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(ENABLE_LIBKRB5 OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${LIBSMB2_DIR} libsmb2 EXCLUDE_FROM_ALL)
+    target_sources(pek_server PRIVATE ${BACKEND}/vfs_smb.cpp)
+    target_include_directories(pek_server PRIVATE ${LIBSMB2_DIR}/include)
+    target_compile_definitions(pek_server PRIVATE PEK_SMB)   # PEK_SMB_SHARE_ENUM stays off, as on Android
+    target_link_libraries(pek_server PRIVATE smb2)
+    message(STATUS "PEK: SMB support ON (libsmb2)")
+else()
+    message(STATUS "PEK: SMB support OFF (windows/libsmb2 not found)")
+endif()
+
+if(EXISTS ${LIBNFS_DIR}/CMakeLists.txt)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(ENABLE_UTILS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_DOCUMENTATION OFF CACHE BOOL "" FORCE)
+    set(ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${LIBNFS_DIR} libnfs EXCLUDE_FROM_ALL)
+    target_sources(pek_server PRIVATE ${BACKEND}/vfs_nfs.cpp)
+    target_include_directories(pek_server PRIVATE ${LIBNFS_DIR}/include)
+    # libnfs keeps libnfs-raw-mount.h etc. in mount/, nfs/, ... and only copies them under nfsc/ on install, so mirror them into a
+    # generated nfsc/ folder (same trick as the Android build).
+    file(GLOB_RECURSE LIBNFS_RAW_HDRS ${LIBNFS_DIR}/libnfs-raw-*.h ${LIBNFS_DIR}/*/libnfs-raw-*.h)
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/libnfs_inc/nfsc)
+    foreach(h ${LIBNFS_RAW_HDRS})
+        get_filename_component(hn ${h} NAME)
+        if(NOT EXISTS ${LIBNFS_DIR}/include/nfsc/${hn})
+            configure_file(${h} ${CMAKE_BINARY_DIR}/libnfs_inc/nfsc/${hn} COPYONLY)
+        endif()
+    endforeach()
+    target_include_directories(pek_server PRIVATE ${CMAKE_BINARY_DIR}/libnfs_inc)
+    target_compile_definitions(pek_server PRIVATE PEK_NFS)
+    target_link_libraries(pek_server PRIVATE nfs)
+    message(STATUS "PEK: NFS support ON (libnfs)")
+else()
+    message(STATUS "PEK: NFS support OFF (windows/libnfs not found)")
+endif()
 
 # One self-contained DLL: no libc++ / OpenSSL / SQLite DLLs to ship next to it.
 target_link_options(pek_server PRIVATE -static)

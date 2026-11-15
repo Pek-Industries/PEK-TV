@@ -109,18 +109,39 @@ jobs:
             libtorrent-rasterbar:p
             boost:p
 
+      # SMB (libsmb2) and NFS (libnfs): cloned like the Android workflow does. A failed clone only means that protocol is left out.
+      - name: Clone libsmb2 (SMB shares)
+        continue-on-error: true
+        run: git clone --depth 1 https://github.com/sahlberg/libsmb2 windows/libsmb2
+
+      - name: Clone libnfs (NFS shares)
+        continue-on-error: true
+        run: git clone --depth 1 https://github.com/sahlberg/libnfs windows/libnfs
+
       - name: Build pek_server.dll
         shell: msys2 {0}
         run: |
           T=""
           [ "$WANT_TORRENT" = true ] && T="-DPEK_TORRENT=ON"
-          if ! { cmake -S windows/backend -B build/backend -G Ninja -DCMAKE_BUILD_TYPE=Release $T && cmake --build build/backend; }; then
-            if [ "$WANT_TORRENT" = true ]; then
-              echo "::error::The server did not build with torrent support. Not falling back silently: that would ship an app that cannot play torrents."
-              exit 1
+          build() { rm -rf build/backend; cmake -S windows/backend -B build/backend -G Ninja -DCMAKE_BUILD_TYPE=Release $T && cmake --build build/backend; }
+          # Full build first. If it fails, drop the optional network-folder libraries one at a time and retry, so a libsmb2 / libnfs
+          # problem can never stop the app from shipping. Torrents are never dropped silently (below).
+          if ! build; then
+            echo "::warning::Server build failed with SMB + NFS - retrying without NFS"
+            rm -rf windows/libnfs
+            if ! build; then
+              echo "::warning::Server build failed without NFS - retrying without SMB and NFS"
+              rm -rf windows/libsmb2
+              if ! build; then
+                if [ "$WANT_TORRENT" = true ]; then
+                  echo "::error::The server did not build with torrent support. Not falling back silently: that would ship an app that cannot play torrents."
+                fi
+                exit 1
+              fi
             fi
-            exit 1
           fi
+          [ -d windows/libsmb2 ] && echo "SMB: built in" || echo "::warning::SMB: NOT built in this server"
+          [ -d windows/libnfs ]  && echo "NFS: built in" || echo "::warning::NFS: NOT built in this server"
           ls -l build/backend/pek_server.dll
 
       # The DLLs pek_server.dll needs at run time (libtorrent, OpenSSL ...). Not shipping them = the app can not load the server.

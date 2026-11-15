@@ -63,7 +63,7 @@ The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the s
 - The server's own log is `%LOCALAPPDATA%\PEK TV\hesper\backend.log`.
 
 ## Not there yet on Windows
-SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Picture-in-picture,
+Picture-in-picture,
 asking the receiver which formats it supports (passthrough itself works, see below).
 
 ## Refresh-rate matching
@@ -163,3 +163,12 @@ windows/discord/arm64/discord_partner_sdk.lib   windows/discord/arm64/discord_pa
 `prepare-flutter-host.sh` copies the folder into the runner, `pek_runner.cmake` turns on `PEK_DISCORD_SDK` and links the `.lib` when the
 files for that CPU type exist (the build log says `PEK: Discord Rich Presence ON (x64)` or `OFF`), and `stage-assets.sh` ships the `.dll` next
 to the exe. A CPU type without its folder builds without Discord.
+
+## SMB and NFS network folders
+
+`pek_server.dll` is built with libsmb2 (SMB) and libnfs (NFS), the same libraries and shared sources (`backend/vfs_smb.cpp`,
+`backend/vfs_nfs.cpp`) as the Android build. The workflow clones them to `windows/libsmb2` and `windows/libnfs`; `windows/backend/CMakeLists.txt`
+builds them in when those folders exist. If a library will not compile, the workflow retries without it (NFS first, then SMB) and prints a
+`::warning::` line, so the app still ships; that protocol then says "no SMB support" / "no NFS support". Check the build log for
+`SMB: built in` / `NFS: built in`. For a local build, clone the two repos into `windows/` yourself (both folders are git-ignored).
+Share listing (`PEK_SMB_SHARE_ENUM`) is off, as on Android.
