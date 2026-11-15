@@ -1,5 +1,7 @@
 #include "pek_mpv.h"
 
+#include <cmath>
+
 #include <windows.h>
 
 #include <algorithm>
@@ -372,6 +374,25 @@ void Mpv::SendState() {
   d[flutter::EncodableValue("playing")] = flutter::EncodableValue(!paused_);
   d[flutter::EncodableValue("buffering")] = flutter::EncodableValue(cacheWait_ || !loaded_);
   Emit("state", std::move(d));
+  PushMedia();
+}
+
+// The media tile's copy of the state (see SetMediaCallback). Windows extrapolates the position while playing, so only a pause, a
+// buffering change or a jump of more than two seconds (a seek) needs telling.
+void Mpv::PushMedia() {
+  if (!onMedia_) return;
+  bool playing, buffering;
+  double pos, dur;
+  {
+    std::lock_guard<std::mutex> lock(mediaMutex_);
+    playing = !paused_ && loaded_ && !cacheWait_;
+    buffering = cacheWait_ || !loaded_;
+    pos = pushedPos_ = mediaPos_;
+    dur = duration_;
+    pushedPlaying_ = playing;
+    pushedAt_ = std::chrono::steady_clock::now();
+  }
+  onMedia_(!paused_, buffering, pos, dur);
 }
 
 void Mpv::SendTracks() {
@@ -437,6 +458,16 @@ void Mpv::EventLoop() {
       const std::string name = p->name;
       if (name == "time-pos" && p->format == MPV_FORMAT_DOUBLE && p->data) {
         double t = *static_cast<double*>(p->data);
+        if (onMedia_) {
+          bool jumped;
+          {
+            std::lock_guard<std::mutex> lock(mediaMutex_);
+            mediaPos_ = t;
+            const double expected = pushedPos_ + (pushedPlaying_ ? std::chrono::duration<double>(std::chrono::steady_clock::now() - pushedAt_).count() : 0.0);
+            jumped = loaded_ && std::fabs(t - expected) > 2.0;
+          }
+          if (jumped) PushMedia();
+        }
         if (lastTimeSent_ < 0 || t - lastTimeSent_ >= 0.25 || t < lastTimeSent_) {
           lastTimeSent_ = t;
           flutter::EncodableMap d;

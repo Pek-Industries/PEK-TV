@@ -150,6 +150,7 @@ jobs:
       - name: Stage app files
         env:
           PEK_PLUGIN_SIGNING_KEY: ${{ secrets.PEK_PLUGIN_SIGNING_KEY }}
+          PEK_ARCH: ${{ matrix.arch }}   # which windows/discord/<arch>/ DLL to ship
         run: bash windows/scripts/stage-assets.sh "$VERSION_NAME"
 
       # ---- Flutter ---------------------------------------------------------------

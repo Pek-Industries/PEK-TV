@@ -45,6 +45,11 @@ class Mpv {
   // Audio-only files (and a song's embedded cover) never report a rate.
   void SetFpsCallback(std::function<void(double)> fn) { onFps_ = std::move(fn); }
 
+  // Media keys for a film. [fn](playing, buffering, positionSec, durationSec) is called when play / pause / buffering changes and when the
+  // position jumps (a seek); between those Windows moves the tile's clock by itself. Called on mpv's event thread or the UI thread:
+  // the receiver hands the work to the UI thread. Set it before Surface().
+  void SetMediaCallback(std::function<void(bool, bool, double, double)> fn) { onMedia_ = std::move(fn); }
+
   // HDR. The picture reaches Flutter as an 8-bit texture, so HDR10 / HLG / PQ video cannot go to the screen untouched like on Android:
   // with this on, HDR video is tone-mapped to SDR (otherwise it looks grey and dull). Applies at once, also to the video now playing.
   void SetHdr(bool on);
@@ -117,6 +122,13 @@ class Mpv {
   bool frameWanted_ = false;
   std::thread eventThread_, renderThread_;
   std::function<void(double)> onFps_;
+  std::function<void(bool, bool, double, double)> onMedia_;
+  void PushMedia();
+  std::mutex mediaMutex_;
+  double mediaPos_ = 0;                                  // latest time-pos
+  double pushedPos_ = 0;                                 // what the tile was last told
+  bool pushedPlaying_ = false;
+  std::chrono::steady_clock::time_point pushedAt_{};
 
   std::mutex sinkMutex_;
   std::shared_ptr<flutter::EventSink<flutter::EncodableValue>> sink_;

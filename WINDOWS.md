@@ -63,9 +63,8 @@ The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the s
 - The server's own log is `%LOCALAPPDATA%\PEK TV\hesper\backend.log`.
 
 ## Not there yet on Windows
-SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Discord Rich Presence, Picture-in-picture,
-asking the receiver which formats it supports (passthrough itself works, see below). Media keys / the now-playing tile are for music
-only for now (a film does not answer the keys yet).
+SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Picture-in-picture,
+asking the receiver which formats it supports (passthrough itself works, see below).
 
 ## Refresh-rate matching
 **Settings > Video output > Match refresh rate** (on by default, like Android). When a video starts, `Mpv` reports its frame rate
@@ -87,6 +86,11 @@ keys of the keyboard or a headset work, and the volume flyout and the lock scree
 stop go to Dart (`music_session.dart` answers `remote`), which owns the queue. The app registers the id `PEKIndustries.PEKTV`
 (`main.cpp`) and the installer's Start menu shortcuts carry it, so the tile is named "PEK TV" with its icon (a portable copy shows the exe name).
 If Windows will not give a session the music still plays, only without the keys.
+
+**Films** use the same session. When a video is loaded (`pek/mpv load` while no song is current) the tile shows its title, and the play / pause
+keys and the seek bar control it; next, previous and stop are switched off for a film (the player screen decides what follows).
+`Mpv` reports play / pause / buffering changes and seeks through `SetMediaCallback`; the tile moves its own clock in between. The tile
+goes away when the player is closed (`pek/mpv destroy`). A song that starts takes the tile over.
 
 ## Sound settings and Audio output on Windows
 **Settings > Playback > Sound** (and the speaker / Equalizer panels in the players) work the same as on Android: audio delay, volume boost,
@@ -144,3 +148,18 @@ After one normal build, `bash windows/scripts/dev.sh` runs the app with `flutter
 `flutter_ui/lib/src/{platform,link_text,video_surface}.dart` (new), `mpv.dart`, `main.dart`, `voice.dart`, `plugin_host.dart`,
 `plugin_ui.dart`, `app_update.dart`, `dev_console.dart`, `news.dart` and a few more one-line `LinkText` swaps; `backend/server.cpp`,
 `media_scanner.cpp`, `discovery.cpp`, `vfs_ftp.cpp` (each change sits in `#ifdef _WIN32`).
+
+## Discord Rich Presence
+Same feature and same Dart code as Android (`discord.dart`, `discord_ui.dart`, DISCORD.md): a linked profile shows "Watching <title>" on its
+Discord profile. The Windows host is `windows/runner/pek_discord.cpp` (a port of `discord_presence.cpp`) behind the `pek/discord` channel.
+It needs the **Discord Social SDK for Windows**, which is not in the repo (the Android `.aar` is the only SDK file committed). Without it the
+app builds and runs as before and Settings says Discord is not supported in this build. To switch it on, take these from the SDK zip
+(`DiscordSocialSdk-<version>.zip`, the C++ one, from the developer portal) and commit them:
+```
+windows/discord/include/discordpp.h
+windows/discord/x64/discord_partner_sdk.lib     windows/discord/x64/discord_partner_sdk.dll
+windows/discord/arm64/discord_partner_sdk.lib   windows/discord/arm64/discord_partner_sdk.dll   (only if Discord ships an ARM64 build)
+```
+`prepare-flutter-host.sh` copies the folder into the runner, `pek_runner.cmake` turns on `PEK_DISCORD_SDK` and links the `.lib` when the
+files for that CPU type exist (the build log says `PEK: Discord Rich Presence ON (x64)` or `OFF`), and `stage-assets.sh` ships the `.dll` next
+to the exe. A CPU type without its folder builds without Discord.

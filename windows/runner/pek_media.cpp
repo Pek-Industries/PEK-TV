@@ -129,6 +129,11 @@ void MediaSession::Meta(const std::string& title, const std::string& artist, con
   if (!s.Ensure()) return;
   try {
     s.smtc.IsEnabled(true);
+    s.smtc.IsPlayEnabled(true);
+    s.smtc.IsPauseEnabled(true);
+    s.smtc.IsStopEnabled(true);
+    s.smtc.IsNextEnabled(true);       // a film switched these off (Video)
+    s.smtc.IsPreviousEnabled(true);
     auto du = s.smtc.DisplayUpdater();
     du.Type(wm::MediaPlaybackType::Music);
     auto mp = du.MusicProperties();
@@ -140,6 +145,26 @@ void MediaSession::Meta(const std::string& title, const std::string& artist, con
       du.Thumbnail(nullptr);   // the previous song's cover must not stay while the new one downloads
       s.FetchArt(artUrl);
     }
+    du.Update();
+  } catch (...) {}
+}
+
+void MediaSession::Video(const std::string& title) {
+  Impl& s = *impl_;
+  if (!s.Ensure()) return;
+  try {
+    ++s.artGen;
+    s.artUrl.clear();
+    s.smtc.IsEnabled(true);
+    s.smtc.IsPlayEnabled(true);
+    s.smtc.IsPauseEnabled(true);
+    s.smtc.IsStopEnabled(false);
+    s.smtc.IsNextEnabled(false);
+    s.smtc.IsPreviousEnabled(false);
+    auto du = s.smtc.DisplayUpdater();
+    du.Type(wm::MediaPlaybackType::Video);
+    du.VideoProperties().Title(winrt::to_hstring(title));
+    du.Thumbnail(nullptr);
     du.Update();
   } catch (...) {}
 }

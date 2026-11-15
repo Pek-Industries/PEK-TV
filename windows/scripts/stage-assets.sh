@@ -58,6 +58,10 @@ cp "$ROOT"/assets/bundled/voice/stt/* "$S/voice/stt/"
 cp "$ROOT/build/backend/pek_server.dll" "$S/"
 # DLLs pek_server.dll loads at run time (libtorrent, OpenSSL, libc++ ...), collected by collect-server-deps.sh in the MSYS2 shell.
 if ls "$ROOT"/build/backend/deps/*.dll >/dev/null 2>&1; then cp "$ROOT"/build/backend/deps/*.dll "$S/"; else echo "::warning::build/backend/deps is empty: run windows/scripts/collect-server-deps.sh in the MSYS2 shell, or pek_server.dll may not load on other PCs."; fi
+# Discord Rich Presence: the Social SDK's DLL for this CPU type, when the SDK is in windows/discord/ (DISCORD.md). The exe is linked
+# against it only in that case (pek_runner.cmake), so the two always go together.
+D="$ROOT/windows/discord/${PEK_ARCH:-x64}/discord_partner_sdk.dll"
+if [ -s "$D" ]; then cp "$D" "$S/"; else echo "Discord SDK dll not in windows/discord/${PEK_ARCH:-x64}: this build has no Discord support."; fi
 cp "$ROOT/windows/libmpv/libmpv-2.dll" "$S/"
 cp "$ROOT/windows/ffmpeg/ffprobe.exe" "$S/"
 echo "$VERSION" > "$S/version.txt"

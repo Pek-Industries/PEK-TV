@@ -22,6 +22,10 @@ class MediaSession {
   MediaSession(HWND window, PostFn post, RemoteFn onRemote);
   ~MediaSession();
 
+  // A film is playing: the tile shows its title and the play / pause keys and the seek bar work (next / previous / stop are switched off:
+  // the player screen, not the keys, decides what comes after a film). UI thread only.
+  void Video(const std::string& title);
+
   // The three calls mirror pek/music from Dart (music_session.dart). UI thread only.
   void Meta(const std::string& title, const std::string& artist, const std::string& album, const std::string& artUrl);
   void State(bool active, bool buffering, double positionSec, double durationSec);

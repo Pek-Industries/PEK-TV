@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 
+#include "pek_discord.h"
 #include "pek_display.h"
 #include "pek_media.h"
 #include "pek_mpv.h"
@@ -262,6 +263,7 @@ class Host {
   std::unique_ptr<MediaSession> media_;
   flutter::MethodChannel<EncodableValue>* musicChannel_ = nullptr;   // owned by channels_; Dart's next / prev / stop go out through it
   bool musicLive_ = false;              // Dart sent a song (meta) and has not closed the queue (end)
+  bool videoLive_ = false;              // a film was loaded (pek/mpv load) and its player has not been closed (destroy)
 
   fs::path exeDir_, root_, cache_;
   std::string token_;
@@ -317,6 +319,9 @@ void Host::Start() {
 
   mpv_ = std::make_unique<Mpv>(reg_->texture_registrar(), [this](std::function<void()> fn) { Post(std::move(fn)); }, exeDir_.wstring());
 
+  mpv_->SetMediaCallback([this](bool active, bool buffering, double pos, double dur) {
+    Post([this, active, buffering, pos, dur] { if (videoLive_) Media().State(active, buffering, pos, dur); });
+  });
   mpv_->SetFpsCallback([this](double fps) { Post([this, fps] { OnFps(fps); }); });   // from mpv's event thread to the UI thread
 
   prefsFile_ = base / L"output.ini";
@@ -337,6 +342,7 @@ void Host::Stop() {
     pyProc_ = nullptr;
   }
   if (mpv_) mpv_->Shutdown();
+  discord::Disconnect();   // the profile stops saying "Watching" when the app closes
   media_.reset();       // takes the media keys back out of Windows
   display_.Reset();     // the screen gets its own refresh rate back
 }
@@ -367,11 +373,11 @@ MediaSession& Host::Media() {
 // Same split as FlutterMusic.kt: play, pause and seek are answered here at once (the sound is mpv's), while next, previous and
 // stop go to Dart, which owns the queue (music_session.dart answers "remote").
 void Host::OnRemote(const std::string& action, double seconds) {
-  if (!musicLive_) return;
+  if (!musicLive_ && !videoLive_) return;
   if (action == "play") mpv_->SetMpvProp("pause", "no");
   else if (action == "pause") mpv_->SetMpvProp("pause", "yes");
   else if (action == "seek") mpv_->Command({"seek", std::to_string(seconds), "absolute"});
-  else if ((action == "next" || action == "prev" || action == "stop") && musicChannel_) {
+  else if ((action == "next" || action == "prev" || action == "stop") && musicLive_ && musicChannel_) {
     EncodableMap args;
     args[EncodableValue("action")] = EncodableValue(action);
     musicChannel_->InvokeMethod("remote", std::make_unique<EncodableValue>(std::move(args)));
@@ -783,6 +789,10 @@ void Host::RegisterMpv() {
       }
       std::string err = mpv_->Load(Str(a, "url"), Num(a, "startSec"), Str(a, "title"), Str(a, "dvdDevice"));
       if (!err.empty()) { r->Error("mpv_error", err); return; }
+      if (!musicLive_) {   // a song is announced (pek/music meta) before its file is loaded, so this is a film
+        videoLive_ = true;
+        Media().Video(Str(a, "title"));
+      }
     }
     else if (m == "play") mpv_->SetMpvProp("pause", "no");
     else if (m == "pause") mpv_->SetMpvProp("pause", "yes");
@@ -794,7 +804,13 @@ void Host::RegisterMpv() {
     }
     else if (m == "addSubtitle") mpv_->Command({"sub-add", Str(a, "url"), "select", Str(a, "label")});
     else if (m == "setMiniRect" || m == "fullscreen") {}   // Dart moves the texture itself (video_surface.dart)
-    else if (m == "destroy") mpv_->Stop();
+    else if (m == "destroy") {
+      mpv_->Stop();
+      if (videoLive_) {   // the player screen was closed
+        videoLive_ = false;
+        if (media_) media_->End();
+      }
+    }
     else { r->NotImplemented(); return; }
     r->Success(Null());
   });
@@ -952,6 +968,7 @@ void Host::RegisterMisc() {
     const EncodableMap* a = Args(c);
     if (m == "meta") {
       musicLive_ = true;
+      videoLive_ = false;
       if (display_.Changed()) { KillTimer(msgWnd_, kRateResetTimer); display_.Reset(); }   // a song took over from a film
       Media().Meta(Str(a, "title"), Str(a, "artist"), Str(a, "album"), Str(a, "art"));
     }
@@ -960,7 +977,7 @@ void Host::RegisterMisc() {
     }
     else if (m == "end") {
       musicLive_ = false;
-      if (media_) media_->End();
+      if (media_ && !videoLive_) media_->End();   // a film that took the engine keeps its tile
     }
     else { r->NotImplemented(); return; }
     r->Success(Null());
@@ -995,11 +1012,25 @@ void Host::RegisterMisc() {
     }
     else r->Success(Null());
   });
+  // Discord Rich Presence (discord.dart): Dart owns the tokens, pek_discord.cpp passes them to the Discord Social SDK. "available" is false
+  // until the SDK's Windows files are in windows/discord/ (DISCORD.md). Same methods as FlutterDiscord.kt.
   Handle("pek/discord", [](const Call& c, std::unique_ptr<Result> r) {
     const std::string& m = c.method_name();
-    if (m == "available") r->Success(EncodableValue(false));   // the Discord Social SDK build is Android only for now
-    else if (m == "openUrl") r->Success(EncodableValue(OpenWithSystem(Str(Args(c), "url"), false)));
-    else r->Success(Null());
+    const EncodableMap* a = Args(c);
+    if (m == "available") r->Success(EncodableValue(discord::Available()));
+    else if (m == "connect") { discord::Connect(Str(a, "appId"), Str(a, "token")); r->Success(Null()); }
+    else if (m == "update") {
+      discord::Update(Str(a, "details"), Str(a, "state"), static_cast<int64_t>(Num(a, "startMs")), static_cast<int64_t>(Num(a, "endMs")));
+      r->Success(Null());
+    }
+    else if (m == "clear") { discord::Clear(); r->Success(Null()); }
+    else if (m == "disconnect") { discord::Disconnect(); r->Success(Null()); }
+    else if (m == "status") {
+      const int st = discord::Status();
+      r->Success(EncodableValue(std::string(st == 1 ? "connecting" : st == 2 ? "ready" : st == 3 ? "error" : "off")));
+    }
+    else if (m == "openUrl") r->Success(EncodableValue(OpenWithSystem(Str(a, "url"), false)));   // https only (OpenWithSystem)
+    else r->NotImplemented();
   });
 }
 
