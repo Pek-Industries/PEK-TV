@@ -154,6 +154,10 @@ jobs:
           channel: stable
           # Same pin as the Android workflow: raise both together.
           flutter-version: '3.47.9'
+          # Always the x64 SDK: Flutter publishes no Windows ARM64 SDK archive, so on the ARM64 runner
+          # the action fails with "Unable to determine Flutter version ... architecture: arm64".
+          # The x64 SDK runs fine under Windows-on-ARM emulation.
+          architecture: x64
           cache: true
 
       - name: Prepare the Windows project (build/windows_app)
@@ -165,7 +169,7 @@ jobs:
 
       - name: Build Windows app
         working-directory: build/windows_app
-        run: flutter build windows --release --target-platform windows-${{ matrix.arch }}
+        run: flutter build windows --release   # no --target-platform on Windows: the tool builds for the machine it runs on (x64 job -> x64, ARM64 job -> ARM64)
 
       - name: Package
         run: bash windows/scripts/package.sh ${{ matrix.arch }} "$VERSION_NAME" "$BUILD_TYPE"
