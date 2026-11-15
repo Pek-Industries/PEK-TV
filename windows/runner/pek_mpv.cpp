@@ -159,7 +159,7 @@ void Mpv::Command(const std::vector<std::string>& args) {
   api_->command(mpv_, argv.data());
 }
 
-void Mpv::SetProp(const std::string& name, const std::string& value) {
+void Mpv::SetMpvProp(const std::string& name, const std::string& value) {
   if (mpv_) api_->set_property_string(mpv_, name.c_str(), value.c_str());
 }
 

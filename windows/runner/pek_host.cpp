@@ -566,13 +566,13 @@ void Host::RegisterMpv() {
       std::string err = mpv_->Load(Str(a, "url"), Num(a, "startSec"), Str(a, "title"), Str(a, "dvdDevice"));
       if (!err.empty()) { r->Error("mpv_error", err); return; }
     }
-    else if (m == "play") mpv_->SetProp("pause", "no");
-    else if (m == "pause") mpv_->SetProp("pause", "yes");
+    else if (m == "play") mpv_->SetMpvProp("pause", "no");
+    else if (m == "pause") mpv_->SetMpvProp("pause", "yes");
     else if (m == "seek") mpv_->Command({"seek", std::to_string(Num(a, "sec")), "absolute"});
-    else if (m == "setAudio") mpv_->SetProp("aid", std::to_string(static_cast<int>(Num(a, "id"))));
+    else if (m == "setAudio") mpv_->SetMpvProp("aid", std::to_string(static_cast<int>(Num(a, "id"))));
     else if (m == "setSubtitle") {
       int id = static_cast<int>(Num(a, "id", -1));
-      mpv_->SetProp("sid", id < 0 ? "no" : std::to_string(id));
+      mpv_->SetMpvProp("sid", id < 0 ? "no" : std::to_string(id));
     }
     else if (m == "addSubtitle") mpv_->Command({"sub-add", Str(a, "url"), "select", Str(a, "label")});
     else if (m == "setMiniRect" || m == "fullscreen") {}   // Dart moves the texture itself (video_surface.dart)

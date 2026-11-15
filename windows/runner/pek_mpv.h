@@ -30,7 +30,7 @@ class Mpv {
   // "" = started, otherwise a message fit to show.
   std::string Load(const std::string& url, double startSec, const std::string& title, const std::string& dvdDevice);
   void Command(const std::vector<std::string>& args);
-  void SetProp(const std::string& name, const std::string& value);
+  void SetMpvProp(const std::string& name, const std::string& value);
   void Stop();
   void SetSink(std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> sink);
   void Shutdown();
