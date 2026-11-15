@@ -41,6 +41,30 @@ namespace {
 
 constexpr UINT kRunMsg = WM_APP + 41;
 
+// When LoadLibrary fails with "module not found" (126) the error does not say WHICH dependency is missing. Map the DLL without
+// resolving its imports, walk its import table and try each name: the ones that do not load are what the person (or CI) must ship.
+std::string MissingImports(const fs::path& dll) {
+  std::string out;
+  HMODULE m = LoadLibraryExW(dll.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+  if (!m) return out;
+  auto base = reinterpret_cast<BYTE*>(reinterpret_cast<uintptr_t>(m) & ~static_cast<uintptr_t>(3));
+  auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+  if (dos->e_magic == IMAGE_DOS_SIGNATURE) {
+    auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dir.VirtualAddress) {
+      for (auto d = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress); d->Name; ++d) {
+        const char* name = reinterpret_cast<const char*>(base + d->Name);
+        HMODULE h = LoadLibraryA(name);
+        if (h) FreeLibrary(h);
+        else out += (out.empty() ? "" : ", ") + std::string(name);
+      }
+    }
+  }
+  FreeLibrary(m);
+  return out;
+}
+
 // ---------------------------------------------------------------- small helpers
 std::string Utf8(const std::wstring& w) {
   if (w.empty()) return "";
@@ -184,6 +208,7 @@ class Host {
 
   // --- start-up work (Boot.kt) ---
   void Boot();
+  void BootFail(const std::string& why);
   void CopyBuiltIns();
   void StartPython();
   void PythonReader();
@@ -221,6 +246,8 @@ class Host {
   HMODULE server_ = nullptr;
   const char* (*mintGrant_)() = nullptr;
   std::string audioFx_ = "{}";
+  std::mutex bootMutex_;
+  std::string bootError_;   // why the server did not start ("" = fine / not known yet); read by pek/host bootStatus
 
   // python host
   HANDLE pyProc_ = nullptr, pyIn_ = nullptr, pyOut_ = nullptr;
@@ -305,19 +332,51 @@ void Host::CopyBuiltIns() {
   if (!stamp.empty()) { std::ofstream(marker, std::ios::trunc) << stamp; }
 }
 
+void Host::BootFail(const std::string& why) {
+  {
+    std::lock_guard<std::mutex> l(bootMutex_);
+    bootError_ = why;
+  }
+  std::ofstream(root_ / "boot.log", std::ios::app) << why << "\r\n";
+}
+
 void Host::Boot() {
+  std::error_code ec;
+  fs::remove(root_ / "boot.log", ec);
   CopyBuiltIns();
-  server_ = LoadLibraryW((exeDir_ / "pek_server.dll").c_str());
-  if (!server_) return;
+
+  // The server DLL and everything it needs sit next to the exe; look there first, whatever the working directory is.
+  SetDllDirectoryW(exeDir_.c_str());
+  const fs::path dll = exeDir_ / "pek_server.dll";
+  if (!fs::exists(dll, ec)) {
+    BootFail("pek_server.dll is not next to pek_tv.exe (" + Utf8(dll.wstring()) + "). The install is incomplete, or antivirus removed it.");
+    return;
+  }
+  server_ = LoadLibraryExW(dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+  if (!server_) {
+    const DWORD err = GetLastError();
+    const std::string missing = MissingImports(dll);
+    std::string why = "Windows could not load pek_server.dll (error " + std::to_string(err) + ").";
+    if (!missing.empty()) why += " It needs these files, which are missing: " + missing + ".";
+    else if (err == 193) why += " It was built for a different CPU type than this app.";
+    BootFail(why);
+    return;
+  }
   using StartFn = int (*)(const char*, const char*, const char*);
   auto start = reinterpret_cast<StartFn>(GetProcAddress(server_, "pek_start"));
   mintGrant_ = reinterpret_cast<const char* (*)()>(GetProcAddress(server_, "pek_mint_grant"));
-  if (!start) return;
-  std::error_code ec;
+  if (!start) {
+    BootFail("pek_server.dll loaded but has no pek_start function (wrong or damaged DLL).");
+    return;
+  }
   fs::path ffprobe = exeDir_ / "ffprobe.exe";
   const std::string rootUtf8 = Utf8(root_.generic_wstring());
   const std::string ffprobeUtf8 = fs::exists(ffprobe, ec) ? Utf8(ffprobe.wstring()) : std::string();
-  start(rootUtf8.c_str(), token_.c_str(), ffprobeUtf8.c_str());
+  const int rc = start(rootUtf8.c_str(), token_.c_str(), ffprobeUtf8.c_str());
+  if (rc < 0) {
+    BootFail("Port 8080 is already in use (or reserved by Windows), so the PEK TV server cannot start. Close the program that uses it (a second PEK TV, a dev server, Docker) and try again.");
+    return;
+  }
   SetEnvironmentVariableW(L"PEK_PORT", L"8080");
   StartPython();
 }
@@ -470,6 +529,20 @@ void Host::RegisterHost() {
     }
     else if (m == "torrentGrant") r->Success(mintGrant_ ? EncodableValue(std::string(mintGrant_())) : Null());
     else if (m == "apiToken") r->Success(EncodableValue(token_));
+    else if (m == "bootStatus") {
+      std::lock_guard<std::mutex> l(bootMutex_);
+      r->Success(EncodableValue(bootError_));
+    }
+    else if (m == "retryBoot") {   // "Try again" on the server-did-not-start screen
+      bool again = false;
+      {
+        std::lock_guard<std::mutex> l(bootMutex_);
+        again = !bootError_.empty();
+        bootError_.clear();
+      }
+      if (again) std::thread([this] { Boot(); }).detach();
+      r->Success(Null());
+    }
     else if (m == "allFilesAccess") r->Success(EncodableValue(true));   // a desktop app can open any folder the person can
     else if (m == "openAllFilesAccess") r->Success(EncodableValue(true));
     else if (m == "setMulticast") r->Success(Null());
@@ -644,14 +717,22 @@ std::string Host::InstallUpdate(const std::string& path) {
   // Windows 10+ ships tar.exe, which reads zip files. The script waits for this process to end, copies the new files over the
   // install folder and starts the app again.
   const fs::path script = cache / "apply_update.cmd";
+  // An installer (PEK-TV-<v>-windows-<arch>-setup.exe) upgrades the installed copy itself; a zip (portable copy) is unpacked
+  // and copied over the folder. Either way the script first waits for this process to end. chcp 65001 + UTF-8 paths keep a
+  // user name with accents working.
+  const bool isSetup = _wcsicmp(zip.extension().c_str(), L".exe") == 0;
   {
-    std::ofstream s(script, std::ios::trunc);
-    s << "@echo off\r\n"
-      << "tar -xf \"" << zip.string() << "\" -C \"" << dir.string() << "\"\r\n"
-      << ":wait\r\ntasklist /FI \"PID eq " << GetCurrentProcessId() << "\" 2>nul | find \"" << GetCurrentProcessId() << "\" >nul\r\n"
-      << "if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\n"
-      << "robocopy \"" << dir.string() << "\" \"" << exeDir_.string() << "\" /E /NFL /NDL /NJH /NJS /NP >nul\r\n"
-      << "start \"\" \"" << (exeDir_ / "pek_tv.exe").string() << "\"\r\n";
+    std::ofstream s(script, std::ios::trunc | std::ios::binary);
+    s << "@echo off\r\nchcp 65001 >nul\r\n";
+    if (!isSetup) s << "tar -xf \"" << Utf8(zip.wstring()) << "\" -C \"" << Utf8(dir.wstring()) << "\"\r\n";
+    s << ":wait\r\ntasklist /FI \"PID eq " << GetCurrentProcessId() << "\" 2>nul | find \"" << GetCurrentProcessId() << "\" >nul\r\n"
+      << "if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\n";
+    if (isSetup) {
+      s << "\"" << Utf8(zip.wstring()) << "\" /SILENT /SUPPRESSMSGBOXES /NOCANCEL /NORESTART /relaunch=1\r\n";
+    } else {
+      s << "robocopy \"" << Utf8(dir.wstring()) << "\" \"" << Utf8(exeDir_.wstring()) << "\" /E /NFL /NDL /NJH /NJS /NP >nul\r\n"
+        << "start \"\" \"" << Utf8((exeDir_ / "pek_tv.exe").wstring()) << "\"\r\n";
+    }
   }
   STARTUPINFOW si{};
   si.cb = sizeof si;
@@ -684,6 +765,8 @@ void Host::RegisterMisc() {
       d[EncodableValue("versionName")] = EncodableValue(v.empty() ? std::string("0.0.0-dev.local") : v);
       d[EncodableValue("versionCode")] = EncodableValue(0);
       d[EncodableValue("debuggable")] = EncodableValue(false);
+      std::error_code ue;
+      d[EncodableValue("windowsInstaller")] = EncodableValue(fs::exists(exeDir_ / "unins000.exe", ue));   // made by the Inno Setup installer
 #if defined(_M_ARM64)
       d[EncodableValue("windowsArch")] = EncodableValue("arm64");
 #else

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show ValueNotifier, debugPrint;
@@ -84,17 +85,39 @@ class Api {
     return j;
   }
 
-  /// MainActivity starts the server before opening this screen, so this normally succeeds on the first try.
+  /// Why the server did not start, when the host knows (Windows: pek_server.dll missing or not loadable, port 8080 taken). '' = unknown.
+  static String bootError = '';
+
+  /// MainActivity starts the server before opening this screen, so this normally succeeds on the first try. On Windows the host
+  /// reports a failed start (bootStatus), so the screen says why at once instead of after the full wait.
   static Future<bool> waitForServer() async {
     await loadToken();
+    bootError = '';
     for (var i = 0; i < 60; i++) {
       try {
         final r = await _client.get(Uri.parse('$base/api/status')).timeout(const Duration(seconds: 2));
         if (r.statusCode == 200) return true;
       } catch (_) {}
+      if (Platform.isWindows && i >= 2) {
+        try {
+          final why = await _hostChannel.invokeMethod<String>('bootStatus') ?? '';
+          if (why.isNotEmpty) {
+            bootError = why;
+            return false;
+          }
+        } catch (_) {}
+      }
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
     return false;
+  }
+
+  /// Windows: starts the server again after a failed start ("Try again").
+  static Future<void> retryBoot() async {
+    if (!Platform.isWindows) return;
+    try {
+      await _hostChannel.invokeMethod<void>('retryBoot');
+    } catch (_) {}
   }
 
   /// POST /api/rescan. Returns null when the scan started, or the seconds to wait when the server said "too soon" (429).

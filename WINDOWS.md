@@ -10,11 +10,14 @@ exists only for 64-bit Intel/AMD (x64) and 64-bit ARM (arm64). So the same "one 
 
 | File | For |
 |---|---|
-| `PEK-TV-<version>-windows-x64.zip`   | normal PCs (Intel / AMD, 64-bit) |
-| `PEK-TV-<version>-windows-arm64.zip` | Windows on ARM (Snapdragon / Copilot+ PCs) |
+| `PEK-TV-<version>-windows-x64-setup.exe`   | **the installer** for normal PCs (Intel / AMD, 64-bit) |
+| `PEK-TV-<version>-windows-arm64-setup.exe` | the installer for Windows on ARM (Snapdragon / Copilot+ PCs) |
+| `PEK-TV-<version>-windows-x64.zip` / `-arm64.zip` | portable copy: unzip into a folder you can write to and run `pek_tv.exe` |
 
-Unzip anywhere (a folder you can write to, so the app can update itself) and run `pek_tv.exe`. Data lives in `%LOCALAPPDATA%\PEK TV`.
-The file name ends in `-windows-<arch>.zip` because that is what the in-app updater looks for (`app_update.dart`).
+Run the setup program: it installs for the current user (no administrator prompt; the wizard can switch to "all users"), adds a Start menu
+entry (and an optional desktop shortcut) and an uninstaller. Data lives in `%LOCALAPPDATA%\PEK TV` and is kept when the app is uninstalled.
+The file names end in `-windows-<arch>-setup.exe` / `-windows-<arch>.zip` because that is what the in-app updater looks for
+(`app_update.dart`): an installed copy (it has `unins000.exe` beside the exe) updates through the setup program, a portable copy through the zip.
 
 ## What is in `windows/`
 ```
@@ -27,7 +30,8 @@ windows/
   backend/                   builds backend/ as pek_server.dll (CMake, MSYS2 clang) + dll_entry.cpp (= jni_entry.cpp)
     compat/                  POSIX shims (poll, ifaddrs, strptime, ...) so the shared backend sources are used as they are
   python/pek_host.py         runs the plugins (embeddable Python) and answers pek/plugins "call"
-  scripts/                   fetch-libmpv / fetch-ffprobe / fetch-python / stage-assets / prepare-flutter-host / package
+  installer/pek_tv.iss       the Inno Setup script (the setup program)
+  scripts/                   fetch-libmpv / fetch-ffprobe / fetch-python / collect-server-deps / stage-assets / prepare-flutter-host / package / make-installer
   pek_runner.cmake           added to the generated runner CMakeLists.txt
 ```
 `windows/flutter/`, `win32_window.*` and the rest of the standard runner are NOT stored: `scripts/prepare-flutter-host.sh` lets
@@ -50,19 +54,35 @@ files above on top. The repo's `flutter_ui/` is never changed by the Windows bui
 - **ffprobe** ships as `ffprobe.exe`; the scanner starts it without a console window (`media_scanner.cpp`).
 - **Self-update** downloads the `-windows-<arch>.zip`, and a small script swaps the files after the app closes (`pek/update install`).
 
+## "The PEK server did not start"
+The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the same text to `%LOCALAPPDATA%\PEK TV\hesper\boot.log`:
+- **"needs these files, which are missing: ..."**: `pek_server.dll` was built against MSYS2 libraries (libtorrent, OpenSSL ...) that were not
+  shipped beside it. `windows/scripts/collect-server-deps.sh` (run in the MSYS2 shell after the server is built) copies them and
+  `stage-assets.sh` ships them.
+- **"Port 8080 is already in use"**: another program (a second PEK TV, a dev server, Docker, a Windows-reserved port range) holds the port.
+- The server's own log is `%LOCALAPPDATA%\PEK TV\hesper\backend.log`.
+
 ## Not there yet on Windows
 SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Discord Rich Presence, Picture-in-picture,
 HDR / refresh-rate matching, Dolby/DTS passthrough and the audio effects (stored, not applied), media keys / now-playing tile.
 
 ## Build
-CI does everything: Actions > "Build PEK TV (Windows)". Locally (Git Bash, MSYS2 CLANG64 for the server, Flutter on PATH):
+CI does everything: Actions > "Build PEK TV (Windows)". Locally: Git Bash, Flutter on PATH, 7-Zip, `gh` (or `LIBMPV_URL`), Inno Setup 6
+(`winget install JRSoftware.InnoSetup`) for the setup program, and MSYS2 CLANG64 for the server. First, **in the MSYS2 CLANG64 shell**:
 ```
-cmake -S windows/backend -B build/backend -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/backend
+cmake -S windows/backend -B build/backend -G Ninja -DCMAKE_BUILD_TYPE=Release -DPEK_TORRENT=ON && cmake --build build/backend
+bash windows/scripts/collect-server-deps.sh
+```
+then **in Git Bash**:
+```
 bash windows/scripts/fetch-libmpv.sh x86_64 && bash windows/scripts/fetch-ffprobe.sh win64 && bash windows/scripts/fetch-python.sh amd64
 bash tools/fetch-voice-model.sh && bash windows/scripts/stage-assets.sh 0.0.0-local
 bash windows/scripts/prepare-flutter-host.sh && (cd build/windows_app && flutter pub get && flutter build windows --release)
-bash windows/scripts/package.sh x64 0.0.0-local debug
+bash windows/scripts/package.sh x64 0.0.0-local debug      # dist/: the setup program and the zip (SKIP_INSTALLER=1 = zip only)
 ```
+
+## Hot reload
+After one normal build, `bash windows/scripts/dev.sh` runs the app with `flutter run`: edit `flutter_ui/lib/...`, press `r` (hot reload) or `R` (restart). C++ changes (`windows/runner`, `backend`) need a rebuild.
 
 ## Outside `windows/` (shared files touched)
 `flutter_ui/lib/src/{platform,link_text,video_surface}.dart` (new), `mpv.dart`, `main.dart`, `voice.dart`, `plugin_host.dart`,

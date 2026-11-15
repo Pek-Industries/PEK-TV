@@ -190,8 +190,18 @@ class _BootState extends State<_Boot> {
           body: Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               const Text('The PEK server did not start.'),
+              if (Api.bootError.isNotEmpty) ...[
+                SizedBox(height: rem / 2),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 640),
+                  child: Text(Api.bootError, textAlign: TextAlign.center),
+                ),
+              ],
               SizedBox(height: rem),
-              PekButtonRetry(onTap: () => setState(() => _ready = _start())),
+              PekButtonRetry(onTap: () async {
+                await Api.retryBoot();
+                if (mounted) setState(() => _ready = _start());
+              }),
             ]),
           ),
         );

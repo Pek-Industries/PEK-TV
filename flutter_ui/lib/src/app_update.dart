@@ -100,11 +100,14 @@ class AppUpdate {
       final name = '${info['versionName']}';
       final code = (info['versionCode'] as num?)?.toInt() ?? 0;
       final winArch = '${info['windowsArch'] ?? ''}'; // Windows host: 'x64' or 'arm64'
+      final winInstaller = info['windowsInstaller'] == true; // Windows: this copy was installed by the setup program (not unzipped)
       if (info['debuggable'] == true || name.endsWith('-debug') || name.contains('-dev.')) {
         return UpdateCheck(null, 'This is a debug or dev build ($name). Those never look for updates. Install a release build to test updating.');
       }
       final abi = winArch.isNotEmpty ? winArch : switch (code % 10) { 1 => 'armeabi-v7a', 2 => 'arm64-v8a', _ => null };
-      final suffix = winArch.isNotEmpty ? '-windows-$winArch.zip' : '-release-$abi.apk'; // Windows ships a zip per CPU type, Android an apk
+      // Windows ships a setup program and a portable zip per CPU type (an installed copy updates through the setup program, an
+      // unzipped copy through the zip), Android an apk.
+      final suffix = winArch.isNotEmpty ? (winInstaller ? '-windows-$winArch-setup.exe' : '-windows-$winArch.zip') : '-release-$abi.apk';
       if (abi == null) return UpdateCheck(null, 'This looks like a local build (version code $code), not an installed release, so it cannot update itself.');
 
       final r = await http
@@ -169,7 +172,8 @@ class AppUpdate {
     final dir = Directory('${info?['cacheDir']}/update');
     if (dir.existsSync()) dir.deleteSync(recursive: true); // older downloads
     dir.createSync(recursive: true);
-    final file = File('${dir.path}/PEK-TV-${rel.version.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}.${Platform.isWindows ? 'zip' : 'apk'}');
+    final ext = Platform.isWindows ? (rel.url.toLowerCase().endsWith('.exe') ? 'exe' : 'zip') : 'apk';
+    final file = File('${dir.path}/PEK-TV-${rel.version.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}.$ext');
 
     final client = http.Client();
     try {
