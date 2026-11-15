@@ -1,6 +1,7 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
+#include <shobjidl.h>
 
 #include "flutter_window.h"
 #include "utils.h"
@@ -10,6 +11,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev, _In_ wch
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
     CreateAndAttachConsole();
   }
+
+  // One name for the app in Windows: the media tile (volume flyout / lock screen) shows it, and the Start menu shortcut made by the
+  // installer carries the same id (installer/pek_tv.iss), so the tile reads "PEK TV" with its icon.
+  ::SetCurrentProcessExplicitAppUserModelID(L"PEKIndustries.PEKTV");
 
   // COM for the speech output (SAPI) and the file dialogs.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

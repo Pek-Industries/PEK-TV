@@ -201,9 +201,9 @@ int64_t Mpv::Surface() {
   ApplyAudioFx();       // the saved sound settings (equalizer, boost, delay ...) and audio output choice are in force from the first video
   ApplyPassthrough();
 
-  const char* names[] = {"time-pos", "duration", "pause", "paused-for-cache", "track-list", "dwidth", "dheight", "video-params/gamma"};
-  const int fmts[] = {MPV_FORMAT_DOUBLE, MPV_FORMAT_DOUBLE, MPV_FORMAT_FLAG, MPV_FORMAT_FLAG, MPV_FORMAT_NONE, MPV_FORMAT_INT64, MPV_FORMAT_INT64, MPV_FORMAT_STRING};
-  for (int i = 0; i < 8; i++) api_->observe_property(mpv_, static_cast<uint64_t>(i + 1), names[i], fmts[i]);
+  const char* names[] = {"time-pos", "duration", "pause", "paused-for-cache", "track-list", "dwidth", "dheight", "video-params/gamma", "container-fps"};
+  const int fmts[] = {MPV_FORMAT_DOUBLE, MPV_FORMAT_DOUBLE, MPV_FORMAT_FLAG, MPV_FORMAT_FLAG, MPV_FORMAT_NONE, MPV_FORMAT_INT64, MPV_FORMAT_INT64, MPV_FORMAT_STRING, MPV_FORMAT_DOUBLE};
+  for (int i = 0; i < 9; i++) api_->observe_property(mpv_, static_cast<uint64_t>(i + 1), names[i], fmts[i]);
 
   if (!StartRender(wantGpu_ && !gpuFailed_)) return -1;   // the renderer lives on its own thread (a GL context belongs to one thread)
 
@@ -341,6 +341,7 @@ void Mpv::ApplyPassthrough() {
 
 void Mpv::Stop() {
   Command({"stop"});
+  if (onFps_) onFps_(0);
   std::lock_guard<std::mutex> lock(frameMutex_);
   std::fill(front_.begin(), front_.end(), 0);   // the last picture must not stay on screen
   if (textureId_ >= 0) textures_->MarkTextureFrameAvailable(textureId_);
@@ -429,6 +430,7 @@ void Mpv::EventLoop() {
       auto* ef = static_cast<mpv_event_end_file*>(e->data);
       if (ef && ef->reason == 0) Emit("ended", {});
       else if (ef && ef->reason == 4) Emit("error", {});
+      if (onFps_) onFps_(0);   // the screen goes back to its own rate (the host waits a moment first: the next episode may need the same one)
     } else if (e->event_id == EV_PROPERTY_CHANGE) {
       auto* p = static_cast<mpv_event_property*>(e->data);
       if (!p || !p->name) continue;
@@ -450,6 +452,12 @@ void Mpv::EventLoop() {
       } else if (name == "paused-for-cache" && p->format == MPV_FORMAT_FLAG && p->data) {
         cacheWait_ = *static_cast<int*>(p->data) != 0;
         SendState();
+      } else if (name == "container-fps") {
+        if (onFps_ && p->format == MPV_FORMAT_DOUBLE && p->data) {
+          const double fps = *static_cast<double*>(p->data);
+          // A cover picture inside a song is a "video" with a made-up rate: not a reason to switch the screen.
+          if (fps > 0 && GetString("current-tracks/video/albumart") != "yes") onFps_(fps);
+        }
       } else if (name == "track-list") {
         if (loaded_) SendTracks();
       } else if (name == "video-params/gamma") {

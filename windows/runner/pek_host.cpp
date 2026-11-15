@@ -29,6 +29,8 @@
 #include <thread>
 #include <vector>
 
+#include "pek_display.h"
+#include "pek_media.h"
 #include "pek_mpv.h"
 
 namespace fs = std::filesystem;
@@ -42,6 +44,7 @@ namespace pek {
 namespace {
 
 constexpr UINT kRunMsg = WM_APP + 41;
+constexpr UINT_PTR kRateResetTimer = 42;   // puts the screen back to its own refresh rate a moment after a video ends
 
 // When LoadLibrary fails with "module not found" (126) the error does not say WHICH dependency is missing. Map the DLL without
 // resolving its imports, walk its import table and try each name: the ones that do not load are what the person (or CI) must ship.
@@ -223,6 +226,9 @@ class Host {
   void LoadOutputPrefs();
   void SaveOutputPrefs();
   void RegisterMisc();
+  void OnFps(double fps);
+  void OnRemote(const std::string& action, double seconds);
+  MediaSession& Media();
   void Speak(const std::string& text, std::shared_ptr<Result> result);
   bool MicAllowed();
   void InstallVoice(const std::string& dir, const std::string& version, std::shared_ptr<Result> result);
@@ -230,10 +236,12 @@ class Host {
   std::string InstallUpdate(const std::string& path);
 
   template <typename F>
-  void Handle(const char* name, F fn) {
+  flutter::MethodChannel<EncodableValue>* Handle(const char* name, F fn) {
     auto ch = std::make_unique<flutter::MethodChannel<EncodableValue>>(reg_->messenger(), name, &flutter::StandardMethodCodec::GetInstance());
     ch->SetMethodCallHandler(fn);
+    flutter::MethodChannel<EncodableValue>* raw = ch.get();
     channels_.push_back(std::move(ch));
+    return raw;
   }
 
   flutter::PluginRegistrarWindows* reg_;
@@ -244,6 +252,16 @@ class Host {
   std::vector<std::unique_ptr<flutter::MethodChannel<EncodableValue>>> channels_;
   std::unique_ptr<flutter::EventChannel<EncodableValue>> events_;
   std::unique_ptr<Mpv> mpv_;
+
+  // refresh-rate matching (Settings > Video output > Match refresh rate)
+  DisplayRate display_;
+  std::atomic<bool> matchRate_{true};   // on unless the person switched it off (same default as Android)
+  double lastFps_ = 0;                  // frame rate of the video now playing (0 = none)
+
+  // media keys and the now-playing tile (pek/music)
+  std::unique_ptr<MediaSession> media_;
+  flutter::MethodChannel<EncodableValue>* musicChannel_ = nullptr;   // owned by channels_; Dart's next / prev / stop go out through it
+  bool musicLive_ = false;              // Dart sent a song (meta) and has not closed the queue (end)
 
   fs::path exeDir_, root_, cache_;
   std::string token_;
@@ -266,6 +284,11 @@ Host* g_host = nullptr;
 LRESULT CALLBACK Host::MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
   if (m == kRunMsg && g_host) {
     g_host->Drain();
+    return 0;
+  }
+  if (m == WM_TIMER && w == kRateResetTimer && g_host) {
+    KillTimer(h, kRateResetTimer);
+    g_host->display_.Reset();
     return 0;
   }
   return DefWindowProcW(h, m, w, l);
@@ -294,6 +317,8 @@ void Host::Start() {
 
   mpv_ = std::make_unique<Mpv>(reg_->texture_registrar(), [this](std::function<void()> fn) { Post(std::move(fn)); }, exeDir_.wstring());
 
+  mpv_->SetFpsCallback([this](double fps) { Post([this, fps] { OnFps(fps); }); });   // from mpv's event thread to the UI thread
+
   prefsFile_ = base / L"output.ini";
   LoadOutputPrefs();
 
@@ -312,6 +337,45 @@ void Host::Stop() {
     pyProc_ = nullptr;
   }
   if (mpv_) mpv_->Shutdown();
+  media_.reset();       // takes the media keys back out of Windows
+  display_.Reset();     // the screen gets its own refresh rate back
+}
+
+// ---------------------------------------------------------------- refresh-rate matching (UI thread)
+void Host::OnFps(double fps) {
+  if (fps > 0) {
+    KillTimer(msgWnd_, kRateResetTimer);   // the next episode (or the same one again) is starting: stay where we are
+    lastFps_ = fps;
+    if (matchRate_ && !musicLive_) display_.Apply(top_, fps);
+  } else {
+    lastFps_ = 0;
+    // Not at once: a series moves on to the next file within a second or two, and a mode change blanks the screen twice.
+    if (display_.Changed()) SetTimer(msgWnd_, kRateResetTimer, 3000, nullptr);
+  }
+}
+
+// ---------------------------------------------------------------- media keys and the now-playing tile (UI thread)
+MediaSession& Host::Media() {
+  if (!media_) {
+    media_ = std::make_unique<MediaSession>(
+        top_, [this](std::function<void()> fn) { Post(std::move(fn)); },
+        [this](const std::string& action, double seconds) { Post([this, action, seconds] { OnRemote(action, seconds); }); });   // the buttons arrive on a worker thread
+  }
+  return *media_;
+}
+
+// Same split as FlutterMusic.kt: play, pause and seek are answered here at once (the sound is mpv's), while next, previous and
+// stop go to Dart, which owns the queue (music_session.dart answers "remote").
+void Host::OnRemote(const std::string& action, double seconds) {
+  if (!musicLive_) return;
+  if (action == "play") mpv_->SetMpvProp("pause", "no");
+  else if (action == "pause") mpv_->SetMpvProp("pause", "yes");
+  else if (action == "seek") mpv_->Command({"seek", std::to_string(seconds), "absolute"});
+  else if ((action == "next" || action == "prev" || action == "stop") && musicChannel_) {
+    EncodableMap args;
+    args[EncodableValue("action")] = EncodableValue(action);
+    musicChannel_->InvokeMethod("remote", std::make_unique<EncodableValue>(std::move(args)));
+  }
 }
 
 // ---------------------------------------------------------------- Boot: built-in files, server, plugins
@@ -638,6 +702,7 @@ constexpr bool kDefaultGpu = false;
 
 void Host::LoadOutputPrefs() {
   bool hdr = true;   // on unless the person switched it off (same default as Android)
+  bool matchRate = true;
   bool gpu = kDefaultGpu, flip = false;
   int maxSize = 0;   // Auto
   std::string audioFx = "{}";
@@ -646,6 +711,7 @@ void Host::LoadOutputPrefs() {
   std::string line;
   while (std::getline(in, line)) {
     if (line.rfind("hdr=", 0) == 0) hdr = line.size() > 4 && line[4] == '1';
+    else if (line.rfind("matchrate=", 0) == 0) matchRate = line.size() > 10 && line[10] == '1';
     else if (line.rfind("renderer=", 0) == 0) gpu = line.substr(9) == "gpu";
     else if (line.rfind("maxsize=", 0) == 0) {
       const std::string v = line.substr(8);
@@ -659,6 +725,7 @@ void Host::LoadOutputPrefs() {
       while (std::getline(ss, codec, ',')) if (!codec.empty()) passthrough.insert(codec);
     }
   }
+  matchRate_ = matchRate;
   if (mpv_) {
     mpv_->SetAudioFx(audioFx);   // libmpv is not started yet: they are applied when it is
     mpv_->SetPassthrough(passthrough);
@@ -675,13 +742,14 @@ void Host::SaveOutputPrefs() {
     std::ifstream in(prefsFile_);
     std::string line;
     while (std::getline(in, line))
-      if (!line.empty() && line.rfind("hdr=", 0) != 0 && line.rfind("renderer=", 0) != 0 && line.rfind("maxsize=", 0) != 0 &&
+      if (!line.empty() && line.rfind("hdr=", 0) != 0 && line.rfind("matchrate=", 0) != 0 && line.rfind("renderer=", 0) != 0 && line.rfind("maxsize=", 0) != 0 &&
           line.rfind("audiofx=", 0) != 0 && line.rfind("passthrough=", 0) != 0)
         keep.push_back(line);
   }
   std::ofstream out(prefsFile_, std::ios::trunc);
   if (!out) return;
   out << "hdr=" << (mpv_ && mpv_->Hdr() ? 1 : 0) << "\n";
+  out << "matchrate=" << (matchRate_ ? 1 : 0) << "\n";
   out << "renderer=" << (mpv_ && mpv_->WantGpu() ? "gpu" : "cpu") << "\n";
   static const char* const kSizes[] = {"auto", "1080", "1440", "2160"};
   out << "maxsize=" << kSizes[mpv_ ? mpv_->MaxSize() : 0] << "\n";
@@ -747,7 +815,7 @@ void Host::RegisterMpv() {
     const EncodableMap* a = Args(c);
     if (m == "video") {
       EncodableMap d;
-      d[EncodableValue("matchRate")] = EncodableValue(false);
+      d[EncodableValue("matchRate")] = EncodableValue(matchRate_.load());
       d[EncodableValue("hdr")] = EncodableValue(mpv_->Hdr());
       d[EncodableValue("displayHdr")] = EncodableValue(Mpv::DisplayHdr());
       d[EncodableValue("renderer")] = EncodableValue(std::string(mpv_->WantGpu() ? "gpu" : "cpu"));        // what the person chose
@@ -799,7 +867,18 @@ void Host::RegisterMpv() {
       SaveOutputPrefs();
       r->Success(Null());
     }
-    else if (m == "setMatchRate" || m == "setSubOverlay") r->Success(Null());
+    else if (m == "setMatchRate") {
+      matchRate_ = Flag(a, "on", false);
+      SaveOutputPrefs();
+      if (!matchRate_) {
+        KillTimer(msgWnd_, kRateResetTimer);
+        display_.Reset();                                  // switched off while a film plays: give the screen back now
+      } else if (lastFps_ > 0 && !musicLive_) {
+        display_.Apply(top_, lastFps_);                    // switched on while a film plays: match it now
+      }
+      r->Success(Null());
+    }
+    else if (m == "setSubOverlay") r->Success(Null());
     else r->NotImplemented();
   });
 }
@@ -866,7 +945,26 @@ void Host::RegisterMisc() {
     else if (m == "stopSpeak") r->Success(Null());
     else r->NotImplemented();
   });
-  Handle("pek/music", [](const Call&, std::unique_ptr<Result> r) { r->Success(Null()); });   // no media notification or widget on the desktop yet
+  // Media keys and the now-playing tile: meta {title, artist, album, art}, state {active, buffering, positionMs, durationMs} and end come
+  // from music_session.dart; the buttons go back as "remote" {action} (OnRemote). The Android counterpart is FlutterMusic.kt.
+  musicChannel_ = Handle("pek/music", [this](const Call& c, std::unique_ptr<Result> r) {
+    const std::string& m = c.method_name();
+    const EncodableMap* a = Args(c);
+    if (m == "meta") {
+      musicLive_ = true;
+      if (display_.Changed()) { KillTimer(msgWnd_, kRateResetTimer); display_.Reset(); }   // a song took over from a film
+      Media().Meta(Str(a, "title"), Str(a, "artist"), Str(a, "album"), Str(a, "art"));
+    }
+    else if (m == "state") {
+      if (musicLive_) Media().State(Flag(a, "active", false), Flag(a, "buffering", false), Num(a, "positionMs") / 1000.0, Num(a, "durationMs") / 1000.0);
+    }
+    else if (m == "end") {
+      musicLive_ = false;
+      if (media_) media_->End();
+    }
+    else { r->NotImplemented(); return; }
+    r->Success(Null());
+  });
   Handle("pek/pip", [](const Call& c, std::unique_ptr<Result> r) {
     if (c.method_name() == "supported" || c.method_name() == "enter") r->Success(EncodableValue(false));
     else r->Success(Null());

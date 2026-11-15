@@ -54,8 +54,8 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\PEK TV"; Filename: "{app}\pek_tv.exe"; IconFilename: "{app}\pek_tv.exe"
-Name: "{autodesktop}\PEK TV"; Filename: "{app}\pek_tv.exe"; IconFilename: "{app}\pek_tv.exe"; Tasks: desktopicon
+Name: "{autoprograms}\PEK TV"; Filename: "{app}\pek_tv.exe"; IconFilename: "{app}\pek_tv.exe"; AppUserModelID: "PEKIndustries.PEKTV"
+Name: "{autodesktop}\PEK TV"; Filename: "{app}\pek_tv.exe"; IconFilename: "{app}\pek_tv.exe"; AppUserModelID: "PEKIndustries.PEKTV"; Tasks: desktopicon
 
 [Run]
 ; After a normal install: the "Launch PEK TV" tick box on the last page. After an update from inside the app (silent, started

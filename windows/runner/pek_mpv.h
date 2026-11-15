@@ -40,6 +40,11 @@ class Mpv {
   void SetSink(std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> sink);
   void Shutdown();
 
+  // Refresh-rate matching. [fn] is called with the frame rate of the video as soon as mpv knows it (container-fps), and with 0 when
+  // the file ends or is stopped. Called on mpv's event thread: the receiver hands the work to the UI thread. Set it before Surface().
+  // Audio-only files (and a song's embedded cover) never report a rate.
+  void SetFpsCallback(std::function<void(double)> fn) { onFps_ = std::move(fn); }
+
   // HDR. The picture reaches Flutter as an 8-bit texture, so HDR10 / HLG / PQ video cannot go to the screen untouched like on Android:
   // with this on, HDR video is tone-mapped to SDR (otherwise it looks grey and dull). Applies at once, also to the video now playing.
   void SetHdr(bool on);
@@ -111,6 +116,7 @@ class Mpv {
   std::condition_variable wake_;
   bool frameWanted_ = false;
   std::thread eventThread_, renderThread_;
+  std::function<void(double)> onFps_;
 
   std::mutex sinkMutex_;
   std::shared_ptr<flutter::EventSink<flutter::EncodableValue>> sink_;

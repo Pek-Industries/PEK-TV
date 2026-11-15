@@ -64,7 +64,29 @@ The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the s
 
 ## Not there yet on Windows
 SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Discord Rich Presence, Picture-in-picture,
-refresh-rate matching, asking the receiver which formats it supports (passthrough itself works, see below), media keys / now-playing tile.
+asking the receiver which formats it supports (passthrough itself works, see below). Media keys / the now-playing tile are for music
+only for now (a film does not answer the keys yet).
+
+## Refresh-rate matching
+**Settings > Video output > Match refresh rate** (on by default, like Android). When a video starts, `Mpv` reports its frame rate
+(`container-fps`) and `pek_display.cpp` switches the screen the window is on to a mode that suits it: 24 / 23.976 fps -> 24 Hz, 25 -> 50 Hz,
+30 / 29.97 -> stays on 60 Hz (already a whole multiple), and so on up to five times the film's rate. The choice is `PickRefreshHz`
+(`pek_refresh.h`, no Windows dependencies; `pek_refresh_test.cpp`: `g++ -std=c++17 pek_refresh_test.cpp -o t && ./t`).
+- Only the refresh rate changes (same size and colour depth), and only to a mode the screen lists. Windows lists whole hertz, so a
+  23.976 Hz film gets the screen's 24 Hz mode.
+- The change is temporary (`CDS_FULLSCREEN`): Windows puts the person's own rate back if PEK TV is closed or crashes. PEK TV also puts it back
+  itself 3 seconds after the video ends (not at once, so an episode followed by another one does not flash the screen twice), when the
+  setting is switched off, and when a song starts.
+- Songs (and the cover picture inside them) never switch the screen. Saved in `output.ini` as `matchrate=1|0`.
+
+## Media keys and the now-playing tile
+`pek/music` is no longer a stub: `pek_media.cpp` registers a Windows `SystemMediaTransportControls` session for the window, the same job
+`FlutterMusic.kt` + `MusicService` do with a `MediaSession` on Android. While a song is current the play / pause / next / previous / stop
+keys of the keyboard or a headset work, and the volume flyout and the lock screen show the title, artist, album, cover and a seek bar
+(dragging it seeks). Play, pause and seek are answered in the host at once (`Host::OnRemote`, straight to libmpv); next, previous and
+stop go to Dart (`music_session.dart` answers `remote`), which owns the queue. The app registers the id `PEKIndustries.PEKTV`
+(`main.cpp`) and the installer's Start menu shortcuts carry it, so the tile is named "PEK TV" with its icon (a portable copy shows the exe name).
+If Windows will not give a session the music still plays, only without the keys.
 
 ## Sound settings and Audio output on Windows
 **Settings > Playback > Sound** (and the speaker / Equalizer panels in the players) work the same as on Android: audio delay, volume boost,
