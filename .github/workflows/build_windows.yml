@@ -148,17 +148,27 @@ jobs:
         run: bash windows/scripts/stage-assets.sh "$VERSION_NAME"
 
       # ---- Flutter ---------------------------------------------------------------
-      - name: Set up Flutter
+      - name: Set up Flutter (x64)
+        if: matrix.arch == 'x64'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           # Same pin as the Android workflow: raise both together.
           flutter-version: '3.47.9'
-          # Always the x64 SDK: Flutter publishes no Windows ARM64 SDK archive, so on the ARM64 runner
-          # the action fails with "Unable to determine Flutter version ... architecture: arm64".
-          # The x64 SDK runs fine under Windows-on-ARM emulation.
           architecture: x64
           cache: true
+
+      # Flutter publishes no Windows ARM64 SDK archive, so flutter-action cannot install one. An x64 SDK running
+      # under emulation builds x64 apps (the first ARM64 run proved it), so for ARM64 the SDK comes straight from git
+      # and runs natively on the ARM64 runner, which makes `flutter build windows` target ARM64.
+      - name: Set up Flutter (ARM64, from git)
+        if: matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics >/dev/null 2>&1 || true
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
 
       - name: Prepare the Windows project (build/windows_app)
         run: bash windows/scripts/prepare-flutter-host.sh
