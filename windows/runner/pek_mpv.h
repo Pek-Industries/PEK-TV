@@ -7,9 +7,11 @@
 #include <flutter/texture_registrar.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,14 +37,42 @@ class Mpv {
   void SetSink(std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> sink);
   void Shutdown();
 
+  // HDR. The picture reaches Flutter as an 8-bit texture, so HDR10 / HLG / PQ video cannot go to the screen untouched like on Android:
+  // with this on, HDR video is tone-mapped to SDR (otherwise it looks grey and dull). Applies at once, also to the video now playing.
+  void SetHdr(bool on);
+  bool Hdr() const { return hdrOn_; }
+  // Does Windows report an HDR-capable screen? (DisplayConfig "advanced colour" support; informational.)
+  static bool DisplayHdr();
+
+  // Rendering. false = the processor draws every frame (libmpv "sw" renderer, software decoding). true = the graphics card draws it
+  // (libmpv OpenGL renderer on a hidden WGL context, hardware decoding with copy-back, mpv's own shader tone mapping); the finished
+  // frame is read back into the pixel buffer Flutter shows. Applies to the next video. If the GPU renderer cannot start, the processor
+  // is used and GpuNote() says why.
+  void SetRenderer(bool gpu);
+  bool WantGpu() const { return wantGpu_; }
+  bool ActiveGpu() const { return activeGpu_; }
+  std::string GpuNote();
+  // Biggest picture handed to Flutter. 0 = Auto (the size of the screen the window is on, never more than the video itself; on the CPU
+  // renderer never more than 1920 x 1080), 1 = 1080p, 2 = 1440p, 3 = 4K. A video is only ever scaled down to it, never up.
+  void SetMaxSize(int mode);
+  int MaxSize() const { return maxMode_; }
+  void SetScreen(int w, int h);   // the screen the window is on, for Auto (the host calls it before each video)
+  void SetGlFlip(bool flip) { glFlip_ = flip ? 1 : 0; }   // escape hatch if a driver shows the GPU picture upside down
+
  private:
   struct Api;
   void EventLoop();
-  void RenderLoop();
+  void RenderMain(bool wantGpu, std::shared_ptr<std::promise<bool>> ready);
+  bool StartRender(bool gpu);
+  void StopRender();
   void Emit(const char* event, flutter::EncodableMap data);
   void SendTracks();
   void SendState();
   std::string GetString(const std::string& name);
+  void ApplyHdr();
+  void RefreshToneMap();
+  void Cap(bool gpu, int& capW, int& capH) const;
+  bool CanToneMap();
 
   flutter::TextureRegistrar* textures_;
   PostFn post_;
@@ -70,6 +100,20 @@ class Mpv {
   bool paused_ = false, cacheWait_ = false, loaded_ = false;
   double lastTimeSent_ = -1;
   double duration_ = 0;
+
+  std::atomic<bool> wantGpu_{false}, activeGpu_{false}, renderStop_{false}, gpuFailed_{false};
+  std::atomic<int> glFlip_{0};
+  std::atomic<int> maxMode_{0}, screenW_{0}, screenH_{0};
+  std::mutex noteMutex_;
+  std::string gpuNote_;
+
+  std::atomic<bool> hdrOn_{true};
+  std::mutex hdrMutex_;
+  std::string gamma_;                 // video-params/gamma of the file now loaded ("pq" / "hlg" = HDR)
+  std::atomic<bool> toneMapActive_{false}; // our tone-map filter chain is set on mpv
+  bool toneMapBroken_ = false;        // it did not produce a picture for this file: left off until the next file
+  int toneMapCapable_ = -1;           // -1 unknown, 0 libmpv has no zscale / tonemap filter, 1 it has
+  std::chrono::steady_clock::time_point toneMapSince_{};
 };
 
 }  // namespace pek

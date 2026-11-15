@@ -199,7 +199,15 @@ class PekPlayer {
 /// What the screen / TV / receiver can do, and the switches for it (Settings > Video output / Audio output).
 /// Lives in Kotlin (MpvController); every call can fail on a host without the player, so callers treat errors as "not available".
 class VideoOutput {
-  const VideoOutput({required this.matchRate, required this.hdr, required this.displayHdr, this.subOverlay = true});
+  const VideoOutput({required this.matchRate, required this.hdr, required this.displayHdr, this.subOverlay = true, this.hdrMode = '', this.renderer = '', this.rendererActive = '', this.rendererNote = '', this.maxSize = ''});
+  /// Windows only ('' elsewhere = the setting is not shown): biggest picture size, 'auto' | '1080' | '1440' | '2160'.
+  final String maxSize;
+  /// Windows only: '' = no choice (Android), 'cpu' / 'gpu' = what the person picked, rendererActive = what the last video really used.
+  final String renderer;
+  final String rendererActive;
+  final String rendererNote; // why the GPU was not used ("" = no problem)
+  /// '' = HDR is sent straight to the screen (Android). 'tonemap' = HDR video is converted to SDR with correct brightness (Windows).
+  final String hdrMode;
   final bool subOverlay; // text subtitles are drawn over HDR / smooth-mode video instead of switching to the normal renderer
   final bool matchRate;
   final bool hdr;
@@ -223,11 +231,18 @@ class PekOutput {
       hdr: m['hdr'] == true,
       displayHdr: m['displayHdr'] == true,
       subOverlay: m['subOverlay'] != false, // an older host does not send it: on
+      hdrMode: '${m['hdrMode'] ?? ''}',
+      renderer: '${m['renderer'] ?? ''}',
+      rendererActive: '${m['rendererActive'] ?? ''}',
+      rendererNote: '${m['rendererNote'] ?? ''}',
+      maxSize: '${m['maxSize'] ?? ''}',
     );
   }
 
   static Future<void> setMatchRate(bool on) => _c.invokeMethod('setMatchRate', {'on': on});
   static Future<void> setHdr(bool on) => _c.invokeMethod('setHdr', {'on': on});
+  static Future<void> setMaxSize(String size) => _c.invokeMethod('setMaxSize', {'size': size});
+  static Future<void> setRenderer(bool gpu) => _c.invokeMethod('setRenderer', {'on': gpu});
   static Future<void> setSubOverlay(bool on) => _c.invokeMethod('setSubOverlay', {'on': on});
 
   static Future<AudioOutput> audio() async {

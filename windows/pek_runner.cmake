@@ -6,4 +6,4 @@ set_source_files_properties("pek_host.cpp" "pek_mpv.cpp" PROPERTIES COMPILE_OPTI
 # pek_host.cpp / flutter_window.cpp use flutter::PluginRegistrarWindows. That class lives in the plugin wrapper library,
 # which the template runner does not link (it only links flutter_wrapper_app), hence the unresolved PluginRegistrar symbols.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter_wrapper_plugin)
-target_link_libraries(${BINARY_NAME} PRIVATE "bcrypt.lib" "shell32.lib" "ole32.lib" "sapi.lib" "advapi32.lib" "comdlg32.lib" "user32.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "bcrypt.lib" "shell32.lib" "ole32.lib" "sapi.lib" "advapi32.lib" "comdlg32.lib" "user32.lib" "gdi32.lib" "opengl32.lib")

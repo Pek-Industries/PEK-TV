@@ -218,6 +218,8 @@ class Host {
   void RegisterHost();
   void RegisterPlugins();
   void RegisterMpv();
+  void LoadOutputPrefs();
+  void SaveOutputPrefs();
   void RegisterMisc();
   void Speak(const std::string& text, std::shared_ptr<Result> result);
   bool MicAllowed();
@@ -246,6 +248,7 @@ class Host {
   HMODULE server_ = nullptr;
   const char* (*mintGrant_)() = nullptr;
   std::string audioFx_ = "{}";
+  fs::path prefsFile_;   // small settings kept between runs (HDR on / off)
   std::mutex bootMutex_;
   std::string bootError_;   // why the server did not start ("" = fine / not known yet); read by pek/host bootStatus
 
@@ -289,6 +292,9 @@ void Host::Start() {
   token_ = RandomHex(32);
 
   mpv_ = std::make_unique<Mpv>(reg_->texture_registrar(), [this](std::function<void()> fn) { Post(std::move(fn)); }, exeDir_.wstring());
+
+  prefsFile_ = base / L"output.ini";
+  LoadOutputPrefs();
 
   RegisterHost();
   RegisterPlugins();
@@ -624,6 +630,51 @@ void Host::RegisterPlugins() {
   });
 }
 
+// ---------------------------------------------------------------- saved output settings
+// false: new installs start on the CPU renderer (the proven path) until GPU rendering has been tried on real PCs. Flip to true to make the
+// GPU renderer the default; it still falls back to the CPU by itself on a PC that cannot run it.
+constexpr bool kDefaultGpu = false;
+
+void Host::LoadOutputPrefs() {
+  bool hdr = true;   // on unless the person switched it off (same default as Android)
+  bool gpu = kDefaultGpu, flip = false;
+  int maxSize = 0;   // Auto
+  std::ifstream in(prefsFile_);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.rfind("hdr=", 0) == 0) hdr = line.size() > 4 && line[4] == '1';
+    else if (line.rfind("renderer=", 0) == 0) gpu = line.substr(9) == "gpu";
+    else if (line.rfind("maxsize=", 0) == 0) {
+      const std::string v = line.substr(8);
+      maxSize = v == "1080" ? 1 : v == "1440" ? 2 : v == "2160" ? 3 : 0;
+    }
+    else if (line.rfind("glflip=", 0) == 0) flip = line.size() > 7 && line[7] == '1';   // hand-edited: GPU picture upside down on some driver
+  }
+  if (mpv_) {
+    mpv_->SetHdr(hdr);
+    mpv_->SetRenderer(gpu);
+    mpv_->SetGlFlip(flip);
+    mpv_->SetMaxSize(maxSize);
+  }
+}
+
+void Host::SaveOutputPrefs() {
+  std::vector<std::string> keep;   // lines this code does not own (glflip=...) survive a save
+  {
+    std::ifstream in(prefsFile_);
+    std::string line;
+    while (std::getline(in, line))
+      if (!line.empty() && line.rfind("hdr=", 0) != 0 && line.rfind("renderer=", 0) != 0 && line.rfind("maxsize=", 0) != 0) keep.push_back(line);
+  }
+  std::ofstream out(prefsFile_, std::ios::trunc);
+  if (!out) return;
+  out << "hdr=" << (mpv_ && mpv_->Hdr() ? 1 : 0) << "\n";
+  out << "renderer=" << (mpv_ && mpv_->WantGpu() ? "gpu" : "cpu") << "\n";
+  static const char* const kSizes[] = {"auto", "1080", "1440", "2160"};
+  out << "maxsize=" << kSizes[mpv_ ? mpv_->MaxSize() : 0] << "\n";
+  for (const auto& l : keep) out << l << "\n";
+}
+
 // ---------------------------------------------------------------- pek/mpv, pek/output
 void Host::RegisterMpv() {
   Handle("pek/mpv", [this](const Call& c, std::unique_ptr<Result> r) {
@@ -636,6 +687,13 @@ void Host::RegisterMpv() {
       return;
     }
     if (m == "load") {
+      {
+        // the screen the window is on, for "Maximum picture size: Auto"
+        MONITORINFO mi{};
+        mi.cbSize = sizeof mi;
+        if (GetMonitorInfoW(MonitorFromWindow(top_, MONITOR_DEFAULTTONEAREST), &mi))
+          mpv_->SetScreen(mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top);
+      }
       std::string err = mpv_->Load(Str(a, "url"), Num(a, "startSec"), Str(a, "title"), Str(a, "dvdDevice"));
       if (!err.empty()) { r->Error("mpv_error", err); return; }
     }
@@ -671,8 +729,14 @@ void Host::RegisterMpv() {
     if (m == "video") {
       EncodableMap d;
       d[EncodableValue("matchRate")] = EncodableValue(false);
-      d[EncodableValue("hdr")] = EncodableValue(false);
-      d[EncodableValue("displayHdr")] = EncodableValue(false);
+      d[EncodableValue("hdr")] = EncodableValue(mpv_->Hdr());
+      d[EncodableValue("displayHdr")] = EncodableValue(Mpv::DisplayHdr());
+      d[EncodableValue("renderer")] = EncodableValue(std::string(mpv_->WantGpu() ? "gpu" : "cpu"));        // what the person chose
+      d[EncodableValue("rendererActive")] = EncodableValue(std::string(mpv_->ActiveGpu() ? "gpu" : "cpu"));   // what the last video used
+      static const char* const kSizes[] = {"auto", "1080", "1440", "2160"};
+      d[EncodableValue("maxSize")] = EncodableValue(std::string(kSizes[mpv_->MaxSize()]));
+      d[EncodableValue("rendererNote")] = EncodableValue(mpv_->GpuNote());                                    // why the GPU was not used, if so
+      d[EncodableValue("hdrMode")] = EncodableValue(std::string("tonemap"));   // Windows shows video as an SDR texture: HDR is tone-mapped, not passed through
       d[EncodableValue("subOverlay")] = EncodableValue(true);
       r->Success(EncodableValue(d));
     }
@@ -685,7 +749,23 @@ void Host::RegisterMpv() {
     }
     else if (m == "audioFx") r->Success(EncodableValue(audioFx_));
     else if (m == "setAudioFx") { audioFx_ = Str(a, "json"); r->Success(Null()); }
-    else if (m == "setMatchRate" || m == "setHdr" || m == "setSubOverlay" || m == "setPassthrough") r->Success(Null());
+    else if (m == "setHdr") {
+      mpv_->SetHdr(Flag(a, "on", true));
+      SaveOutputPrefs();
+      r->Success(Null());
+    }
+    else if (m == "setMaxSize") {
+      const std::string v = Str(a, "size");
+      mpv_->SetMaxSize(v == "1080" ? 1 : v == "1440" ? 2 : v == "2160" ? 3 : 0);
+      SaveOutputPrefs();
+      r->Success(Null());
+    }
+    else if (m == "setRenderer") {
+      mpv_->SetRenderer(Flag(a, "on", false));
+      SaveOutputPrefs();
+      r->Success(Null());
+    }
+    else if (m == "setMatchRate" || m == "setSubOverlay" || m == "setPassthrough") r->Success(Null());
     else r->NotImplemented();
   });
 }

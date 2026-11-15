@@ -64,7 +64,28 @@ The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the s
 
 ## Not there yet on Windows
 SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Discord Rich Presence, Picture-in-picture,
-HDR / refresh-rate matching, Dolby/DTS passthrough and the audio effects (stored, not applied), media keys / now-playing tile.
+refresh-rate matching, Dolby/DTS passthrough and the audio effects (stored, not applied), media keys / now-playing tile.
+
+## HDR on Windows
+The video reaches Flutter as an 8-bit texture, so HDR10 / HLG video cannot go to the screen as HDR the way it does on Android. Instead
+(Settings > Video output > \"HDR tone-mapping\", on by default, kept in `%LOCALAPPDATA%\\PEK TV\\output.ini`) HDR video is converted to SDR
+with an ffmpeg filter chain (`zscale` + `tonemap=hable`, scaled to at most 1920 wide first) so it has the right brightness and colour
+instead of looking grey. The chain is only used when libmpv-2.dll contains the zscale / tonemap filters; if it produces no picture within
+8 s it is taken off for that file. The log lines are `PEK hdr: ...` (run the exe from a terminal). Dolby Vision profile 5 is not handled.
+Real HDR output needs the video in its own native window under a transparent Flutter view: not done.
+
+## CPU or GPU rendering (Settings > Video output > \"GPU rendering\")
+Applies to the next video; kept in `%LOCALAPPDATA%\\PEK TV\\output.ini` (`renderer=cpu|gpu`). **CPU**: libmpv's software renderer, software decoding.
+**GPU**: libmpv's OpenGL renderer on a hidden WGL context (render thread, `pek_mpv.cpp`), copy-back hardware decoding (`hwdec=auto-copy`),
+mpv's own shader tone mapping for HDR. The finished frame (at most 1920 x 1080) is read back into the pixel buffer Flutter shows, so it is
+not zero-copy. If the PC has no OpenGL 3.3 driver (ARM64 Windows needs Microsoft's OpenGL compatibility pack) it falls back to the CPU and
+the Settings row says why. Log lines: `PEK gpu:` / `PEK video:`. If the GPU picture is upside down on some driver, add `glflip=1` to output.ini.
+New installs start on CPU: set `kDefaultGpu = true` in `pek_host.cpp` to change that.
+
+## Maximum picture size (Settings > Video output, Windows only)
+Auto / 1080p / 1440p / 4K, kept as `maxsize=auto|1080|1440|2160` in output.ini, applies to the next video. A video is only scaled down to it,
+never up. Auto = the size of the screen the window is on (read before each video), but on the CPU renderer never above 1080p. It also sets
+the width the HDR tone-map filter scales to on the CPU renderer. The setting is only shown when the host sends `maxSize` (Android does not).
 
 ## Build
 CI does everything: Actions > "Build PEK TV (Windows)". Locally: Git Bash, Flutter on PATH, 7-Zip, `gh` (or `LIBMPV_URL`), Inno Setup 6

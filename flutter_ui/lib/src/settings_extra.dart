@@ -105,6 +105,8 @@ class _VideoOutputSectionState extends State<VideoOutputSection> {
     }
   }
 
+  static String _sizeLabel(String s) => switch (s) { '1080' => '1080p', '1440' => '1440p', '2160' => '4K', _ => 'Auto' };
+
   Future<void> _flip(Future<void> Function(bool) set, bool now) async {
     try {
       await set(!now);
@@ -118,13 +120,42 @@ class _VideoOutputSectionState extends State<VideoOutputSection> {
     if (_missing || v == null) return const SizedBox.shrink();
     return Section(
       title: 'Video output',
-      hint: 'Smoother motion and true HDR. Applies to the next video. Matching switches the screen to the video\u2019s frame rate '
-          '(it may blink). HDR sends HDR10 / HLG straight to an HDR screen.',
+      hint: v.hdrMode == 'tonemap'
+          ? 'HDR10 / HLG video is converted to SDR so it does not look grey. The picture is not sent to the screen as HDR on this device.'
+          : 'Smoother motion and true HDR. Applies to the next video. Matching switches the screen to the video\u2019s frame rate '
+              '(it may blink). HDR sends HDR10 / HLG straight to an HDR screen.',
       children: [
+        if (v.renderer.isNotEmpty)
+          ToggleRow(
+            title: 'GPU rendering',
+            subtitle: v.renderer == 'gpu'
+                ? (v.rendererNote.isNotEmpty
+                    ? 'On \u2013 not available on this PC (${v.rendererNote}), the processor is used'
+                    : 'On \u2013 the graphics card decodes and draws the video')
+                : 'Off \u2013 the processor decodes and draws the video',
+            on: v.renderer == 'gpu',
+            onTap: () => _flip(PekOutput.setRenderer, v.renderer == 'gpu'),
+          ),
+        if (v.maxSize.isNotEmpty)
+          ListRow(
+            title: 'Maximum picture size',
+            subtitle: 'Bigger is sharper on a big screen but needs a faster PC. Auto follows the screen. Applies to the next video.',
+            trailing: Text(_sizeLabel(v.maxSize), style: TextStyle(color: context.pek.tokens.accent)),
+            onTap: () async {
+              const order = ['auto', '1080', '1440', '2160'];
+              final next = order[(order.indexOf(v.maxSize) + 1) % order.length];
+              try {
+                await PekOutput.setMaxSize(next);
+              } catch (_) {}
+              await _load();
+            },
+          ),
         ToggleRow(title: 'Match refresh rate', subtitle: v.matchRate ? 'On' : 'Off', on: v.matchRate, onTap: () => _flip(PekOutput.setMatchRate, v.matchRate)),
         ToggleRow(
-          title: 'HDR output',
-          subtitle: '${v.hdr ? 'On' : 'Off'}${v.displayHdr ? '' : ' \u2013 screen reports no HDR'}',
+          title: v.hdrMode == 'tonemap' ? 'HDR tone-mapping' : 'HDR output',
+          subtitle: v.hdrMode == 'tonemap'
+              ? (v.hdr ? 'On \u2013 HDR video is converted to SDR with the right brightness and colour' : 'Off \u2013 HDR video is shown as is (looks dull)')
+              : '${v.hdr ? 'On' : 'Off'}${v.displayHdr ? '' : ' \u2013 screen reports no HDR'}',
           on: v.hdr,
           onTap: () => _flip(PekOutput.setHdr, v.hdr),
         ),
