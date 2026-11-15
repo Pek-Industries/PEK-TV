@@ -64,7 +64,20 @@ The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the s
 
 ## Not there yet on Windows
 SMB and NFS network folders (libsmb2 / libnfs are not built; FTP, WebDAV, DLNA work), Discord Rich Presence, Picture-in-picture,
-refresh-rate matching, Dolby/DTS passthrough and the audio effects (stored, not applied), media keys / now-playing tile.
+refresh-rate matching, asking the receiver which formats it supports (passthrough itself works, see below), media keys / now-playing tile.
+
+## Sound settings and Audio output on Windows
+**Settings > Playback > Sound** (and the speaker / Equalizer panels in the players) work the same as on Android: audio delay, volume boost,
+night mode, dialogue boost, bass / treble, the ten-band equalizer and the stereo downmix. They are applied to libmpv at once (also to
+what is playing) and when it starts, using the same lavfi filter chain as `MpvController.kt`. The logic is in `windows/runner/pek_audiofx.h`
+(no Windows dependencies; `pek_audiofx_test.cpp` checks it: `g++ -std=c++17 pek_audiofx_test.cpp -o t && ./t`). They are kept in
+`%LOCALAPPDATA%\\PEK TV\\output.ini` (`audiofx=<json>`).
+
+**Settings > Audio output** (Dolby Digital / Plus, TrueHD, DTS, DTS-HD): switching a format on sends it untouched to the receiver
+(`audio-spdif`, kept as `passthrough=ac3,eac3,...` in `output.ini`). Windows can only do this in WASAPI **exclusive mode**, so while any
+format is on `audio-exclusive=yes` is set and other programs cannot use that sound device during playback. Windows cannot tell which
+formats the receiver supports, so the screen shows no "your device supports this" claim; if the receiver refuses a format, mpv decodes it as
+normal sound. Applies to the next video. Passthrough audio is not decoded here, so the Sound settings do not change it.
 
 ## HDR on Windows
 The video reaches Flutter as an 8-bit texture, so HDR10 / HLG video cannot go to the screen as HDR the way it does on Android. Instead

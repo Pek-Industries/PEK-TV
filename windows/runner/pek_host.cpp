@@ -23,6 +23,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -247,8 +249,7 @@ class Host {
   std::string token_;
   HMODULE server_ = nullptr;
   const char* (*mintGrant_)() = nullptr;
-  std::string audioFx_ = "{}";
-  fs::path prefsFile_;   // small settings kept between runs (HDR on / off)
+  fs::path prefsFile_;   // small settings kept between runs (HDR, renderer, picture size, sound settings, audio output)
   std::mutex bootMutex_;
   std::string bootError_;   // why the server did not start ("" = fine / not known yet); read by pek/host bootStatus
 
@@ -639,6 +640,8 @@ void Host::LoadOutputPrefs() {
   bool hdr = true;   // on unless the person switched it off (same default as Android)
   bool gpu = kDefaultGpu, flip = false;
   int maxSize = 0;   // Auto
+  std::string audioFx = "{}";
+  std::set<std::string> passthrough;
   std::ifstream in(prefsFile_);
   std::string line;
   while (std::getline(in, line)) {
@@ -649,8 +652,16 @@ void Host::LoadOutputPrefs() {
       maxSize = v == "1080" ? 1 : v == "1440" ? 2 : v == "2160" ? 3 : 0;
     }
     else if (line.rfind("glflip=", 0) == 0) flip = line.size() > 7 && line[7] == '1';   // hand-edited: GPU picture upside down on some driver
+    else if (line.rfind("audiofx=", 0) == 0) audioFx = line.substr(8);                   // one line of JSON (audio_fx.dart's format)
+    else if (line.rfind("passthrough=", 0) == 0) {                                        // e.g. ac3,eac3,truehd
+      std::stringstream ss(line.substr(12));
+      std::string codec;
+      while (std::getline(ss, codec, ',')) if (!codec.empty()) passthrough.insert(codec);
+    }
   }
   if (mpv_) {
+    mpv_->SetAudioFx(audioFx);   // libmpv is not started yet: they are applied when it is
+    mpv_->SetPassthrough(passthrough);
     mpv_->SetHdr(hdr);
     mpv_->SetRenderer(gpu);
     mpv_->SetGlFlip(flip);
@@ -664,7 +675,9 @@ void Host::SaveOutputPrefs() {
     std::ifstream in(prefsFile_);
     std::string line;
     while (std::getline(in, line))
-      if (!line.empty() && line.rfind("hdr=", 0) != 0 && line.rfind("renderer=", 0) != 0 && line.rfind("maxsize=", 0) != 0) keep.push_back(line);
+      if (!line.empty() && line.rfind("hdr=", 0) != 0 && line.rfind("renderer=", 0) != 0 && line.rfind("maxsize=", 0) != 0 &&
+          line.rfind("audiofx=", 0) != 0 && line.rfind("passthrough=", 0) != 0)
+        keep.push_back(line);
   }
   std::ofstream out(prefsFile_, std::ios::trunc);
   if (!out) return;
@@ -672,6 +685,12 @@ void Host::SaveOutputPrefs() {
   out << "renderer=" << (mpv_ && mpv_->WantGpu() ? "gpu" : "cpu") << "\n";
   static const char* const kSizes[] = {"auto", "1080", "1440", "2160"};
   out << "maxsize=" << kSizes[mpv_ ? mpv_->MaxSize() : 0] << "\n";
+  if (mpv_) {
+    out << "audiofx=" << mpv_->AudioFxJson() << "\n";
+    std::string codecs;
+    for (const auto& c : mpv_->Passthrough()) codecs += (codecs.empty() ? "" : ",") + c;
+    out << "passthrough=" << codecs << "\n";
+  }
   for (const auto& l : keep) out << l << "\n";
 }
 
@@ -741,14 +760,29 @@ void Host::RegisterMpv() {
       r->Success(EncodableValue(d));
     }
     else if (m == "audio") {
+      // The codecs switched on. Windows cannot ask the receiver what it takes, so "known" stays false (Settings shows no claim either way).
+      EncodableList on;
+      for (const auto& codec : mpv_->Passthrough()) on.push_back(EncodableValue(codec));
       EncodableMap d;
-      d[EncodableValue("on")] = EncodableValue(EncodableList{});
+      d[EncodableValue("on")] = EncodableValue(on);
       d[EncodableValue("known")] = EncodableValue(false);
       d[EncodableValue("formats")] = EncodableValue(EncodableList{});
       r->Success(EncodableValue(d));
     }
-    else if (m == "audioFx") r->Success(EncodableValue(audioFx_));
-    else if (m == "setAudioFx") { audioFx_ = Str(a, "json"); r->Success(Null()); }
+    else if (m == "audioFx") r->Success(EncodableValue(mpv_->AudioFxJson()));
+    else if (m == "setAudioFx") {
+      mpv_->SetAudioFx(Str(a, "json"));   // applied to mpv at once, also to what is playing
+      SaveOutputPrefs();
+      r->Success(Null());
+    }
+    else if (m == "setPassthrough") {
+      std::set<std::string> codecs = mpv_->Passthrough();
+      const std::string codec = Str(a, "codec");
+      if (Flag(a, "on", false)) codecs.insert(codec); else codecs.erase(codec);
+      mpv_->SetPassthrough(codecs);   // takes effect on the next video
+      SaveOutputPrefs();
+      r->Success(Null());
+    }
     else if (m == "setHdr") {
       mpv_->SetHdr(Flag(a, "on", true));
       SaveOutputPrefs();
@@ -765,7 +799,7 @@ void Host::RegisterMpv() {
       SaveOutputPrefs();
       r->Success(Null());
     }
-    else if (m == "setMatchRate" || m == "setSubOverlay" || m == "setPassthrough") r->Success(Null());
+    else if (m == "setMatchRate" || m == "setSubOverlay") r->Success(Null());
     else r->NotImplemented();
   });
 }

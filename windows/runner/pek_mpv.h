@@ -6,6 +6,8 @@
 #include <flutter/event_sink.h>
 #include <flutter/texture_registrar.h>
 
+#include "pek_audiofx.h"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -14,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -59,6 +62,18 @@ class Mpv {
   void SetScreen(int w, int h);   // the screen the window is on, for Auto (the host calls it before each video)
   void SetGlFlip(bool flip) { glFlip_ = flip ? 1 : 0; }   // escape hatch if a driver shows the GPU picture upside down
 
+  // Sound settings (Settings > Playback > Sound / Equalizer): audio delay, volume boost, night mode, dialogue boost, bass / treble,
+  // the ten-band equalizer and a stereo downmix, as the JSON audio_fx.dart sends. Kept here (the host saves AudioFxJson() between runs)
+  // and applied to mpv at once, also to what is playing now; before libmpv is started they are applied when it starts.
+  void SetAudioFx(const std::string& json);
+  std::string AudioFxJson();
+
+  // Audio output (Settings > Audio output): codecs ("ac3", "eac3", "dts", "dts-hd", "truehd") sent untouched to a receiver. Windows only
+  // does this in WASAPI exclusive mode, so exclusive mode is switched on while any codec is on. Applies to the next video.
+  // Unknown codec names are dropped. Sound settings do not change passthrough audio (it is not decoded here).
+  void SetPassthrough(const std::set<std::string>& codecs);
+  std::set<std::string> Passthrough();
+
  private:
   struct Api;
   void EventLoop();
@@ -69,6 +84,8 @@ class Mpv {
   void SendTracks();
   void SendState();
   std::string GetString(const std::string& name);
+  void ApplyAudioFx();
+  void ApplyPassthrough();
   void ApplyHdr();
   void RefreshToneMap();
   void Cap(bool gpu, int& capW, int& capH) const;
@@ -106,6 +123,10 @@ class Mpv {
   std::atomic<int> maxMode_{0}, screenW_{0}, screenH_{0};
   std::mutex noteMutex_;
   std::string gpuNote_;
+
+  std::mutex fxMutex_;
+  AudioFx fx_;
+  std::set<std::string> passthrough_;
 
   std::atomic<bool> hdrOn_{true};
   std::mutex hdrMutex_;

@@ -198,6 +198,8 @@ int64_t Mpv::Surface() {
   api_->set_option_string(mpv_, "terminal", "no");
   api_->set_option_string(mpv_, "demuxer-max-bytes", "64MiB");
   if (api_->initialize(mpv_) < 0) return -1;
+  ApplyAudioFx();       // the saved sound settings (equalizer, boost, delay ...) and audio output choice are in force from the first video
+  ApplyPassthrough();
 
   const char* names[] = {"time-pos", "duration", "pause", "paused-for-cache", "track-list", "dwidth", "dheight", "video-params/gamma"};
   const int fmts[] = {MPV_FORMAT_DOUBLE, MPV_FORMAT_DOUBLE, MPV_FORMAT_FLAG, MPV_FORMAT_FLAG, MPV_FORMAT_NONE, MPV_FORMAT_INT64, MPV_FORMAT_INT64, MPV_FORMAT_STRING};
@@ -250,6 +252,7 @@ std::string Mpv::Load(const std::string& url, double startSec, const std::string
     toneMapBroken_ = false;   // a new file gets a fresh try
   }
   if (!dvdDevice.empty()) api_->set_property_string(mpv_, "dvd-device", dvdDevice.c_str());
+  ApplyPassthrough();   // read when the audio device opens, so it must be in place before the file
   char start[48];
   snprintf(start, sizeof start, "%.3f", startSec > 0 ? startSec : 0.0);
   api_->set_property_string(mpv_, "start", start);
@@ -273,6 +276,67 @@ void Mpv::Command(const std::vector<std::string>& args) {
 
 void Mpv::SetMpvProp(const std::string& name, const std::string& value) {
   if (mpv_) api_->set_property_string(mpv_, name.c_str(), value.c_str());
+}
+
+// ---- sound settings and audio output ----
+
+void Mpv::SetAudioFx(const std::string& json) {
+  {
+    std::lock_guard<std::mutex> lock(fxMutex_);
+    fx_ = AudioFx::FromJson(json);
+  }
+  ApplyAudioFx();
+}
+
+std::string Mpv::AudioFxJson() {
+  std::lock_guard<std::mutex> lock(fxMutex_);
+  return fx_.ToJson();
+}
+
+void Mpv::ApplyAudioFx() {
+  if (!mpv_) return;   // not started yet: Surface() applies them
+  AudioFx fx;
+  {
+    std::lock_guard<std::mutex> lock(fxMutex_);
+    fx = fx_;
+  }
+  // Each property on its own: one this libmpv build does not know must not stop the others.
+  for (const auto& p : fx.MpvProps()) {
+    if (api_->set_property_string(mpv_, p.first.c_str(), p.second.c_str()) < 0) fprintf(stderr, "PEK audio: mpv setting %s not set\n", p.first.c_str());
+  }
+}
+
+namespace {
+// Same names and order as Android (MpvController.passthroughFormats); they are mpv's own codec names for --audio-spdif.
+const char* const kSpdifCodecs[] = {"ac3", "eac3", "dts", "dts-hd", "truehd"};
+}  // namespace
+
+void Mpv::SetPassthrough(const std::set<std::string>& codecs) {
+  {
+    std::lock_guard<std::mutex> lock(fxMutex_);
+    passthrough_.clear();
+    for (const char* k : kSpdifCodecs)
+      if (codecs.count(k)) passthrough_.insert(k);
+  }
+  ApplyPassthrough();
+}
+
+std::set<std::string> Mpv::Passthrough() {
+  std::lock_guard<std::mutex> lock(fxMutex_);
+  return passthrough_;
+}
+
+void Mpv::ApplyPassthrough() {
+  if (!mpv_) return;
+  std::string spdif;
+  {
+    std::lock_guard<std::mutex> lock(fxMutex_);
+    for (const char* k : kSpdifCodecs)
+      if (passthrough_.count(k)) spdif += (spdif.empty() ? "" : ",") + std::string(k);
+  }
+  // WASAPI can only pass a bitstream through in exclusive mode. If the receiver refuses a format, mpv decodes it as normal sound.
+  api_->set_property_string(mpv_, "audio-spdif", spdif.c_str());
+  api_->set_property_string(mpv_, "audio-exclusive", spdif.empty() ? "no" : "yes");
 }
 
 void Mpv::Stop() {
