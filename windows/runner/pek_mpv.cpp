@@ -199,6 +199,11 @@ int64_t Mpv::Surface() {
   api_->set_option_string(mpv_, "sub-auto", "no");
   api_->set_option_string(mpv_, "terminal", "no");
   api_->set_option_string(mpv_, "demuxer-max-bytes", "64MiB");
+  // mpv's own log (why a file stopped: decoder errors, audio device, network) goes to %LOCALAPPDATA%\PEK TV\hesper\mpv.log.
+  if (const char* la = getenv("LOCALAPPDATA")) {
+    const std::string logPath = std::string(la) + "\\PEK TV\\hesper\\mpv.log";
+    api_->set_option_string(mpv_, "log-file", logPath.c_str());
+  }
   if (api_->initialize(mpv_) < 0) return -1;
   ApplyAudioFx();       // the saved sound settings (equalizer, boost, delay ...) and audio output choice are in force from the first video
   ApplyPassthrough();
@@ -449,6 +454,7 @@ void Mpv::EventLoop() {
       SendTracks();
     } else if (e->event_id == EV_END_FILE) {
       auto* ef = static_cast<mpv_event_end_file*>(e->data);
+      if (ef) fprintf(stderr, "PEK mpv: file ended, reason %d, error %d\n", ef->reason, ef->error);
       if (ef && ef->reason == 0) Emit("ended", {});
       else if (ef && ef->reason == 4) Emit("error", {});
       if (onFps_) onFps_(0);   // the screen goes back to its own rate (the host waits a moment first: the next episode may need the same one)

@@ -198,12 +198,16 @@ std::string trimSeparators(std::string s) {
 
 // "Friends.S03E04.720p" -> "Friends S03E04 720p"; also drops [bracketed]
 // groups (release groups, tags) and collapses runs of spaces.
-std::string cleanSeparators(const std::string& in_raw) {
-    // Release sites put their name in front of the file name: "PSArips.com | Deep.Water.2026.720p...", "www.Site.org - Movie.2020...".
-    // Left in, the site name was searched for as part of the title and TMDb found nothing. Only a leading domain-looking word followed
-    // by a | - : separator is cut, so ordinary titles are not touched.
+// Release sites put their name in front of the name: "PSArips.com | Deep.Water.2026.720p...", "www.Site.org - Movie.2020...".
+// Left in, the site name was searched for as part of the title and TMDb found nothing. Only a leading domain-looking word followed
+// by a | - : ~ separator is cut, so ordinary titles are not touched.
+std::string stripSitePrefix(const std::string& in) {
     static const std::regex site_prefix(R"(^\s*(?:www\.)?[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*\.(?:com|net|org|info|io|tv|me|to|cc|co|xyz|biz|club|site|top|vip|ws|nl|in|uk|ru|us|se|pw|lol|one|fun|cam|mx|eu)\s*[|:~-]\s+)", std::regex::icase);
-    const std::string in = std::regex_replace(in_raw, site_prefix, "", std::regex_constants::format_first_only);
+    return std::regex_replace(in, site_prefix, "", std::regex_constants::format_first_only);
+}
+
+std::string cleanSeparators(const std::string& in_raw) {
+    const std::string in = stripSitePrefix(in_raw);
     std::string out;
     int bracket_depth = 0;
     for (char c : in) {
@@ -282,6 +286,35 @@ std::string prettyTitle(const std::string& in) {
         first = false;
     }
     return out;
+}
+
+// A title TAG inside the file is often the release name, not the film's title: "PSArips.com | Deep.Water.2026.720p.10bit.BluRay.x265-PSA".
+// Searched for as it is, TMDb finds nothing. When the text looks like a release name (a site prefix in front, or release words such as
+// 720p / BluRay / x265) it is cut down to the film's title and the year in it. false = it already is a plain title: leave it alone.
+bool cleanReleaseTitle(const std::string& tag, std::string& title, int& year) {
+    const std::string stripped = stripSitePrefix(tag);
+    const bool had_prefix = stripped.size() != tag.size();
+    std::string name = cleanSeparators(stripped);
+    bool junk = false;
+    {
+        std::istringstream iss(name);
+        std::string tok;
+        while (iss >> tok) if (isJunkToken(toLower(tok))) { junk = true; break; }
+    }
+    if (!had_prefix && !junk) return false;
+
+    static const std::regex year_re(R"((^|[^0-9])((?:19|20)\d{2})(?![0-9]|x\d))");
+    for (auto it = std::sregex_iterator(name.begin(), name.end(), year_re); it != std::sregex_iterator(); ++it) {
+        const std::string t = cleanShowName(name.substr(0, static_cast<size_t>(it->position(2))));
+        if (t.empty()) continue;   // the year comes first: part of the title ("2012")
+        try { year = std::stoi((*it)[2].str()); } catch (...) { continue; }
+        title = prettyTitle(t);
+        return true;
+    }
+    const std::string t = cleanShowName(name);
+    if (t.empty()) return false;
+    title = prettyTitle(t);
+    return true;
 }
 
 // S03E04, s3e4, S03 E04, 3x04, "Season 3 Episode 4". Returns the offset
@@ -996,6 +1029,11 @@ void MediaScanner::probeAndClassify(MediaEntry& entry) {
     } else if (!title.empty()) {
         entry.kind = MediaKind::Movie;
         entry.title = title;
+        {   // the tag is a release name ("PSArips.com | Deep.Water.2026.720p...."): cut it down to the title, and take the year from it
+            std::string clean;
+            int tagYear = 0;
+            if (cleanReleaseTitle(title, clean, tagYear)) { entry.title = clean; if (tagYear > 0) entry.year = tagYear; }
+        }
         if (date.size() >= 4) {
             try { entry.year = std::stoi(date.substr(0, 4)); } catch (...) {}
         }
@@ -1337,6 +1375,11 @@ void MediaScanner::scan(bool onlyNewSources) {
             entry.kind = it->second.kind;
             entry.title = it->second.title;
             entry.year = it->second.year;
+            if (entry.kind == MediaKind::Movie) {   // an earlier scan kept a release name as the title: clean it without re-reading the file
+                std::string clean;
+                int tagYear = 0;
+                if (cleanReleaseTitle(entry.title, clean, tagYear)) { entry.title = clean; if (entry.year == 0 && tagYear > 0) entry.year = tagYear; }
+            }
             entry.show_title = it->second.show_title;
             entry.season = it->second.season;
             entry.episode = it->second.episode;
