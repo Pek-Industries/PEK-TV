@@ -8,6 +8,13 @@
 #include <mutex>
 #include <thread>
 
+// The SDK header pulls in standard headers (<cmath>, <functional>, ...) of its own, so it MUST be included here at global scope,
+// never inside namespace pek::discord (that put std's own templates in the wrong namespace and broke <cmath>).
+#ifdef PEK_DISCORD_SDK   // set by pek_runner.cmake when windows/discord/ holds the Social SDK
+#define DISCORDPP_IMPLEMENTATION
+#include "discordpp.h"
+#endif
+
 namespace pek {
 namespace discord {
 
@@ -15,9 +22,6 @@ namespace discord {
 static std::atomic<int> g_status{0};
 
 #ifdef PEK_DISCORD_SDK   // set by pek_runner.cmake when windows/discord/ holds the Social SDK
-
-#define DISCORDPP_IMPLEMENTATION
-#include "discordpp.h"
 
 namespace {
 // One lock for every SDK call, the callback pump included. Recursive because the SDK's callbacks (run by the pump while it holds
