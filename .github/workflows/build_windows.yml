@@ -128,10 +128,18 @@ jobs:
           mkdir -p .pek-optional
           stash()   { [ -d "windows/$1" ] && mv "windows/$1" ".pek-optional/$1"; return 0; }
           unstash() { [ -d ".pek-optional/$1" ] && mv ".pek-optional/$1" "windows/$1"; return 0; }
-          diag() {   # what libsmb2 / libnfs look like, so a failed build can be fixed from this log alone
+          diag() {   # what libsmb2 looks like, so a failed build can be fixed from this log alone. Never fails the step.
+            set +e
             echo "::group::libsmb2 diagnostics"
-            [ -d windows/libsmb2 ] && { git -C windows/libsmb2 log -1 --format='libsmb2 commit %h %cd'; grep -n "t_socket" windows/libsmb2/include/smb2/libsmb2.h | head; sed -n 1,60p windows/libsmb2/lib/compat.h; grep -rn "smb2_random\|getpid_num\|login_num\|NEED_RANDOM\|NEED_GETPID\|NEED_GETLOGIN" windows/libsmb2 --include=*.h --include=CMakeLists.txt | head -40; }
+            if [ -d windows/libsmb2 ]; then
+              echo "--- libsmb2.h: t_socket"; grep -n -B8 -A3 "t_socket" windows/libsmb2/include/smb2/libsmb2.h | head -60
+              echo "--- lib/compat.h (top)"; sed -n 1,80p windows/libsmb2/lib/compat.h
+              echo "--- where the missing names appear"
+              grep -rn "smb2_random\|smb2_srandom\|getpid_num\|login_num\|NEED_RANDOM\|NEED_GETPID\|NEED_GETLOGIN" windows/libsmb2 --include=*.h --include=*.c --include=CMakeLists.txt | head -50
+            fi
             echo "::endgroup::"
+            set -e
+            return 0
           }
           # Full build first. If it fails, find out which optional library is the problem by trying each on its own (so one broken
           # library does not hide whether the other works), and finally neither. Torrents are never dropped silently.
