@@ -331,6 +331,8 @@ class FlutterHostActivity : FlutterActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        rotateExitTrace()
+        exitTrace("=== app started (onCreate) ${java.util.Date()} ===")
         fromSplash = intent.getBooleanExtra("pek_from_splash", false)
         pendingLink = linkOf(intent)
         // The server and the plugins normally started while the splash video played; this is a no-op then.
@@ -802,6 +804,7 @@ class FlutterHostActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "exit" -> {
+                    exitTrace("Dart asked to exit (host 'exit'): finishAndRemoveTask + kill process in 300 ms")
                     result.success(null)
                     finishAndRemoveTask()   // close the window first: nothing may show while the player is torn down
                     overridePendingTransition(0, 0)
@@ -816,7 +819,64 @@ class FlutterHostActivity : FlutterActivity() {
         }
     }
 
+    // ---------------- Exit tracing (debugging the "Back out of a video closes the app" bug) ----------------
+    // Read with:  adb logcat -s PEK:I flutter:I     (Dart side lines start with "[exit +...ms]", these start with "[exit native]")
+    // Every line is also appended to files/exit_trace.log (Dart writes to the same file) so it survives the app closing. At the next
+    // start the old file is added to exit_trace_prev.log (kept to about 192 KB), which the developer console shows at the top.
+    private fun exitTraceFile() = File(filesDir, "exit_trace.log")
+
+    private fun rotateExitTrace() {
+        try {
+            val cur = exitTraceFile()
+            val prev = File(filesDir, "exit_trace_prev.log")
+            if (cur.exists() && cur.length() > 0) {
+                prev.appendBytes(cur.readBytes())
+                cur.delete()
+                if (prev.length() > 256 * 1024) {
+                    val b = prev.readBytes()
+                    prev.writeBytes(b.copyOfRange(b.size - 192 * 1024, b.size))
+                }
+            }
+        } catch (_: Throwable) {}
+    }
+
+    private fun exitTrace(what: String, withStack: Boolean = false) {
+        if (withStack) android.util.Log.i("PEK", "[exit native] $what", Throwable("stack"))
+        else android.util.Log.i("PEK", "[exit native] $what")
+        try {
+            val stamp = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+            val text = StringBuilder("$stamp [exit native] $what\n")
+            if (withStack) {
+                text.append(android.util.Log.getStackTraceString(Throwable("stack")).lines().take(14).joinToString("\n")).append("\n")
+            }
+            exitTraceFile().appendText(text.toString())
+        } catch (_: Throwable) {}
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+            exitTrace("key ${KeyEvent.keyCodeToString(event.keyCode)} action=${if (event.action == KeyEvent.ACTION_DOWN) "DOWN" else "UP"} repeat=${event.repeatCount} canceled=${event.isCanceled} device=${event.deviceId} source=0x${Integer.toHexString(event.source)}")
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun finish() {
+        exitTrace("finish() called (isFinishing=$isFinishing, pip=${isInPictureInPictureMode})", withStack = true)
+        super.finish()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        exitTrace("onTrimMemory level=$level (the system is short of memory when this is 15 or higher)")
+        super.onTrimMemory(level)
+    }
+
+    override fun onPause() {
+        exitTrace("onPause isFinishing=$isFinishing pip=${isInPictureInPictureMode}")
+        super.onPause()
+    }
+
     override fun onStop() {
+        exitTrace("onStop isFinishing=$isFinishing pip=${isInPictureInPictureMode}")
         mpv?.onActivityStop()   // also when the small window is closed with its X: the video stops
         super.onStop()
     }
@@ -902,11 +962,13 @@ class FlutterHostActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        exitTrace("onResume")
         // Closing the small window with its X, or coming back after it was closed, leaves Dart with a stale "small window" flag.
         pipChannel?.invokeMethod("state", isInPictureInPictureMode)
     }
 
     override fun onDestroy() {
+        exitTrace("onDestroy isFinishing=$isFinishing changingConfigurations=$isChangingConfigurations")
         releaseSystemListen()
         try { tts?.shutdown() } catch (_: Exception) {}
         tts = null

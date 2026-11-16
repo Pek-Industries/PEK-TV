@@ -10,6 +10,7 @@ import 'api.dart';
 import 'audio_fx.dart';
 import 'nav_sound.dart';
 import 'cloud.dart';
+import 'exit_trace.dart';
 import 'live_tv.dart';
 import 'mpv.dart';
 import 'music_controller.dart';
@@ -180,6 +181,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    ExitTrace.log('player dispose: leaving=$_leaving handedOff=$_handedOff allowExit=$_allowExit');
     if (_phone) SystemChrome.setPreferredOrientations(const []);
     _rootNode.dispose();
     _playNode.dispose();
@@ -385,6 +387,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // The file would not open (the host already showed a message): leave the player.
   void _onFailed() {
     if (!_player.failed.value || !mounted || _leaving) return;
+    ExitTrace.log('player failed to open -> leaving');
     if (Pip.active.value) {
       _afterPip = _onFailed; // leaving the player now would show the app's screens in the small window
       return;
@@ -398,6 +401,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _onEnded() {
     if (!_player.ended.value || !mounted || _leaving) return;
+    ExitTrace.log('player ended (live=$_live next=${_next != null})');
     if (_live) return; // a live stream that stops is not "the end of the film"
     if (Pip.active.value) {
       _afterPip = _onEnded; // no Up next countdown in the small window: the end is handled once the person expands it again
@@ -600,6 +604,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Leaves the player without asking (the film ended, the file would not open). The person's own Back asks first: [_confirmExit].
   void _exit() {
+    ExitTrace.log('player _exit(): mounted=$mounted allowExit=$_allowExit title="${widget.title}" pos=${_player.position.value.toStringAsFixed(1)}s');
     if (!mounted) return;
     if (_allowExit) {
       Navigator.of(context).maybePop();
@@ -613,7 +618,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   /// Back (the remote, the system gesture or the arrow button) while watching: ask before leaving. Keeps playing underneath.
   Future<void> _confirmExit() async {
-    if (_askingExit || !mounted) return;
+    if (_askingExit || !mounted) {
+      ExitTrace.log('player _confirmExit ignored: askingExit=$_askingExit mounted=$mounted');
+      return;
+    }
+    ExitTrace.log('player showing Stop watching? dialog');
     _askingExit = true;
     _poke();
     final leave = await showDialog<bool>(
@@ -631,6 +640,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       ),
     );
     _askingExit = false;
+    ExitTrace.log('player Stop watching? answer: ${leave == true ? 'Exit' : leave == false ? 'Keep watching' : 'dismissed'}');
     if (leave == true) _exit();
     if (mounted) _rootNode.requestFocus();
   }
@@ -779,6 +789,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return PopScope(
       canPop: _allowExit && !_guideOpen, // Back closes the guide first, then asks before leaving the player
       onPopInvokedWithResult: (didPop, _) {
+        ExitTrace.log('player Back: didPop=$didPop guideOpen=$_guideOpen allowExit=$_allowExit askingExit=$_askingExit');
         if (didPop) return;
         if (_guideOpen) {
           _closeGuide();

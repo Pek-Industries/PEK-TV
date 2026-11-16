@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'src/exit_trace.dart';
 import 'src/video_surface.dart';
 import 'src/a11y.dart';
 import 'src/deep_link.dart';
@@ -47,6 +48,7 @@ Future<void> main() async {
         ..maximumSizeBytes = 48 << 20
         ..maximumSize = 300;
       DevConsole.installErrorHooks();
+      ExitTrace.install();
       // The same phone / TV test the web UI used for html.pek-tv; Settings > TV mode (tv_mode.dart) can force the look on or off.
       // Asked right away so it runs alongside the storage load instead of after it.
       final phoneAsk = PekPlayer.isPhone();
@@ -87,7 +89,7 @@ class PekApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           scaffoldMessengerKey: Net.messenger,
           navigatorKey: DeepLink.navKey,
-          navigatorObservers: NavSounds.observers,
+          navigatorObservers: [...NavSounds.observers, ExitTrace.observer],
           theme: pekTheme(tokens),
           scrollBehavior: const PekScrollBehavior(),
           // The app's language (Settings > Language). null follows the device. Material's own texts (dialogs, pickers) follow it too.

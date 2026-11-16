@@ -7,6 +7,7 @@ import 'package:flutter/material.dart' show BuildContext, ColoredBox, Colors, Na
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter/services.dart';
 import 'api.dart' show Api;
+import 'exit_trace.dart';
 import 'platform.dart';
 
 class Chapter {
@@ -179,7 +180,10 @@ class PekPlayer {
     } catch (_) {}
   }
 
-  static Future<void> exitApp() => _host.invokeMethod('exit');
+  static Future<void> exitApp() {
+    ExitTrace.log('exitApp() called from:\n${StackTrace.current}');
+    return _host.invokeMethod('exit');
+  }
 
   /// Exit with a black cover on screen first, so the page behind a closed dialog never flashes while Android tears the app down.
   static Future<void> exitAppCovered(BuildContext context) async {

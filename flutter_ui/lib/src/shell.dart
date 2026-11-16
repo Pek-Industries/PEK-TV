@@ -1,3 +1,4 @@
+import 'exit_trace.dart';
 import 'deep_link.dart';
 import 'pin_grid.dart';
 import 'plugin_pins.dart';
@@ -297,6 +298,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _askExit() async {
+    ExitTrace.log('shell: Back on the first page -> asking Exit PEK TV?');
     final p = context.pek;
     final t = p.tokens;
     final rem = p.rem;
@@ -325,6 +327,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
       ),
     );
+    ExitTrace.log('shell: Exit PEK TV? answer=$yes mounted=$mounted');
     if (yes == true && mounted) await PekPlayer.exitAppCovered(context);
   }
 
@@ -334,6 +337,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
+        ExitTrace.log('shell Back: didPop=$didPop');
         if (didPop) return;
         if (PluginBack.handle()) return; // a plugin screen on the TV that is inside one of its own pages
         // Back: leave a secondary screen / any other page for the first page, then ask before exiting.

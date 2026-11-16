@@ -51,7 +51,27 @@ class DevConsole {
   static void init() {
     enabled.value = Store.strGet(_key, scoped: false) == '1';
     if (enabled.value) _startTail();
+    unawaited(_loadSavedTrace());
   }
+
+  /// The exit trace (exit_trace.dart and FlutterHostActivity.kt) is saved to a file as it happens, so what led up to the app closing
+  /// is here after the next start. Put at the top of the log, before this run's own lines.
+  static Future<void> _loadSavedTrace() async {
+    try {
+      final f = File('${await _dir()}/exit_trace_prev.log');
+      if (!await f.exists()) return;
+      final text = utf8.decode(await f.readAsBytes(), allowMalformed: true);
+      if (text.trim().isEmpty) return;
+      lines.insertAll(0, [
+        '---- saved exit trace from earlier runs (newest at the bottom; command "trace clear" deletes it) ----',
+        ...const LineSplitter().convert(text),
+        '---- end of the saved trace: this run starts here ----',
+      ]);
+      if (lines.length > _maxLines) lines.removeRange(0, lines.length - _maxLines);
+      _bump();
+    } catch (_) {}
+  }
+
 
   /// Hooks for errors that nothing else handles. The `print` hook is in main.dart (it has to be on the app's zone).
   static void installErrorHooks() {
@@ -160,6 +180,7 @@ class DevConsole {
   info                 version, folders, process
   api /api/...         GET a route of the local server and show the answer
   cache size | clear   the saved pictures and synopses
+  trace clear          delete the saved exit trace (what led up to the app closing, kept across restarts)
   wipe YES             delete ALL app data (settings, library, caches) and close the app
 Anything else runs in the Android shell (sh), for example:
   ls -la files/hesper    cat files/hesper/backend.log    ps -A    df -h    ping -c 3 tmdb.pekindustries.com
@@ -187,6 +208,8 @@ Commands run as the app's user, with no root. They can break the app. Stop kills
           await _api(rest);
         case 'cache':
           await _cache(rest);
+        case 'trace':
+          await _trace(rest);
         case 'wipe':
           await _wipe(rest);
         default:
@@ -245,6 +268,21 @@ Commands run as the app's user, with no root. They can break the app. Stop kills
       default:
         add('usage: cache size | cache clear');
     }
+  }
+
+  static Future<void> _trace(String arg) async {
+    final dir = await _dir();
+    if (arg.toLowerCase() != 'clear') {
+      add('usage: trace clear   (the saved trace is files/exit_trace_prev.log, and this run\'s is files/exit_trace.log)');
+      return;
+    }
+    for (final n in ['exit_trace.log', 'exit_trace_prev.log']) {
+      try {
+        final f = File('$dir/$n');
+        if (await f.exists()) await f.delete();
+      } catch (_) {}
+    }
+    add('saved exit trace deleted');
   }
 
   static Future<void> _wipe(String arg) async {
