@@ -79,6 +79,11 @@ if(EXISTS ${LIBSMB2_DIR}/CMakeLists.txt)
     # getpid_num and login_num. Defining _WINDOWS for the library, and for the one backend file that includes its header, makes them agree.
     target_compile_definitions(smb2 PRIVATE _WINDOWS)
     set_source_files_properties(${BACKEND}/vfs_smb.cpp PROPERTIES COMPILE_DEFINITIONS _WINDOWS)
+    # include/asprintf.h is libsmb2's stand-in for MSVC, which has no asprintf. MinGW already has it, so the stand-in clashes with the
+    # real declarations (and uses an MSVC-only helper). An empty asprintf.h earlier on the include path replaces it.
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/pek_shim)
+    file(WRITE ${CMAKE_BINARY_DIR}/pek_shim/asprintf.h "/* MinGW provides asprintf / vasprintf: libsmb2's MSVC stand-in is not used. */\n")
+    target_include_directories(smb2 BEFORE PRIVATE ${CMAKE_BINARY_DIR}/pek_shim)
     target_sources(pek_server PRIVATE ${BACKEND}/vfs_smb.cpp)
     target_include_directories(pek_server PRIVATE ${LIBSMB2_DIR}/include)
     target_compile_definitions(pek_server PRIVATE PEK_SMB)   # PEK_SMB_SHARE_ENUM stays off, as on Android
