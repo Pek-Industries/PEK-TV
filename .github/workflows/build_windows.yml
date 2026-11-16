@@ -124,19 +124,35 @@ jobs:
           T=""
           [ "$WANT_TORRENT" = true ] && T="-DPEK_TORRENT=ON"
           build() { rm -rf build/backend; cmake -S windows/backend -B build/backend -G Ninja -DCMAKE_BUILD_TYPE=Release $T && cmake --build build/backend; }
-          # Full build first. If it fails, drop the optional network-folder libraries one at a time and retry, so a libsmb2 / libnfs
-          # problem can never stop the app from shipping. Torrents are never dropped silently (below).
-          if ! build; then
-            echo "::warning::Server build failed with SMB + NFS - retrying without NFS"
-            rm -rf windows/libnfs
-            if ! build; then
-              echo "::warning::Server build failed without NFS - retrying without SMB and NFS"
-              rm -rf windows/libsmb2
-              if ! build; then
-                if [ "$WANT_TORRENT" = true ]; then
-                  echo "::error::The server did not build with torrent support. Not falling back silently: that would ship an app that cannot play torrents."
+          # An optional library is "stashed" (moved out of windows/) to leave it out: CMake builds in only the folders that exist.
+          mkdir -p .pek-optional
+          stash()   { [ -d "windows/$1" ] && mv "windows/$1" ".pek-optional/$1"; return 0; }
+          unstash() { [ -d ".pek-optional/$1" ] && mv ".pek-optional/$1" "windows/$1"; return 0; }
+          diag() {   # what libsmb2 / libnfs look like, so a failed build can be fixed from this log alone
+            echo "::group::libsmb2 diagnostics"
+            [ -d windows/libsmb2 ] && { git -C windows/libsmb2 log -1 --format='libsmb2 commit %h %cd'; grep -n "t_socket" windows/libsmb2/include/smb2/libsmb2.h | head; sed -n 1,60p windows/libsmb2/lib/compat.h; grep -rn "smb2_random\|getpid_num\|login_num\|NEED_RANDOM\|NEED_GETPID\|NEED_GETLOGIN" windows/libsmb2 --include=*.h --include=CMakeLists.txt | head -40; }
+            echo "::endgroup::"
+          }
+          # Full build first. If it fails, find out which optional library is the problem by trying each on its own (so one broken
+          # library does not hide whether the other works), and finally neither. Torrents are never dropped silently.
+          if build; then :
+          else
+            echo "::warning::Server build failed with SMB + NFS - trying NFS alone, then SMB alone"
+            diag
+            stash libsmb2
+            if build; then :
+            else
+              unstash libsmb2; stash libnfs
+              if build; then :
+              else
+                echo "::warning::Neither SMB nor NFS built - building the server without them"
+                stash libsmb2; stash libnfs
+                if ! build; then
+                  if [ "$WANT_TORRENT" = true ]; then
+                    echo "::error::The server did not build with torrent support. Not falling back silently: that would ship an app that cannot play torrents."
+                  fi
+                  exit 1
                 fi
-                exit 1
               fi
             fi
           fi
