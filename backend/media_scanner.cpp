@@ -198,7 +198,12 @@ std::string trimSeparators(std::string s) {
 
 // "Friends.S03E04.720p" -> "Friends S03E04 720p"; also drops [bracketed]
 // groups (release groups, tags) and collapses runs of spaces.
-std::string cleanSeparators(const std::string& in) {
+std::string cleanSeparators(const std::string& in_raw) {
+    // Release sites put their name in front of the file name: "PSArips.com | Deep.Water.2026.720p...", "www.Site.org - Movie.2020...".
+    // Left in, the site name was searched for as part of the title and TMDb found nothing. Only a leading domain-looking word followed
+    // by a | - : separator is cut, so ordinary titles are not touched.
+    static const std::regex site_prefix(R"(^\s*(?:www\.)?[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*\.(?:com|net|org|info|io|tv|me|to|cc|co|xyz|biz|club|site|top|vip|ws|nl|in|uk|ru|us|se|pw|lol|one|fun|cam|mx|eu)\s*[|:~-]\s+)", std::regex::icase);
+    const std::string in = std::regex_replace(in_raw, site_prefix, "", std::regex_constants::format_first_only);
     std::string out;
     int bracket_depth = 0;
     for (char c : in) {

@@ -99,6 +99,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final ValueNotifier<bool> _nextVisible = ValueNotifier(false);
   final ValueNotifier<int?> _countdown = ValueNotifier(null);
   Timer? _countTimer;
+  Timer? _openWatch; // gives up on a file that never starts, so the loading wheel cannot spin forever
   String? _toastText;
   Timer? _toastTimer;
 
@@ -111,6 +112,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _player.reset();
     _save = Timer.periodic(const Duration(seconds: 10), (_) => _record());
     _player.load(widget.url, startSec: widget.startSec, title: widget.title, dvdDevice: widget.dvdDevice);
+    // A file that opens shows its first picture / position within seconds. If nothing has started after a minute (not a torrent, which
+    // may wait for peers, and not live TV) it is not going to: say so and leave, instead of an endless loading wheel.
+    if (widget.torrentHash == null && widget.live == null) {
+      _openWatch = Timer(const Duration(seconds: 60), () {
+        if (!mounted || _leaving || _player.failed.value || _player.ended.value) return;
+        if (_player.position.value > 0 || !_player.buffering.value) return;
+        _toast('This file would not start. It may be damaged, or this PC cannot play it.');
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted && !_leaving && _player.position.value <= 0) _exit();
+        });
+      });
+    }
     final live = widget.live;
     if (live != null) {
       _liveId = live.channelId;
@@ -182,6 +195,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hide?.cancel();
     _seekReset?.cancel();
     _countTimer?.cancel();
+    _openWatch?.cancel();
     _player.ended.removeListener(_onEnded);
     _player.failed.removeListener(_onFailed);
     _player.playing.removeListener(_onPlaying);
