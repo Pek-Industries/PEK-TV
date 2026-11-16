@@ -2,3 +2,4 @@
 # SMB / NFS sources cloned by the Windows workflow (see WINDOWS.md)
 libsmb2/
 libnfs/
+ffmpeg-min/

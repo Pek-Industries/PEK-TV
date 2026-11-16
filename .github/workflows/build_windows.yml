@@ -108,6 +108,12 @@ jobs:
             sqlite3:p
             libtorrent-rasterbar:p
             boost:p
+            zlib:p
+            pkgconf:p
+          # make + diffutils: only for scripts/build-ffprobe.sh (the minimal ffprobe)
+          install: >-
+            make
+            diffutils
 
       # SMB (libsmb2) and NFS (libnfs): cloned like the Android workflow does. A failed clone only means that protocol is left out.
       - name: Clone libsmb2 (SMB shares)
@@ -177,7 +183,24 @@ jobs:
       - name: Fetch libmpv
         run: bash windows/scripts/fetch-libmpv.sh ${{ matrix.mpv }}
 
-      - name: Fetch ffprobe
+      # A minimal ffprobe (demuxers + parsers only, a few MB) built from the FFmpeg sources: the scanner only needs `-show_format`.
+      # It replaces the 136 MB (x64) / 84 MB (ARM64) full static ffprobe. If it does not build or fails its check, the full ffprobe
+      # below is used instead, so a problem here can never stop a release.
+      - name: Build minimal ffprobe
+        shell: msys2 {0}
+        run: bash windows/scripts/build-ffprobe.sh ${{ matrix.arch }} || echo "::warning::The minimal ffprobe did not build - the full ffprobe is used instead"
+
+      - name: Check minimal ffprobe
+        run: |
+          if [ -f windows/ffmpeg-min/ffprobe.exe ] && python windows/scripts/test-ffprobe.py windows/ffmpeg-min/ffprobe.exe; then
+            mkdir -p windows/ffmpeg
+            cp windows/ffmpeg-min/ffprobe.exe windows/ffmpeg/ffprobe.exe
+            echo "Using the MINIMAL ffprobe:"; ls -l windows/ffmpeg/ffprobe.exe
+          else
+            echo "::warning::The minimal ffprobe is missing or failed its check - falling back to the full ffprobe download"
+          fi
+
+      - name: Fetch ffprobe (only if the minimal one is not in place)
         run: bash windows/scripts/fetch-ffprobe.sh ${{ matrix.ffmpeg }}
 
       - name: Fetch embeddable Python

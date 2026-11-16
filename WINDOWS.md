@@ -172,3 +172,13 @@ builds them in when those folders exist. If a library will not compile, the work
 `::warning::` line, so the app still ships; that protocol then says "no SMB support" / "no NFS support". Check the build log for
 `SMB: built in` / `NFS: built in`. For a local build, clone the two repos into `windows/` yourself (both folders are git-ignored).
 Share listing (`PEK_SMB_SHARE_ENUM`) is off, as on Android.
+
+## ffprobe (minimal build)
+
+The library scan only runs `ffprobe -show_format` (duration and tags), so the workflow builds a minimal `ffprobe.exe` from the FFmpeg
+sources (`windows/scripts/build-ffprobe.sh`: demuxers, parsers and zlib, no decoders, filters, muxers or network; a few MB) instead of
+shipping BtbN's full static one (136 MB x64 / 84 MB ARM64, a second copy of the FFmpeg that `libmpv-2.dll` already contains).
+`windows/scripts/test-ffprobe.py` checks the result the way the scanner uses it (a WAV with tags, only the Windows system folder on PATH).
+If the build or the check fails the workflow prints a `::warning::` and falls back to the full download (`fetch-ffprobe.sh`), so the
+installer is then bigger but still works. Look for `Using the MINIMAL ffprobe` in the build log. If the scanner ever needs more from
+ffprobe (streams, HDR flags), add the decoders it needs to the `configure` line in `build-ffprobe.sh`.
