@@ -74,6 +74,11 @@ if(EXISTS ${LIBSMB2_DIR}/CMakeLists.txt)
     set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(ENABLE_LIBKRB5 OFF CACHE BOOL "" FORCE)
     add_subdirectory(${LIBSMB2_DIR} libsmb2 EXCLUDE_FROM_ALL)
+    # libsmb2 picks its Windows code with _WINDOWS in libsmb2.h and compat.c, but lib/compat.h also accepts __MINGW32__. Under MSYS2 clang
+    # (which defines __MINGW32__ but not _WINDOWS) the headers disagreed: t_socket was both SOCKET and int, and compat.c lost smb2_random,
+    # getpid_num and login_num. Defining _WINDOWS for the library, and for the one backend file that includes its header, makes them agree.
+    target_compile_definitions(smb2 PRIVATE _WINDOWS)
+    set_source_files_properties(${BACKEND}/vfs_smb.cpp PROPERTIES COMPILE_DEFINITIONS _WINDOWS)
     target_sources(pek_server PRIVATE ${BACKEND}/vfs_smb.cpp)
     target_include_directories(pek_server PRIVATE ${LIBSMB2_DIR}/include)
     target_compile_definitions(pek_server PRIVATE PEK_SMB)   # PEK_SMB_SHARE_ENUM stays off, as on Android
