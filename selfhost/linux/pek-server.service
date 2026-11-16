@@ -1,0 +1,22 @@
+[Unit]
+Description=PEK Server (self-hosted media server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pek
+Group=pek
+# PEK_MEDIA=/srv/movies:/srv/music  and  PEK_PORT=8080  can go in this file (install.sh writes it)
+EnvironmentFile=-/etc/pek-server.env
+ExecStart=/opt/pek-server/pek-server --data /var/lib/pek-server
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/pek-server
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,70 @@
+name: Build PEK Server (Windows, self-hosted)
+
+# Manual run only (Actions tab > "Build PEK Server (Windows, self-hosted)" > Run workflow).
+# It does not start on tags, so it never runs next to the Android / Windows app builds.
+# Result: one zip per CPU type, downloadable from the run's "Artifacts":
+#   PEK-Server-<version>-windows-x64.zip     (normal Intel / AMD PCs)
+#   PEK-Server-<version>-windows-arm64.zip   (Windows on ARM)
+# Unzip, double-click "Start PEK Server.bat". See SELFHOST.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: PEK Server ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            msystem: CLANG64
+            ffmpeg: win64
+          - arch: arm64
+            runner: windows-11-arm
+            msystem: CLANGARM64
+            ffmpeg: winarm64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (${{ matrix.msystem }})
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          pacboy: >-
+            toolchain:p
+            cmake:p
+            ninja:p
+            openssl:p
+            sqlite3:p
+            pkgconf:p
+            zlib:p
+
+      - name: Build pek-server.exe
+        shell: msys2 {0}
+        run: bash selfhost/windows/build.sh
+
+      - name: Show what the exe needs (should be Windows system DLLs only)
+        shell: msys2 {0}
+        run: |
+          OBJDUMP="$(command -v llvm-objdump || command -v objdump)"
+          "$OBJDUMP" -p build/selfhost/pek-server.exe | sed -n 's/^[[:space:]]*DLL Name: //p' | sort -u
+
+      - name: Package
+        run: bash selfhost/windows/package.sh ${{ matrix.ffmpeg }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PEK-Server-windows-${{ matrix.arch }}
+          path: dist-selfhost/*.zip
+          if-no-files-found: error
+          retention-days: 30

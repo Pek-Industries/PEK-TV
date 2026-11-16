@@ -185,6 +185,70 @@ static std::string defaultBrowsePath() {
     const auto roots = storageRoots();
     return roots.empty() ? std::string("@roots") : roots.front().path;
 }
+#elif defined(__linux__) && !defined(__ANDROID__)
+// Linux server (the self-hosted PEK Server, selfhost/linux): the picker starts from the folders a server keeps its media in:
+// PEK_MEDIA_ROOTS / PEK_MEDIA (":" separated; what a Docker or NAS setup mounts its media at), the home folder with its Videos /
+// Movies / Music / Downloads, and the drives and shares mounted under /mnt, /media and /run/media, plus /srv. Only folders that can
+// really be listed are returned. When there is none at all the whole file system ("/") is offered.
+static std::vector<StorageRoot> storageRoots() {
+    std::vector<StorageRoot> out;
+    auto add = [&out](const std::string& label, std::string path) {
+        while (path.size() > 1 && path.back() == '/') path.pop_back();
+        if (path.empty() || path[0] != '/') return;
+        for (const auto& r : out) if (r.path == path) return;
+        if (!listableDir(path)) return;
+        out.push_back({label, path});
+    };
+    auto isRoot = [&out](const std::string& path) {
+        for (const auto& r : out) if (r.path == path) return true;
+        return false;
+    };
+    for (const char* var : {"PEK_MEDIA_ROOTS", "PEK_MEDIA"}) {
+        const char* v = std::getenv(var);
+        if (!v || !*v) continue;
+        std::string all = v;
+        size_t start = 0;
+        while (start <= all.size()) {
+            size_t colon = all.find(':', start);
+            if (colon == std::string::npos) colon = all.size();
+            std::string part = all.substr(start, colon - start);
+            start = colon + 1;
+            while (part.size() > 1 && part.back() == '/') part.pop_back();
+            if (part.empty()) continue;
+            std::string name = fs::path(part).filename().string();
+            add(name.empty() ? part : name, part);
+        }
+    }
+    if (const char* home = std::getenv("HOME")) {
+        const std::string h = home;
+        if (!h.empty() && h != "/") {
+            add("Home", h);
+            for (const char* sub : {"Videos", "Movies", "TV", "Music", "Downloads"}) add(sub, h + "/" + sub);
+        }
+    }
+    auto addChildren = [&](const std::string& base) {
+        std::error_code ec;
+        fs::directory_iterator it(base, fs::directory_options::skip_permission_denied, ec);
+        for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+            const std::string name = it->path().filename().string();
+            if (name.empty() || name[0] == '.') continue;
+            add(name, it->path().string());
+        }
+    };
+    for (const char* base : {"/mnt", "/media"}) if (!isRoot(base)) addChildren(base);
+    {   // /run/media/<user>/<disk>: where desktop Linux mounts USB drives
+        std::error_code ec;
+        fs::directory_iterator it("/run/media", fs::directory_options::skip_permission_denied, ec);
+        for (; !ec && it != fs::directory_iterator(); it.increment(ec)) addChildren(it->path().string());
+    }
+    add("srv", "/srv");
+    if (out.empty()) add("File system", "/");
+    return out;
+}
+static std::string defaultBrowsePath() {
+    const auto roots = storageRoots();
+    return roots.empty() ? std::string("@roots") : roots.front().path;
+}
 #else
 static std::string defaultBrowsePath() { return "/storage/emulated/0"; }
 static std::vector<StorageRoot> storageRoots() {

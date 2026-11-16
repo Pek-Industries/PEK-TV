@@ -1,0 +1,17 @@
+# docker compose -f selfhost/linux/docker-compose.yml up -d     (run from the repository root)
+# then:  docker compose -f selfhost/linux/docker-compose.yml logs pek-server     -> shows the access key
+# Use the address of THIS machine (not the container's) in your apps. Change the left side of the /media line to your media folder.
+services:
+  pek-server:
+    build:
+      context: ../..
+      dockerfile: selfhost/linux/Dockerfile
+    image: pek-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - pek-data:/data
+      - /srv/media:/media:ro
+volumes:
+  pek-data:

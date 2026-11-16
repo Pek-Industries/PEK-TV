@@ -1,0 +1,62 @@
+name: Build PEK Server (Linux, self-hosted)
+
+# Manual run only (Actions tab > "Build PEK Server (Linux, self-hosted)" > Run workflow).
+# It does not start on tags, so it never runs next to the Android / Windows app builds.
+# Result, per CPU type, in the run's "Artifacts":
+#   PEK-Server-<version>-linux-x64.tar.gz     (Intel / AMD servers and PCs)
+#   PEK-Server-<version>-linux-arm64.tar.gz   (Raspberry Pi 4/5, ARM servers)
+# One static program (built on Alpine / musl) that runs on any distribution, plus ffprobe, install.sh and a systemd unit. See SELFHOST.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: PEK Server ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the static program (Docker, Alpine)
+        run: bash selfhost/linux/build.sh
+
+      # The program must really start and answer, before anything is packaged.
+      - name: Smoke test
+        run: |
+          mkdir -p /tmp/pek-media /tmp/pek-data
+          build/selfhost-linux/pek-server --data /tmp/pek-data --add-media /tmp/pek-media --local-only --no-scan > /tmp/pek.out 2>&1 &
+          PID=$!
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/api/movies -o /tmp/movies.json; then ok=1; break; fi
+            sleep 1
+          done
+          echo "---- server output"; cat /tmp/pek.out; echo "---- /api/movies"; cat /tmp/movies.json 2>/dev/null || true
+          kill $PID 2>/dev/null || true
+          [ "$ok" = 1 ] || { echo "::error::The server did not answer /api/movies"; exit 1; }
+
+      - name: Package
+        run: bash selfhost/linux/package.sh ${{ matrix.arch }}
+
+      - name: Check the Docker image builds
+        run: docker build -f selfhost/linux/Dockerfile -t pek-server:test .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PEK-Server-linux-${{ matrix.arch }}
+          path: |
+            dist-selfhost/*.tar.gz
+            dist-selfhost/*.sha256
+          if-no-files-found: error
+          retention-days: 30
