@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -808,23 +809,27 @@ class _RecommendWidgetState extends State<RecommendWidget> {
         SizedBox(height: 0.6 * rem),
         SizedBox(
           height: h + (p.isTv ? 0.8 * rem : 0.3 * rem), // room for the focus scale
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            clipBehavior: Clip.none,
-            padding: EdgeInsets.symmetric(vertical: 0.15 * rem),
-            itemCount: row.items.length,
-            separatorBuilder: (_, __) => SizedBox(width: 0.75 * rem),
-            itemBuilder: (_, k) {
-              final i = row.items[k];
-              return SizedBox(
-                width: w,
-                height: h,
-                child: _FadeIn(
-                  delay: Duration(milliseconds: k < 6 ? 40 * k : 0),
-                  child: RecBanner(item: i, onTap: () => _open(i), onLongPress: () => _cardMenu(i)),
-                ),
-              );
-            },
+          // Mouse drags scroll the row sideways too (Windows / desktop); touch swipes and trackpads always did.
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(dragDevices: {PointerDeviceKind.touch, PointerDeviceKind.mouse, PointerDeviceKind.trackpad, PointerDeviceKind.stylus}),
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.none,
+              padding: EdgeInsets.symmetric(vertical: 0.15 * rem),
+              itemCount: row.items.length,
+              separatorBuilder: (_, __) => SizedBox(width: 0.75 * rem),
+              itemBuilder: (_, k) {
+                final i = row.items[k];
+                return SizedBox(
+                  width: w,
+                  height: h,
+                  child: _FadeIn(
+                    delay: Duration(milliseconds: k < 6 ? 40 * k : 0),
+                    child: RecBanner(item: i, onTap: () => _open(i), onLongPress: () => _cardMenu(i)),
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ]),

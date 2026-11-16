@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -88,6 +89,7 @@ class PekApp extends StatelessWidget {
           navigatorKey: DeepLink.navKey,
           navigatorObservers: NavSounds.observers,
           theme: pekTheme(tokens),
+          scrollBehavior: const PekScrollBehavior(),
           // The app's language (Settings > Language). null follows the device. Material's own texts (dialogs, pickers) follow it too.
           locale: L10n.locale,
           supportedLocales: L10n.supportedLocales,
@@ -99,6 +101,14 @@ class PekApp extends StatelessWidget {
       },
     );
   }
+}
+
+/// App-wide scrolling: lists and rows scroll when dragged with a mouse (Windows / desktop, a TV box with a mouse) as well as by touch,
+/// trackpad and stylus. Flutter's default ignores mouse drags, so every sideways row (Recommended, plugins, detail pages) needs this.
+class PekScrollBehavior extends MaterialScrollBehavior {
+  const PekScrollBehavior();
+  @override
+  Set<PointerDeviceKind> get dragDevices => {PointerDeviceKind.touch, PointerDeviceKind.mouse, PointerDeviceKind.trackpad, PointerDeviceKind.stylus};
 }
 
 /// Waits for the C++ server (MainActivity has started it already, this only covers a slow start) then opens the shell.

@@ -266,12 +266,21 @@ jobs:
           PEK_INSTALLER_OPTIONAL: ${{ matrix.arch == 'arm64' && '1' || '0' }}
         run: bash windows/scripts/package.sh ${{ matrix.arch }} "$VERSION_NAME" "$BUILD_TYPE"
 
-      - uses: actions/upload-artifact@v4
+      # Two SEPARATE artifacts, so the installer and the portable zip are never downloaded together in one zip.
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
         with:
-          name: PEK-TV-${{ env.VERSION_NAME }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}
-          path: |
-            dist/*.zip
-            dist/*.exe
+          name: PEK-TV-${{ env.VERSION_NAME }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}-installer
+          path: dist/*-setup.exe
+          if-no-files-found: warn   # the ARM64 installer is optional (see PEK_INSTALLER_OPTIONAL)
+          retention-days: 30
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: PEK-TV-${{ env.VERSION_NAME }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.arch }}-portable
+          path: dist/*.zip
+          if-no-files-found: error
           retention-days: 30
 
   # One publish step after BOTH zips exist (two jobs creating the same release at once would race).
