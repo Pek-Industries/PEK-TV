@@ -48,7 +48,8 @@ files above on top. The repo's `flutter_ui/` is never changed by the Windows bui
   goes through `pek/plugins openUrl`, which on Windows opens the default browser / mail app (only `https://` and `mailto:`).
 - **Video.** Android draws on a native surface behind Flutter. Windows uses libmpv's software renderer into a Flutter texture;
   `PekVideoSurface` sits under the whole Navigator, so the player and the live TV corner picture stay transparent as before.
-- **Plugin trailers** need a web view; `webview_flutter` has none on Windows, so there are no trailers there (`PekPlatform.hasWebView`).
+- **Plugin trailers and the start-up video** use Microsoft Edge WebView2 (see "Web view" below).
+
 - **Plugins** run in `python\python.exe` (embeddable Python), talking to the app over a pipe; same `pek_runner` / `pek_flutter` modules as Android.
 - **Folder picker** starts from the drives and the Videos / Music / Downloads folders (`server.cpp`, `storageRoots`).
 - **ffprobe** ships as `ffprobe.exe`; the scanner starts it without a console window (`media_scanner.cpp`).
@@ -62,9 +63,31 @@ The host (`pek_host.cpp`, `Boot()`) now says why on that screen and writes the s
 - **"Port 8080 is already in use"**: another program (a second PEK TV, a dev server, Docker, a Windows-reserved port range) holds the port.
 - The server's own log is `%LOCALAPPDATA%\PEK TV\hesper\backend.log`.
 
+## Web view (trailers and the start-up video)
+`webview_flutter` has no Windows version, so Windows uses `webview_flutter_windows` (WebView2, drawn into a Flutter texture, so screens can be
+painted over it like on Android). `win_web.dart` holds the shared pieces; the `WebView2 Runtime` ships with Windows 11 and current Windows 10,
+and a PC without it just gets no trailers and no splash video (nothing breaks). Its profile is kept in `%LOCALAPPDATA%\\PEK TV\\webview`.
+- **Trailers** (`ui.video` plugin trailers and the Simple layout's banner, `PekTrailerView`): the same page as Android (`trailer_page.dart`,
+  the plain stream from `/api/trailer`), played by `WinTrailerController`. There is **no YouTube fallback** on Windows: that frame needs the
+  page to say it is embedded from YouTube's own address, which WebView2 cannot do for a string page. A title with no stream shows no trailer.
+- **Start-up video** (`win_splash.dart`): the Android splash (`pek_splash.mp4`, `pek_splash_portrait.mp4`) plays once over the app while the
+  server and the first screen load, and lifts when it has ended and the app has said it is ready (where Android sends `splashReady`). It
+  never traps you: no WebView2, a missing file, no picture after 5 s, or no end after 20 s lifts it. `prepare-flutter-host.sh` copies the two
+  videos into the Windows build's assets (`assets/splash/`), so the Android app does not carry them twice. The page that plays it is written to
+  `%LOCALAPPDATA%\\PEK TV\\cache\\splash.html`.
+
+## Navigation sounds
+The same Apple TV-style tick / select / back sounds as Android (`nav_sound.dart`; Settings > Sounds). `windows/runner/pek_navsound.cpp`
+generates the same three tones as `NavSound.kt` (no audio files) and plays them through `waveOut` on a thread of its own, so a keypress never
+waits for audio; `pek/host` > `navSound(kind, volume)` only hands the request over. A PC with no sound device stays silent.
+
 ## Not there yet on Windows
-Picture-in-picture,
-asking the receiver which formats it supports (passthrough itself works, see below).
+- **Picture-in-picture** (`pek/pip`): the Android window shrinks into a floating video; there is no Windows version.
+- **YouTube fallback for trailers**: Windows plays only the plain stream (see "Web view").
+- **Real HDR output**: HDR is tone-mapped to SDR (see "HDR on Windows").
+- **Asking the receiver which audio formats it supports**: passthrough itself works, but the screen cannot say "your device supports this".
+- **Home-screen widget** for the playing song: phones and tablets only, nothing like it on the Windows desktop.
+- **The phone's own speech recognizer**: Windows always uses the bundled Moonshine model (by design).
 
 ## Refresh-rate matching
 **Settings > Video output > Match refresh rate** (on by default, like Android). When a video starts, `Mpv` reports its frame rate

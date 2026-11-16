@@ -14,8 +14,9 @@ class PekPlatform {
   static bool get videoBehindFlutter => Platform.isAndroid;
   static bool get videoAsTexture => Platform.isWindows;
 
-  /// Plugin trailers are YouTube pages in a web view. webview_flutter has no Windows implementation, so there are none there.
-  static bool get hasWebView => Platform.isAndroid || Platform.isIOS;
+  /// Plugin trailers (and the Windows start-up video) play in a web view: Android's WebView through webview_flutter, Windows' WebView2
+  /// through webview_flutter_windows (win_web.dart; a PC without the WebView2 runtime just shows no trailer).
+  static bool get hasWebView => Platform.isAndroid || Platform.isIOS || Platform.isWindows;
 
   /// The phone's own speech recognizer (the Google keyboard's mic). Elsewhere the bundled Moonshine model listens.
   static bool get hasSystemRecognizer => Platform.isAndroid;

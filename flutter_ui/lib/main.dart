@@ -31,6 +31,7 @@ import 'src/theme.dart';
 import 'src/tokens.dart';
 import 'src/tv_nav.dart';
 import 'src/welcome.dart';
+import 'src/win_splash.dart';
 import 'src/whats_new.dart';
 
 Future<void> main() async {
@@ -92,7 +93,7 @@ class PekApp extends StatelessWidget {
           supportedLocales: L10n.supportedLocales,
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
-          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [const PekVideoSurface(), child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing()]))))),
+          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [const PekVideoSurface(), child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing(), const WinSplash()]))))),
           home: const _Boot(),
         );
       },
@@ -140,6 +141,7 @@ class _BootState extends State<_Boot> {
     b.addPostFrameCallback((_) {
       b.addPostFrameCallback((_) {
         const MethodChannel('pek/host').invokeMethod<void>('splashReady').catchError((Object _) {});
+        WinSplash.appReady(); // Windows: the start-up video (win_splash.dart) lifts once it has ended
       });
       b.ensureVisualUpdate();
     });

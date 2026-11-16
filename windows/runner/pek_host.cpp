@@ -33,6 +33,7 @@
 #include "pek_display.h"
 #include "pek_media.h"
 #include "pek_mpv.h"
+#include "pek_navsound.h"
 
 namespace fs = std::filesystem;
 using flutter::EncodableList;
@@ -253,6 +254,7 @@ class Host {
   std::vector<std::unique_ptr<flutter::MethodChannel<EncodableValue>>> channels_;
   std::unique_ptr<flutter::EventChannel<EncodableValue>> events_;
   std::unique_ptr<Mpv> mpv_;
+  std::unique_ptr<NavSound> navSound_;   // the tick / select / back sounds (nav_sound.dart)
 
   // refresh-rate matching (Settings > Video output > Match refresh rate)
   DisplayRate display_;
@@ -317,6 +319,7 @@ void Host::Start() {
   fs::create_directories(cache_, ec);
   token_ = RandomHex(32);
 
+  navSound_ = std::make_unique<NavSound>();
   mpv_ = std::make_unique<Mpv>(reg_->texture_registrar(), [this](std::function<void()> fn) { Post(std::move(fn)); }, exeDir_.wstring());
 
   mpv_->SetMediaCallback([this](bool active, bool buffering, double pos, double dur) {
@@ -345,6 +348,7 @@ void Host::Stop() {
   discord::Disconnect();   // the profile stops saying "Watching" when the app closes
   media_.reset();       // takes the media keys back out of Windows
   display_.Reset();     // the screen gets its own refresh rate back
+  navSound_.reset();
 }
 
 // ---------------------------------------------------------------- refresh-rate matching (UI thread)
@@ -624,7 +628,10 @@ void Host::RegisterHost() {
     else if (m == "openAllFilesAccess") r->Success(EncodableValue(true));
     else if (m == "setMulticast") r->Success(Null());
     else if (m == "sendKey") r->Success(EncodableValue(false));
-    else if (m == "navSound") r->Success(Null());
+    else if (m == "navSound") {   // kind 0 = move, 1 = select, 2 = back; volume 0..1 (pek_navsound.cpp plays on its own thread)
+      if (navSound_) navSound_->Play(static_cast<int>(Num(a, "kind")), static_cast<float>(Num(a, "volume")));
+      r->Success(Null());
+    }
     else if (m == "volume") {
       const int dir = static_cast<int>(Num(a, "dir"));
       const BYTE vk = dir > 0 ? VK_VOLUME_UP : dir < 0 ? VK_VOLUME_DOWN : VK_VOLUME_MUTE;

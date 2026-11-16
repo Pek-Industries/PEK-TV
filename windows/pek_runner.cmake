@@ -1,8 +1,8 @@
 # Appended to the Flutter-generated windows/runner/CMakeLists.txt by windows/scripts/prepare-flutter-host.sh.
 # Adds the PEK host (channels, server loader, Python host, libmpv player) to the runner.
-target_sources(${BINARY_NAME} PRIVATE "pek_host.cpp" "pek_mpv.cpp" "pek_display.cpp" "pek_media.cpp" "pek_discord.cpp")
+target_sources(${BINARY_NAME} PRIVATE "pek_host.cpp" "pek_mpv.cpp" "pek_display.cpp" "pek_media.cpp" "pek_discord.cpp" "pek_navsound.cpp")
 # The PEK sources are not held to the template's warnings-as-errors rule (/W4 /WX).
-set_source_files_properties("pek_host.cpp" "pek_mpv.cpp" "pek_display.cpp" "pek_media.cpp" "pek_discord.cpp" PROPERTIES COMPILE_OPTIONS "/W3;/WX-;/utf-8")
+set_source_files_properties("pek_host.cpp" "pek_mpv.cpp" "pek_display.cpp" "pek_media.cpp" "pek_discord.cpp" "pek_navsound.cpp" PROPERTIES COMPILE_OPTIONS "/W3;/WX-;/utf-8")
 # pek_media.cpp uses C++/WinRT (SystemMediaTransportControls: media keys and the now-playing tile); its headers want standard conformance.
 set_source_files_properties("pek_media.cpp" PROPERTIES COMPILE_OPTIONS "/W3;/WX-;/utf-8;/permissive-")
 # Newer MSVC (Visual Studio 18 on the runners) turns <experimental/coroutine>, which C++/WinRT pulls in under the template's C++17,
@@ -11,7 +11,7 @@ set_source_files_properties("pek_media.cpp" PROPERTIES COMPILE_DEFINITIONS "_SIL
 # pek_host.cpp / flutter_window.cpp use flutter::PluginRegistrarWindows. That class lives in the plugin wrapper library,
 # which the template runner does not link (it only links flutter_wrapper_app), hence the unresolved PluginRegistrar symbols.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter_wrapper_plugin)
-target_link_libraries(${BINARY_NAME} PRIVATE "bcrypt.lib" "shell32.lib" "ole32.lib" "sapi.lib" "advapi32.lib" "comdlg32.lib" "user32.lib" "gdi32.lib" "opengl32.lib" "windowsapp.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "bcrypt.lib" "shell32.lib" "ole32.lib" "sapi.lib" "advapi32.lib" "comdlg32.lib" "user32.lib" "gdi32.lib" "opengl32.lib" "windowsapp.lib" "winmm.lib")
 
 # Discord Rich Presence (DISCORD.md). pek_discord.cpp is a no-op unless the Discord Social SDK for Windows is in windows/discord/
 # (prepare-flutter-host.sh copies that folder next to this file as runner/discord/):

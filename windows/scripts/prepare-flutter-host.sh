@@ -10,6 +10,9 @@ APP="$ROOT/build/windows_app"
 rm -rf "$APP"
 mkdir -p "$APP"
 cp -r "$ROOT/flutter_ui/lib" "$ROOT/flutter_ui/assets" "$ROOT/flutter_ui/pubspec.yaml" "$APP/"
+# The start-up video (win_splash.dart) is the Android one; it is added to the Windows build only, so the Android app does not carry it twice.
+mkdir -p "$APP/assets/splash"
+cp -f "$ROOT"/assets/android/res/raw/pek_splash.mp4 "$ROOT"/assets/android/res/raw/pek_splash_portrait.mp4 "$APP/assets/splash/"
 
 PY="$(command -v python3 || command -v python)"
 "$PY" - "$APP/pubspec.yaml" <<'PYEND'
@@ -18,6 +21,8 @@ p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
 # drop the "module:" block (androidX / androidPackage / iosBundleIdentifier)
 s = re.sub(r"\n  module:\n(?:    .*\n)+", "\n", s)
+assert "\n  assets:\n" in s
+s = s.replace("\n  assets:\n", "\n  assets:\n    - assets/splash/   # the start-up video, Windows only (win_splash.dart)\n", 1)
 open(p, "w", encoding="utf-8").write(s)
 PYEND
 

@@ -28,6 +28,8 @@ import 'weather.dart' show Weather, WeatherBadge;
 import 'widgets.dart';
 import 'art_cache.dart';
 import 'platform.dart';
+import 'trailer_page.dart';
+import 'win_web.dart';
 
 /// Opens a plugin's screen on top of the current one (a phone, or a TV from a place that is not the sidebar).
 Future<void> openPluginScreen(BuildContext context, {required String pluginId, required String title, Map<String, dynamic>? launch}) {
@@ -82,7 +84,11 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
   bool _foreground = true; // the app itself is in front
   Animation<double>? _secondary;
 
-  _TrailerHolder _holderFor(String id) => (_trailer != null && _trailer!.id == id) ? _trailer! : (_trailer = _TrailerHolder(id));
+  _TrailerHolder _holderFor(String id) {
+    if (_trailer != null && _trailer!.id == id) return _trailer!;
+    _trailer?.dispose();
+    return _trailer = _TrailerHolder(id);
+  }
 
   void _syncTrailer() => _trailer?.setActive(_trailerSeen && !_covered && _foreground);
 
@@ -165,6 +171,7 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
     _scroll.removeListener(_onScrollTrailer);
     _timer?.cancel();
     if (PluginBack.current == _backFn) PluginBack.current = null;
+    _trailer?.dispose();
     for (final s in _inputs.values) {
       s.controller.dispose();
     }
@@ -652,6 +659,7 @@ class _PluginViewState extends State<PluginView> with WidgetsBindingObserver {
     // screen is redrawn (same key), and it stops once it has scrolled well out of view.
     final video = (_error == null && _tree != null) ? _findVideo(_tree!) : null;
     if (video == null) {
+      _trailer?.dispose();
       _trailer = null; // the page has no trailer any more: let go of its web view
     }
     final Widget body;
@@ -1016,10 +1024,12 @@ class _TrailerHolder {
   /// stays visible until the video itself fades in.
   final bool seeThrough;
   WebViewController? controller;
+  WinTrailerController? win; // Windows: the WebView2 trailer (win_web.dart) instead of [controller]
   bool fellBack = false; // the plain stream failed: the YouTube frame is showing instead
   bool _active = true;
 
   void _command(String fn) {
+    win?.command(fn);
     final c = controller;
     if (c == null) return;
     try {
@@ -1033,6 +1043,9 @@ class _TrailerHolder {
     _active = on;
     _command(on ? 'playVideo' : 'pauseVideo');
   }
+
+  /// The page (or the title) that owned this trailer is gone: let go of the Windows web view. Android's is left to the garbage collector.
+  void dispose() => win?.dispose();
 }
 
 class _PluginTrailer extends StatefulWidget {
@@ -1054,10 +1067,18 @@ class _PluginTrailerState extends State<_PluginTrailer> {
   void initState() {
     super.initState();
     // A web view that already exists (the widget was rebuilt after scrolling back, or after a page was closed) is reused as it is.
-    if (PekPlatform.hasWebView && widget.autoplay && _controller == null) _start(play: true);
+    if (PekPlatform.hasWebView && widget.autoplay && _controller == null && widget.holder.win == null) _start(play: true);
+  }
+
+  /// Windows: the same trailer in WebView2 (win_web.dart).
+  void _startWin({required bool play}) {
+    final holder = widget.holder;
+    final w = holder.win ??= WinTrailerController();
+    unawaited(w.start(id: widget.id, play: play, muted: widget.muted, seeThrough: holder.seeThrough));
   }
 
   void _start({required bool play}) {
+    if (PekPlatform.isWindows) return _startWin(play: play);
     final holder = widget.holder;
     final id = widget.id;
     final muted = widget.muted;
@@ -1099,27 +1120,7 @@ class _PluginTrailerState extends State<_PluginTrailer> {
     final video = Api.withToken(Api.abs('${info['video']}'));
     final audioPath = '${info['audio'] ?? ''}';
     final audio = audioPath.isEmpty ? '' : Api.withToken(Api.abs(audioPath));
-    final bg = holder.seeThrough ? 'transparent' : '#000';
-    final css = 'html,body{margin:0;height:100%;background:$bg;overflow:hidden}'
-        'video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .4s}'
-        'video.on{opacity:1}'
-        'video::-webkit-media-controls,video::-webkit-media-controls-start-playback-button,video::-webkit-media-controls-overlay-play-button,video::-webkit-media-controls-panel{display:none!important;-webkit-appearance:none}';
-    final js = "var v=document.getElementById('v'),a=document.getElementById('a'),want=${play ? 'true' : 'false'},muted=${muted ? 'true' : 'false'},ok=false;"
-        "function bad(){if(!ok){ok=true;try{PekTrailer.postMessage('error')}catch(e){}}}"
-        "v.muted=a?true:muted;if(a)a.muted=muted;"
-        "function go(){if(!want)return;var p=v.play();if(p&&p.catch)p.catch(function(){});if(a){var q=a.play();if(q&&q.catch)q.catch(function(){})}}"
-        "function stop(){v.pause();if(a)a.pause()}"
-        "function post(o){if(!o||o.event!=='command')return;if(o.func==='playVideo'){want=true;go()}else if(o.func==='pauseVideo'){want=false;stop()}}"
-        "v.addEventListener('playing',function(){ok=true;v.className='on'});"
-        "v.addEventListener('error',bad);if(a)a.addEventListener('error',bad);"
-        "if(a){setInterval(function(){if(v.paused||v.readyState<3)return;if(Math.abs(a.currentTime-v.currentTime)>0.35)a.currentTime=v.currentTime;if(a.paused&&want)go()},400);"
-        "v.addEventListener('waiting',function(){a.pause()});v.addEventListener('playing',function(){if(want)a.play().catch(function(){})})}"
-        "setTimeout(function(){if(!ok)bad()},12000);go();";
-    final html = '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<style>$css</style></head><body>'
-        '<video id="v" src="$video" loop playsinline preload="auto" poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" disablepictureinpicture controlslist="nodownload nofullscreen noremoteplayback"></video>'
-        '${audio.isEmpty ? '' : '<audio id="a" src="$audio" loop preload="auto"></audio>'}'
-        '<script>$js</script></body></html>';
+    final html = trailerPageHtml(video: video, audio: audio, play: play, muted: muted, seeThrough: holder.seeThrough);
     await c.loadHtmlString(html, baseUrl: '${Api.base}/');
   }
 
@@ -1168,8 +1169,20 @@ class _PluginTrailerState extends State<_PluginTrailer> {
 
   @override
   Widget build(BuildContext context) {
-    if (!PekPlatform.hasWebView) return const SizedBox.shrink(); // Windows has no web view: no trailers, the picture under it stays
+    if (!PekPlatform.hasWebView) return const SizedBox.shrink(); // no web view on this host: no trailers, the picture under it stays
     final p = context.pek;
+    final win = widget.holder.win;
+    if (PekPlatform.isWindows) {
+      // Same as below with WebView2: the button until a trailer was started, then its picture (nothing at all when WebView2 or the stream is not there).
+      return ClipRect(
+        child: ColoredBox(
+          color: widget.holder.seeThrough ? Colors.transparent : Colors.black,
+          child: win == null
+              ? Center(child: PekButton(shrink: true, label: 'Play trailer', primary: true, onTap: () => setState(() => _start(play: true))))
+              : WinTrailerView(controller: win, seeThrough: widget.holder.seeThrough),
+        ),
+      );
+    }
     final c = _controller;
     return ClipRect(
       child: ColoredBox(
@@ -1204,10 +1217,17 @@ class _PekTrailerViewState extends State<PekTrailerView> {
   void didUpdateWidget(PekTrailerView old) {
     super.didUpdateWidget(old);
     if (old.videoId != widget.videoId) {
+      _holder.dispose();
       _holder = _TrailerHolder(widget.videoId, seeThrough: true); // another title: a new web view (the key below changes too)
     } else if (old.active != widget.active) {
       _holder.setActive(widget.active);
     }
+  }
+
+  @override
+  void dispose() {
+    _holder.dispose();
+    super.dispose();
   }
 
   @override

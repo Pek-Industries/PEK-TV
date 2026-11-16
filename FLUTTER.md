@@ -22,7 +22,7 @@ next to them. Today that is `android/` with its workflow `.github/workflows/buil
 example `linux/` or `windows/`) and its own workflow file; it does not need a branch. A host has to provide what Android's host
 does: start the backend on `127.0.0.1:8080`, and answer the `pek/*` platform channels (`pek/mpv`, `pek/music`, `pek/host`, `pek/pip` (Picture in picture: Home or the player's top bar button shrinks the app into a small floating window that keeps playing; `pip.dart`, FlutterHostActivity; no controls, Skip or Next episode card in the small window),
 `pek/plugins`, `pek/output`) that `flutter_ui/lib/src/` calls. Some pieces here are Android-only today (the Kotlin side of those
-channels, `webview_flutter_android` for plugin trailers).
+channels, `webview_flutter_android` for plugin trailers; `webview_flutter_windows` on Windows, `win_web.dart` / `win_splash.dart`).
 
 ## What the Flutter UI has now
 Swipe navigation on phones and tablets: **Home, Movies, Shows, Music and More are pages you swipe between** (or tap in the
@@ -84,7 +84,7 @@ Home has a switch, **For You / My Library** (`Store.simpleSource`: 'foryou', 'li
 
 ## Navigation sounds
 Apple TV-style interface sounds (`nav_sound.dart`, `NavSound.kt`): a soft tick when the D-pad / keyboard moves the highlight, a two-note tone for a tap or the centre button, a lower tone when a screen or dialog closes. Settings > Sounds turns them off or sets Low / Medium / High (device-wide, default on, Medium).
-- The sounds are generated in `NavSound.kt` (no audio files) and played on a low-latency `AudioTrack` through `pek/host` > `navSound(kind, volume)`, kind 0 = move, 1 = select, 2 = back. A host without it is simply silent.
+- The sounds are generated in `NavSound.kt` (Android) and `windows/runner/pek_navsound.cpp` (Windows) (no audio files) and played on a low-latency `AudioTrack` through `pek/host` > `navSound(kind, volume)`, kind 0 = move, 1 = select, 2 = back. A host without it is simply silent.
 - Move: `NavSounds.install()` (called in `main.dart`) listens to Flutter's focus and only ticks while the focus ring is showing, never for touch. Select: `PekFocusable` calls `NavSounds.select()` for every tap and centre-button press; to give another control the sound, call it from its handler. Back: `NavSounds.observers` on the `MaterialApp`.
 - Held back on purpose: no tick right after a select or back (the screen that opened or closed focuses something itself), no back right after a select (a dialog closing because of the tap), nothing while the video player is open (`NavSounds.mute()` / `unmute()` in `PlayerScreen`).
 - Test: `flutter_ui/test/nav_sound_test.dart`.

@@ -29,6 +29,7 @@ const List<(String, List<OssLib>)> ossGroups = [
     OssLib('share_plus', 'Sharing the history and ratings export', 'BSD 3-Clause', 'https://pub.dev/packages/share_plus/license'),
     OssLib('webview_flutter', 'Plugin trailers', 'BSD 3-Clause', 'https://pub.dev/packages/webview_flutter/license'),
     OssLib('webview_flutter_android', 'Plugin trailers (Android)', 'BSD 3-Clause', 'https://pub.dev/packages/webview_flutter_android/license'),
+    OssLib('webview_flutter_windows', 'Plugin trailers and the start-up video (Windows)', 'BSD 3-Clause', 'https://pub.dev/packages/webview_flutter_windows/license'),
     OssLib('image_picker', 'Choosing a playlist picture', 'BSD 3-Clause', 'https://pub.dev/packages/image_picker/license'),
     OssLib('path_provider', 'Where pictures and files are kept', 'BSD 3-Clause', 'https://pub.dev/packages/path_provider/license'),
     OssLib('qr_flutter', 'The QR code on the phone sign-in screen', 'BSD 3-Clause', 'https://pub.dev/packages/qr_flutter/license'),
