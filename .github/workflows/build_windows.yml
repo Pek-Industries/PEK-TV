@@ -26,6 +26,10 @@ on:
         description: 'Release builds only: also publish a GitHub release'
         type: boolean
         default: false
+      release_tag:
+        description: 'Windows ONLY for an existing release: type its tag (e.g. v2.2.7). Builds a signed release of the files you run this on and attaches the installer + zip to that release. Leave empty for a normal run.'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -59,7 +63,8 @@ jobs:
       run:
         shell: bash
     env:
-      BUILD_TYPE: ${{ github.event_name == 'push' && 'release' || inputs.build_type }}
+      BUILD_TYPE: ${{ github.event_name == 'push' && 'release' || inputs.release_tag != '' && 'release' || inputs.build_type }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
       WANT_TORRENT: ${{ github.event_name == 'workflow_dispatch' && inputs.torrent || github.event_name == 'push' && 'true' || 'false' }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -74,6 +79,8 @@ jobs:
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             python tools/check_version.py --tag "${GITHUB_REF_NAME}"
+          elif [ -n "$RELEASE_TAG" ]; then
+            python tools/check_version.py --tag "$RELEASE_TAG"
           else
             python tools/check_version.py
           fi
@@ -88,6 +95,8 @@ jobs:
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
+          elif [ -n "$RELEASE_TAG" ]; then
+            V="${RELEASE_TAG#v}"
           else
             V="$(grep -oP "versionName.*: '\K[^']+" android/app/build.gradle)-dev.${GITHUB_RUN_NUMBER}"
           fi
@@ -287,13 +296,17 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
-    if: ${{ (github.event_name == 'push' || inputs.publish) && (github.event_name == 'push' || inputs.build_type == 'release') }}
+    if: ${{ (github.event_name == 'push' || inputs.publish || inputs.release_tag != '') && (github.event_name == 'push' || inputs.release_tag != '' || inputs.build_type == 'release') }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Work out version name
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
+          elif [ -n "$RELEASE_TAG" ]; then
+            V="${RELEASE_TAG#v}"
           else
             V="$(grep -oP "versionName.*: '\K[^']+" android/app/build.gradle)-dev.${GITHUB_RUN_NUMBER}"
           fi
@@ -307,7 +320,7 @@ jobs:
       - name: GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', env.VERSION_NAME) }}
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag != '' && inputs.release_tag || format('v{0}', env.VERSION_NAME) }}
           name: PEK TV ${{ env.VERSION_NAME }}
           prerelease: false
           generate_release_notes: true
