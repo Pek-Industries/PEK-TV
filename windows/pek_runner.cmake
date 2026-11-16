@@ -15,7 +15,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE "bcrypt.lib" "shell32.lib" "ole32.l
 
 # Discord Rich Presence (DISCORD.md). pek_discord.cpp is a no-op unless the Discord Social SDK for Windows is in windows/discord/
 # (prepare-flutter-host.sh copies that folder next to this file as runner/discord/):
-#   discord/include/discordpp.h                  (the SDK's header, the same for every CPU type)
+#   discord/include/discordpp.h + cdiscord.h    (the SDK's headers, the same for every CPU type; discordpp.h includes cdiscord.h)
 #   discord/<x64|arm64>/discord_partner_sdk.lib  (import library)   discord/<x64|arm64>/discord_partner_sdk.dll  (shipped by stage-assets.sh)
 # A CPU type without its own folder (e.g. arm64 when Discord ships no ARM64 build) just builds without Discord.
 if(CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64")
@@ -24,7 +24,7 @@ else()
   set(PEK_DISCORD_ARCH "x64")
 endif()
 set(PEK_DISCORD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/discord")
-if(EXISTS "${PEK_DISCORD_DIR}/include/discordpp.h" AND EXISTS "${PEK_DISCORD_DIR}/${PEK_DISCORD_ARCH}/discord_partner_sdk.lib")
+if(EXISTS "${PEK_DISCORD_DIR}/include/discordpp.h" AND EXISTS "${PEK_DISCORD_DIR}/include/cdiscord.h" AND EXISTS "${PEK_DISCORD_DIR}/${PEK_DISCORD_ARCH}/discord_partner_sdk.lib")
   target_compile_definitions(${BINARY_NAME} PRIVATE PEK_DISCORD_SDK)
   target_include_directories(${BINARY_NAME} PRIVATE "${PEK_DISCORD_DIR}/include")
   target_link_libraries(${BINARY_NAME} PRIVATE "${PEK_DISCORD_DIR}/${PEK_DISCORD_ARCH}/discord_partner_sdk.lib")
