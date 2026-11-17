@@ -20,7 +20,7 @@ COPY --from=build /build/pek-server /pek-server
 FROM alpine:3.20 AS image
 RUN apk add --no-cache ffmpeg ca-certificates tzdata \
  && adduser -D -u 1000 pek \
- && mkdir /data /media && chown pek:pek /data
+ && mkdir -p /data /media && chown pek:pek /data
 COPY --from=build /build/pek-server /usr/local/bin/pek-server
 USER pek
 ENV PEK_DATA=/data PEK_MEDIA=/media
