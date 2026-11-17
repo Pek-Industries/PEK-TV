@@ -53,7 +53,7 @@ jobs:
         shell: msys2 {0}
         run: bash selfhost/windows/build.sh
 
-      - name: Show what the exe needs (should be Windows system DLLs only)
+      - name: Show what the exe needs (Windows system DLLs, plus the ones shipped next to it)
         shell: msys2 {0}
         run: |
           OBJDUMP="$(command -v llvm-objdump || command -v objdump)"

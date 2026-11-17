@@ -9,8 +9,9 @@ selfhost/linux/                see "Linux" below
 selfhost/windows/
   main.cpp                    the program: data folder, access key, first-run folder prompt, scanner, server, log
   CMakeLists.txt              builds pek-server.exe from main.cpp + the shared backend/ sources (MSYS2 clang, like windows/backend)
-  build.sh / package.sh       build, then zip (exe + ffprobe.exe + cacert.pem + the .bat helpers)
-  dist/                       what goes in the zip next to the exe: Start / Allow network access / Start with Windows / Stop, README.txt
+  build.sh / package.sh       build, then zip (exe + its DLLs + ffprobe.exe + cacert.pem + the .bat helpers)
+  collect-deps.sh             finds the DLLs the exe needs (OpenSSL, SQLite) so the zip can ship them next to it
+  bundle/                     what goes in the zip next to the exe: Start / Allow network access / Start with Windows / Stop, README.txt
 .github/workflows/build_selfhost_windows.yml     builds the zip on GitHub (x64 and arm64)
 ```
 

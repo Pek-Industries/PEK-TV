@@ -62,6 +62,11 @@ else()
     message(WARNING "PEK: no resource compiler found, building without the UTF-8 manifest")
 endif()
 
-target_link_libraries(pek-server PRIVATE OpenSSL::SSL OpenSSL::Crypto SQLite::SQLite3 ws2_32 iphlpapi crypt32 bcrypt)
-# One self-contained exe: no OpenSSL / SQLite / libc++ DLLs to ship next to it. -municode: the program starts at wmain (UTF-16 arguments).
+if(TARGET SQLite3::SQLite3)
+    set(PEK_SQLITE_TARGET SQLite3::SQLite3)   # newer CMake name
+else()
+    set(PEK_SQLITE_TARGET SQLite::SQLite3)
+endif()
+target_link_libraries(pek-server PRIVATE OpenSSL::SSL OpenSSL::Crypto ${PEK_SQLITE_TARGET} ws2_32 iphlpapi crypt32 bcrypt)
+# libc++ is linked in; OpenSSL and SQLite stay DLLs (collect-deps.sh ships them next to the exe). -municode: the program starts at wmain (UTF-16 arguments).
 target_link_options(pek-server PRIVATE -static -municode)

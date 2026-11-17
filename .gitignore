@@ -55,3 +55,4 @@ build/
 windows/libmpv/
 windows/ffmpeg/
 windows/python-embed/
+dist-selfhost/

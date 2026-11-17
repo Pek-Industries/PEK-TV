@@ -11,4 +11,5 @@ rm -rf build/selfhost
 cmake -S selfhost/windows -B build/selfhost -G Ninja -DCMAKE_BUILD_TYPE=Release -DPEK_SERVER_VERSION="${VERSION:-dev}"
 cmake --build build/selfhost
 ls -l build/selfhost/pek-server.exe
+bash selfhost/windows/collect-deps.sh
 echo "Built pek-server.exe ${VERSION:-dev}. Next: bash selfhost/windows/package.sh"

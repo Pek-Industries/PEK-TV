@@ -53,7 +53,12 @@ endforeach()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BACKEND}/pek_official_keys.txt)
 target_compile_definitions(pek-server PRIVATE PEK_OFFICIAL_KEYS="${PEK_KEYS}")
 
-target_link_libraries(pek-server PRIVATE OpenSSL::SSL OpenSSL::Crypto SQLite::SQLite3 Threads::Threads ${CMAKE_DL_LIBS})
+if(TARGET SQLite3::SQLite3)
+    set(PEK_SQLITE_TARGET SQLite3::SQLite3)   # newer CMake name
+else()
+    set(PEK_SQLITE_TARGET SQLite::SQLite3)
+endif()
+target_link_libraries(pek-server PRIVATE OpenSSL::SSL OpenSSL::Crypto ${PEK_SQLITE_TARGET} Threads::Threads ${CMAKE_DL_LIBS})
 target_link_options(pek-server PRIVATE -s)   # strip: a smaller download
 if(PEK_STATIC)
     target_link_options(pek-server PRIVATE -static)
