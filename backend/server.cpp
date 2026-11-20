@@ -12,6 +12,7 @@
 #include "skin_install.h"
 #include "subtitles.h"
 #include "tmdb_match.h"
+#include "selfhost.h"
 #include <iostream>
 #include <fstream>
 #include <functional>
@@ -971,8 +972,16 @@ void PekServer::start(int port, const std::string& plugins_dir,
             }
         }
 
+        // Self-hosted server: "who are you" and "pair with this code" answer without the key (selfhost.h). Off in the apps.
+        if (remoteOpen && !fromLoopback && localToken.empty() && pekself::isOpenRoute(req))
+            return httplib::Server::HandlerResponse::Unhandled;
+
         if (remoteOpen && !fromLoopback && localToken.empty()) {
             const std::string viaHeader = req.get_header_value("X-Pek-Token");
+            // pek_t: the key as a query parameter, for players and picture loaders that cannot set headers (libmpv), same as the
+            // apps' own per-launch token. Answered directly, no redirect / cookie round trip a player would not follow.
+            const std::string viaQuery = req.has_param("pek_t") ? req.get_param_value("pek_t") : std::string();
+            if (constantTimeEquals(viaQuery, token)) return httplib::Server::HandlerResponse::Unhandled;
             const std::string viaCookie = cookieValue(req.get_header_value("Cookie"), "pek_token");
             // old names (before the rename), still honoured so a saved cookie or script keeps working
             const std::string viaOldHeader = req.get_header_value("X-Hesper-Token");
@@ -1003,6 +1012,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         {"Referrer-Policy", "no-referrer"}
     });
 
+    pekself::registerRoutes(svr);            // /api/server/info, /api/pair (self-hosted server only, selfhost.h)
     registerPlaybackRoutes(svr, scanner);   // /api/stream/<id>
     peektrailer::registerTrailerRoutes(svr);   // /api/trailer: trailers as a plain video stream (trailer.h)
     registerTorrentRoutes(svr);             // /api/torrent/* (start, status, stream, stop)

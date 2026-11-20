@@ -3,6 +3,8 @@
 //
 //   pek-server.exe                       start (first run asks for a media folder)
 //   pek-server.exe --add-media D:\Movies add a folder, then start
+//   pek-server.exe --pair                ask the running server for a 6-digit code to pair a TV / phone with
+//   pek-server.exe --add-user alice      make an account (asks for the password; the first account is the owner)
 //   pek-server.exe --help
 //
 // Remote access is the server's own PEK_BIND / PEK_TOKEN mechanism (backend/server.cpp): every request from another device must carry
@@ -28,6 +30,9 @@
 #include "media_scanner.h"
 #include "vfs.h"
 #include "torrent_routes.h"
+#include "selfhost.h"          // /api/server/info + pairing codes
+#include "accounts.h"          // username + password accounts and sync
+#include "selfhost_beacon.h"   // found by the app's Connect screen (UDP 8768)
 
 #ifndef PEK_SERVER_VERSION
 #define PEK_SERVER_VERSION "dev"
@@ -200,8 +205,11 @@ struct Options {
     std::string dataDir;
     int port = 8080;
     std::string bind = "0.0.0.0";
+    std::string name;
     std::vector<std::string> media;
-    bool newKey = false, noScan = false, hideConsole = false, help = false, version = false;
+    bool newKey = false, noScan = false, hideConsole = false, pair = false, help = false, version = false;
+    std::string addUser, removeUser, setPassword, email;   // account commands (run, then exit)
+    bool listUsers = false;
     int rescanMinutes = 60;
 };
 
@@ -215,6 +223,14 @@ static void usage() {
         "  --port <number>        port to listen on (default 8080)\n"
         "  --local-only           answer this PC only (no other device can connect)\n"
         "  --new-key              make a new access key (every paired device must pair again)\n"
+        "  --pair                 get a 6-digit code from the running server to pair a TV / phone (works 10 minutes)\n"
+        "  --name <text>          the name devices show for this server (default: this PC's name)\n"
+        "\n  Accounts (people sign in with these; history, resume points and favorites sync between their devices):\n"
+        "  --add-user <name>      make an account; asks for the password. The first one is the owner\n"
+        "  --email <address>      with --add-user: lets them sign in with their email too\n"
+        "  --set-password <name>  give an account a new password (signs it out everywhere)\n"
+        "  --remove-user <name>   delete an account and everything it synced\n"
+        "  --list-users           show the accounts\n\n"
         "  --rescan-minutes <n>   look for new files every n minutes, 0 = never (default 60)\n"
         "  --no-scan              do not scan at start-up\n"
         "  --hide-console         close the console window and run in the background\n"
@@ -241,6 +257,13 @@ static bool parseArgs(int argc, wchar_t** argv, Options& o) {
         }
         else if (a == "--local-only") o.bind = "127.0.0.1";
         else if (a == "--new-key") o.newKey = true;
+        else if (a == "--pair") o.pair = true;
+        else if (a == "--name") { if (!next(v)) return false; o.name = trim(v); }
+        else if (a == "--add-user") { if (!next(v)) return false; o.addUser = trim(v); }
+        else if (a == "--remove-user") { if (!next(v)) return false; o.removeUser = trim(v); }
+        else if (a == "--set-password") { if (!next(v)) return false; o.setPassword = trim(v); }
+        else if (a == "--email") { if (!next(v)) return false; o.email = trim(v); }
+        else if (a == "--list-users") o.listUsers = true;
         else if (a == "--no-scan") o.noScan = true;
         else if (a == "--hide-console") o.hideConsole = true;
         else if (a == "--rescan-minutes") { if (!next(v)) return false; o.rescanMinutes = (std::max)(0, atoi(v.c_str())); }
@@ -253,6 +276,108 @@ static fs::path exeDir() {
     wchar_t p[MAX_PATH * 2] = {};
     GetModuleFileNameW(nullptr, p, static_cast<DWORD>(sizeof p / sizeof p[0]));
     return fs::path(p).parent_path();
+}
+
+// The id devices remember this server by (its address can change): made once, kept in <data>\server-id.txt.
+static std::string loadOrMakeId(const fs::path& file) {
+    {
+        std::ifstream in(file);
+        std::string k;
+        if (in && std::getline(in, k)) { k = trim(k); if (k.size() >= 8) return k; }
+    }
+    const std::string k = randomHex(8);
+    if (!k.empty()) { std::ofstream out(file, std::ios::trunc); out << k << "\n"; }
+    return k;
+}
+
+static std::string machineName() {
+    wchar_t n[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD len = MAX_COMPUTERNAME_LENGTH + 1;
+    if (GetComputerNameW(n, &len) && len > 0) return toUtf8(std::wstring(n, len));
+    return "PEK Server";
+}
+
+// pek-server.exe --pair: asks the server already running on this PC for a new code (loopback needs no key).
+static int askForPairingCode(int port) {
+    httplib::Client c("127.0.0.1", port);
+    c.set_connection_timeout(3, 0);
+    c.set_read_timeout(5, 0);
+    auto r = c.Post("/api/pair/new", "", "application/x-www-form-urlencoded");
+    if (!r) {
+        std::cerr << "PEK Server is not running on port " << port << " (start it first, or pass --port)." << std::endl;
+        return 1;
+    }
+    if (r->status != 200) {
+        std::cerr << "The server said HTTP " << r->status << ". Is it an older PEK Server without pairing codes?" << std::endl;
+        return 1;
+    }
+    const std::string& b = r->body;
+    const size_t at = b.find("\"code\": \"");
+    const std::string code = at == std::string::npos ? std::string() : b.substr(at + 9, 6);
+    if (code.size() != 6) { std::cerr << "Unexpected answer: " << b << std::endl; return 1; }
+    std::cout << "\nPairing code:  " << pekself::spaced(code) << "\n\n"
+              << "In PEK TV open Settings > Library > Connect to a server, pick this PC and type the code.\n"
+              << "It works for " << pekself::kCodeMinutes << " minutes, for one device.\n" << std::endl;
+    return 0;
+}
+
+// A password typed at the console without showing it.
+static std::string readSecret(const char* prompt) {
+    std::cout << prompt << std::flush;
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    const bool console = GetConsoleMode(in, &mode) != 0;
+    if (console) SetConsoleMode(in, mode & ~static_cast<DWORD>(ENABLE_ECHO_INPUT));
+    std::string s;
+    if (console) {
+        // Read as typed (readLine() trims spaces and quotes, which is right for folders but would change a password).
+        wchar_t buf[512];
+        DWORD n = 0;
+        if (ReadConsoleW(in, buf, 511, &n, nullptr)) s = toUtf8(std::wstring(buf, n));
+        SetConsoleMode(in, mode);
+        std::cout << std::endl;
+    } else {
+        std::getline(std::cin, s);
+    }
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+    return s;
+}
+static std::string newPassword() {
+    if (const char* e = std::getenv("PEK_PASSWORD"); e && *e) return e;
+    const std::string a = readSecret("Password (8 or more characters): ");
+    const std::string b = readSecret("The same password again: ");
+    if (a != b) { std::cerr << "The two passwords are not the same." << std::endl; return {}; }
+    return a;
+}
+
+/// --add-user / --set-password / --remove-user / --list-users. Returns the exit code.
+static int accountCommand(const Options& opt) {
+    if (!pekacct::open(toUtf8(pathOf(opt.dataDir + "/accounts.db").wstring()))) return 1;
+    std::string err;
+    if (opt.listUsers) {
+        const auto users = pekacct::listUsers();
+        if (users.empty()) std::cout << "No accounts yet. Make one:  pek-server.exe --add-user <name>   (or \"Add a user.bat\")" << std::endl;
+        for (const auto& u : users)
+            std::cout << "  " << u.username << (u.email.empty() ? "" : "  <" + u.email + ">") << (u.owner ? "  (owner)" : "")
+                      << "  - signed in on " << u.sessions << " device(s)" << std::endl;
+        return 0;
+    }
+    if (!opt.addUser.empty()) {
+        const std::string pw = newPassword();
+        if (pw.empty()) return 1;
+        err = pekacct::addUser(opt.addUser, pw, opt.email);
+        if (err.empty()) std::cout << "Account " << opt.addUser << " made. In PEK TV: Settings > Account > Sign in." << std::endl;
+    } else if (!opt.setPassword.empty()) {
+        const std::string pw = newPassword();
+        if (pw.empty()) return 1;
+        err = pekacct::setPassword(opt.setPassword, pw);
+        if (err.empty()) std::cout << "New password set for " << opt.setPassword << "; it was signed out on every device." << std::endl;
+    } else if (!opt.removeUser.empty()) {
+        err = pekacct::removeUser(opt.removeUser);
+        if (err.empty()) std::cout << "Account " << opt.removeUser << " and everything it synced are deleted." << std::endl;
+    }
+    if (!err.empty()) { std::cerr << err << std::endl; return 1; }
+    return 0;
 }
 
 static std::string defaultDataDir() {
@@ -270,6 +395,8 @@ int wmain(int argc, wchar_t** argv) {
 
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
+    if (opt.pair) return askForPairingCode(opt.port);   // talks to the running server; touches nothing here
+    if (opt.name.empty()) opt.name = machineName();
 
     // ---- data folder + log ---------------------------------------------------------------------------------------------------
     if (opt.dataDir.empty()) opt.dataDir = defaultDataDir();
@@ -278,6 +405,9 @@ int wmain(int argc, wchar_t** argv) {
     fs::create_directories(pathOf(opt.dataDir + "/plugins"), ec);
     fs::create_directories(pathOf(opt.dataDir + "/skins"), ec);
     if (ec) { std::cerr << "Cannot create the data folder " << opt.dataDir << ": " << ec.message() << std::endl; return 1; }
+
+    if (opt.listUsers || !opt.addUser.empty() || !opt.removeUser.empty() || !opt.setPassword.empty())
+        return accountCommand(opt);   // works whether the server is running or not (SQLite keeps them apart)
 
     static std::ofstream logFile;
     const fs::path logPath = pathOf(opt.dataDir + "/server.log");
@@ -307,6 +437,14 @@ int wmain(int argc, wchar_t** argv) {
         if (key.empty()) { std::cerr << "Could not make an access key." << std::endl; return 1; }
         if (made) std::cout << "A new access key was made." << std::endl;
         _putenv_s("PEK_TOKEN", key.c_str());
+        pekself::Info si;
+        si.key = key;
+        si.name = opt.name;
+        si.id = loadOrMakeId(pathOf(opt.dataDir + "/server-id.txt"));
+        si.version = PEK_SERVER_VERSION;
+        si.port = opt.port;
+        pekacct::open(toUtf8(pathOf(opt.dataDir + "/accounts.db").wstring()));   // accounts + sync (/v1/...); logs why when it cannot
+        pekself::enable(si);   // before PekServer::start: it registers /api/server/info and /api/pair when this is on
     }
     _putenv_s("PEK_BIND", opt.bind.c_str());
 
@@ -366,13 +504,22 @@ int wmain(int argc, wchar_t** argv) {
 
     // ---- how to connect ------------------------------------------------------------------------------------------------------
     std::ostringstream info;
-    info << "PEK Server " PEK_SERVER_VERSION " is running.\n\n";
+    info << "PEK Server " PEK_SERVER_VERSION " (\"" << opt.name << "\") is running.\n\n";
     if (remote) {
         const auto addrs = lanAddresses();
         info << "Connect your devices to one of these addresses:\n";
         if (addrs.empty()) info << "  (no network connection found - connect this PC to your network)\n";
         for (const auto& a : addrs) info << "  http://" << a.second << ":" << port << "    (" << a.first << ")\n";
-        info << "\nAccess key:\n  " << key << "\n"
+        pekself::startBeacon([]() { return g_stop.load(); });
+        const std::string code = pekself::newCode();
+        info << "\nPairing code (for one TV / phone, works " << pekself::kCodeMinutes << " minutes):  " << pekself::spaced(code) << "\n"
+             << "  In PEK TV: Settings > Library > Connect to a server. Need another code later? Double-click \"Pair a device.bat\".\n";
+        if (pekacct::isOn()) {
+            const long long n = pekacct::userCount();
+            if (n == 0) info << "\nAccounts: none yet. Double-click \"Add a user.bat\" so people can sign in and sync.\n";
+            else info << "\nAccounts: " << n << " (pek-server.exe --list-users). People sign in with them in Settings > Account.\n";
+        }
+        info << "\nAccess key (typing this instead of a code also works):\n  " << key << "\n"
              << "\nAnyone with this key can use your library - keep it private.\n"
              << "To test from a browser on another device, open  http://<address>:" << port << "/api/movies?token=" << key << "\n"
              << "The first time, Windows may ask to allow network access: choose \"Private networks\".\n";

@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'h2_fetch.dart';
 import 'recs.dart' show RecFeed;
 import 'api.dart' show Api;
+import 'server_target.dart' show ServerTarget;
 
 /// Keeps what was looked up online on the device, so posters, titles and synopses show at once after a restart and still
 /// show when the internet is gone.
@@ -205,13 +206,12 @@ class ArtCache {
 
   // ---------------------------------------------------------------- pictures
 
-  static const _localArtPrefix = 'http://127.0.0.1:8080/api/artwork?';
+  /// A picture of the library itself (served by the app's own server, or the paired PEK Server, from the user's files).
+  static bool isLocalArt(String url) => url.startsWith('${Api.base}/api/artwork?') || url.startsWith('${Api.lib}/api/artwork?');
 
-  /// A picture of the library itself (served by the app's own server from the user's local or network files).
-  static bool isLocalArt(String url) => url.startsWith(_localArtPrefix);
-
+  // Our own servers' other addresses are not copied (they answer fast or change), nor is anything on this device.
   static bool _cacheable(String url) =>
-      isLocalArt(url) || (url.startsWith('http') && !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost'));
+      isLocalArt(url) || (url.startsWith('http') && !Api.isLocal(url) && !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost'));
 
   static Directory? _dirFor(String url) => isLocalArt(url) ? (_localDir ?? _imgDir) : _imgDir;
 
@@ -422,8 +422,10 @@ class ArtCache {
     final dd = _dataDir;
     if (dd != null) {
       try {
-        final f = File('${dd.path}/details.json');
-        if (await f.exists()) await f.delete();
+        for (final name in {'details.json', ServerTarget.savedName('details.json')}) {
+          final f = File('${dd.path}/$name');
+          if (await f.exists()) await f.delete();
+        }
       } catch (_) {}
     }
   }

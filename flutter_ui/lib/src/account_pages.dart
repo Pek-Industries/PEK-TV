@@ -11,6 +11,7 @@ import 'profile_pages.dart';
 import 'plan_ui.dart';
 import 'plugin_backup_ui.dart';
 import 'profiles.dart';
+import 'server_target.dart' show ServerTarget;
 import 'tokens.dart';
 import 'widgets.dart';
 
@@ -154,14 +155,19 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
   }
 
   Future<void> _signOut() async {
-    final ok = await _confirm('Are you sure you want to sign out?', 'Watch history and resume points of every profile leave this device (the cloud keeps them). You can sign in again any time.', 'Yes, sign out');
+    final ok = await _confirm('Are you sure you want to sign out?', Cloud.onServer ? 'Watch history and resume points of every profile leave this device (your server keeps them). You can sign in again any time.' : 'Watch history and resume points of every profile leave this device (the cloud keeps them). You can sign in again any time.', 'Yes, sign out');
     if (!ok) return;
     await Cloud.signOut();
     if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
   }
 
   Future<void> _delete() async {
-    final ok = await _confirm('Delete the account?', 'This permanently deletes the cloud account with every profile\u2019s history and resume points, and any PEK Cloud plan on it (a lifetime plan too). It cannot be undone.', 'Delete account');
+    final ok = await _confirm(
+        'Delete the account?',
+        Cloud.onServer
+            ? 'This permanently deletes your account on ${ServerTarget.name} with every profile\u2019s history and resume points. It cannot be undone.'
+            : 'This permanently deletes the cloud account with every profile\u2019s history and resume points, and any PEK Cloud plan on it (a lifetime plan too). It cannot be undone.',
+        'Delete account');
     if (!ok) return;
     final r = await Cloud.deleteAccount();
     if (!mounted) return;
@@ -181,6 +187,18 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
     return ListenableBuilder(
       listenable: Listenable.merge([Cloud.changes, Profiles.changes]),
       builder: (context, _) {
+        if (!Cloud.linked && Cloud.onServer) {
+          // A paired PEK Server with accounts: its owner makes the accounts, there is nothing to buy or sign up for.
+          return Section(
+            title: 'Account',
+            hint: 'Sign in with your account on ${ServerTarget.name}. Each profile keeps its own history and resume points, synced across your devices through your server. No account yet? The server owner makes one (pek-server --add-user).',
+            children: [
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                PekButton(label: 'Sign in', primary: true, onTap: () => _open(AccountMode.signIn)),
+              ]),
+            ],
+          );
+        }
         if (!Cloud.linked) {
           return Section(
             title: 'Account',
@@ -206,15 +224,16 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
               Expanded(child: Text('Watching as ${cur.name}', style: TextStyle(fontSize: 1.05 * rem, fontWeight: FontWeight.w600))),
             ]),
             SizedBox(height: 0.75 * rem),
-            const PlanBadge(),
+            if (!Cloud.onServer) const PlanBadge(),
+            if (Cloud.onServer) _detail('Server', '${ServerTarget.name} \u00b7 everything included'),
             _detail('Signed in as', Cloud.email),
-            _detail('Username', Cloud.username.isEmpty ? 'Not chosen yet' : Cloud.username),
-            _detail('Plan price', _planPrice(Cloud.entitled ? Cloud.plan : 'free')),
+            if (!Cloud.onServer) _detail('Username', Cloud.username.isEmpty ? 'Not chosen yet' : Cloud.username),
+            if (!Cloud.onServer) _detail('Plan price', _planPrice(Cloud.entitled ? Cloud.plan : 'free')),
             if (Cloud.planSince > 0 && (Cloud.plan == 'monthly' || Cloud.plan == 'yearly' || Cloud.plan == 'lifetime')) _detail('Subscribed since', _longDate(Cloud.planSince)),
             if (Cloud.lapseState != 'none') _lapseCard(p, Cloud.lapseState),
             SizedBox(height: 0.4 * rem),
             if (Cloud.entitled) Text('Last synced: ${_ago(Cloud.lastSync)}', style: TextStyle(color: p.tokens.textMuted)),
-            if (Cloud.username.isEmpty) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text('This account has no username yet. Every account needs one: choose it on the website.', style: TextStyle(color: p.tokens.textMuted))),
+            if (Cloud.username.isEmpty && !Cloud.onServer) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text('This account has no username yet. Every account needs one: choose it on the website.', style: TextStyle(color: p.tokens.textMuted))),
             if (_note.isNotEmpty) Padding(padding: EdgeInsets.only(top: 0.4 * rem), child: Text(_note, style: TextStyle(color: p.tokens.textMuted))),
             if (Cloud.entitled && (Cloud.plan == 'lifetime' || Cloud.plan == 'grandfathered'))
               Padding(
@@ -223,7 +242,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
               ),
             SizedBox(height: 0.75 * rem),
             Wrap(spacing: 8, runSpacing: 8, children: [
-              if (Cloud.username.isEmpty) PekButton(label: 'Choose a username', primary: true, onTap: () => openSitePage(context, Cloud.accountPage)),
+              if (Cloud.username.isEmpty && !Cloud.onServer) PekButton(label: 'Choose a username', primary: true, onTap: () => openSitePage(context, Cloud.accountPage)),
               if (Cloud.entitled) PekButton(label: _busy ? 'Syncing\u2026' : 'Sync now', primary: true, onTap: _busy ? null : _syncNow),
               if (!Cloud.entitled) PekButton(label: 'Upgrade', primary: true, onTap: _upgrade),
               // Monthly and yearly: change, cancel or move up to lifetime on the website. Lifetime and included accounts have nothing to buy.
@@ -237,9 +256,13 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
               PekButton(label: 'Delete account', onTap: _delete),
             ]),
             SizedBox(height: 0.5 * rem),
-            Text(Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'History and resume points stay on this device. PEK Cloud backs them up, syncs your devices and adds up to 5 profiles.', style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
-            if (Cloud.entitled) const CloudUsageCard(),
-            if (Cloud.entitled) const PluginBackupSettings(),
+            Text(
+                Cloud.onServer
+                    ? 'Your PEK Server keeps watch history, resume points, favorites, ratings and profiles, and syncs them to your other devices. Plugin backup and Discord need a PEK Cloud account.'
+                    : (Cloud.entitled ? 'Library favorites stay on this device. The cloud keeps watch history and resume points.' : 'History and resume points stay on this device. PEK Cloud backs them up, syncs your devices and adds up to 5 profiles.'),
+                style: TextStyle(color: p.tokens.textMuted, fontSize: 0.85 * rem)),
+            if (Cloud.entitled && !Cloud.onServer) const CloudUsageCard(),
+            if (Cloud.entitled && !Cloud.onServer) const PluginBackupSettings(),
           ],
         );
       },
@@ -435,7 +458,15 @@ class _AccountScreenState extends State<AccountScreen> {
           constraints: BoxConstraints(maxWidth: 32 * rem),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (_info.isNotEmpty) Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text(_info, style: TextStyle(color: t.textMuted))),
-            PekField(label: 'Email', controller: _email, keyboardType: TextInputType.emailAddress, autofocus: !emailLocked, enabled: !emailLocked, onSubmitted: _mode == AccountMode.forgot ? _submit : null),
+            if (Cloud.onServer && _mode == AccountMode.signIn)
+              Padding(padding: EdgeInsets.only(bottom: 0.75 * rem), child: Text('Your account on ${ServerTarget.name}.', style: TextStyle(color: t.textMuted))),
+            PekField(
+                label: Cloud.onServer ? 'Username or email' : 'Email',
+                controller: _email,
+                keyboardType: Cloud.onServer ? TextInputType.text : TextInputType.emailAddress,
+                autofocus: !emailLocked,
+                enabled: !emailLocked,
+                onSubmitted: _mode == AccountMode.forgot ? _submit : null),
             if (_mode == AccountMode.signIn || _mode == AccountMode.reset)
               PekField(label: _mode == AccountMode.reset ? 'New password (8 or more characters)' : 'Password', controller: _pass, obscure: true, onSubmitted: _mode == AccountMode.signIn ? _submit : null),
             if (_mode == AccountMode.verify || _mode == AccountMode.reset) PekField(label: '6-digit code', controller: _code, keyboardType: TextInputType.number, autofocus: true, onSubmitted: _mode == AccountMode.verify ? _submit : null),
@@ -443,7 +474,9 @@ class _AccountScreenState extends State<AccountScreen> {
             Align(alignment: Alignment.centerLeft, child: PekButton(label: _busy ? 'Please wait\u2026' : primary, primary: true, onTap: _busy ? null : _submit)),
             SizedBox(height: 1.25 * rem),
             Wrap(spacing: 8, runSpacing: 8, children: [
-              if (_mode == AccountMode.signIn) ...[
+              if (_mode == AccountMode.signIn && Cloud.onServer)
+                Text('Forgot your password? The server owner can set a new one (pek-server --set-password).', style: TextStyle(color: t.textMuted, fontSize: 0.85 * rem)),
+              if (_mode == AccountMode.signIn && !Cloud.onServer) ...[
                 if (p.tvDevice) PekButton(compact: true, label: 'Sign in with phone', onTap: () => Navigator.pushReplacement<void, void>(context, MaterialPageRoute<void>(builder: (_) => const LinkScreen()))),
                 PekButton(compact: true, label: 'Create account', onTap: () => openSignUpPage(context)),
                 PekButton(compact: true, label: 'Forgot password?', onTap: () => _go(AccountMode.forgot)),

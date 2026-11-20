@@ -21,6 +21,8 @@ import 'mpv.dart';
 import 'net_folders.dart';
 import 'news.dart';
 import 'open_source.dart';
+import 'server_connect.dart' show LibraryServerSection;
+import 'server_target.dart' show ServerTarget;
 import 'music_mode.dart';
 import 'plugin_backup.dart';
 import 'plugin_backup_ui.dart';
@@ -570,11 +572,16 @@ class _LibrarySettingsState extends State<_LibrarySettings> {
   Widget build(BuildContext context) {
     final t = context.pek.tokens;
     final rem = context.pek.rem;
+    // With a PEK Server paired, the sources listed and added here are the SERVER's folders (its own disks and shares).
+    final onServer = ServerTarget.remote;
     return _SettingsList(children: [
+      const LibraryServerSection(),
       if (!widget.music) const SortMemorySection(),
       Section(
-        title: 'Media sources',
-        hint: widget.music ? 'Folders PEK TV scans for music. Removing one only forgets it; no files are deleted.' : 'Folders PEK TV scans for movies, shows and music. Removing one only forgets it; no files are deleted.',
+        title: onServer ? 'Media sources on {name}'.trp({'name': ServerTarget.name}) : 'Media sources',
+        hint: onServer
+            ? 'Folders on the server that it scans. Adding one here browses the server\'s own disks and network shares, not this device\'s.'.tr
+            : (widget.music ? 'Folders PEK TV scans for music. Removing one only forgets it; no files are deleted.' : 'Folders PEK TV scans for movies, shows and music. Removing one only forgets it; no files are deleted.'),
         children: [
           Async<List<String>>(
             future: _sources,
@@ -584,7 +591,7 @@ class _LibrarySettingsState extends State<_LibrarySettings> {
             ]),
           ),
           SizedBox(height: 0.5 * rem),
-          const AllFilesAccessBanner(),
+          if (!onServer) const AllFilesAccessBanner(),
           Wrap(spacing: 8, runSpacing: 8, children: [
             PekButton(label: 'Add source folder', primary: true, onTap: _addFolder),
             PekButton(label: 'Add network folder', onTap: _addNetFolder),

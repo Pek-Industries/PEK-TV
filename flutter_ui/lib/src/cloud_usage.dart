@@ -70,8 +70,8 @@ class CloudUsage {
   static UsagePart get skins => _mine?.skins ?? const UsagePart(max: 100);
   static bool get known => _mine != null;
 
-  static bool get pluginsFull => Cloud.linked && Cloud.entitled && (_pluginBlocked || (known && plugins.full));
-  static bool get skinsFull => Cloud.linked && Cloud.entitled && (_skinBlocked || (known && skins.full));
+  static bool get pluginsFull => Cloud.linked && Cloud.entitled && !Cloud.onServer && (_pluginBlocked || (known && plugins.full));
+  static bool get skinsFull => Cloud.linked && Cloud.entitled && !Cloud.onServer && (_skinBlocked || (known && skins.full));
 
   /// Called by the plugin backup after each pass: [quotaHit] is true when a plugin was refused because the allowance is used up.
   static void notePluginRun({required bool quotaHit}) {
@@ -104,7 +104,7 @@ class CloudUsage {
 
   /// Asks the cloud for this profile's numbers. At most once every 20 seconds unless [force].
   static Future<void> refresh({bool force = false}) {
-    if (!Cloud.linked) return Future.value();
+    if (!Cloud.linked || Cloud.onServer) return Future.value(); // a self-hosted server has no quotas to show
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_asking != null) return _asking!;
     if (!force && now - _lastAsk < 20000) return Future.value();
@@ -179,7 +179,7 @@ class CloudUsageBar extends StatelessWidget {
     return ListenableBuilder(
       listenable: CloudUsage.listenable,
       builder: (context, _) {
-        if (!Cloud.linked || !Cloud.entitled) return const SizedBox.shrink();
+        if (!Cloud.linked || !Cloud.entitled || Cloud.onServer) return const SizedBox.shrink();
         final k = CloudUsage.known;
         final part = skins ? CloudUsage.skins : CloudUsage.plugins;
         final left = part.max - part.count < 0 ? 0 : part.max - part.count;
@@ -219,7 +219,7 @@ class _CloudUsageCardState extends State<CloudUsageCard> {
     return ListenableBuilder(
       listenable: CloudUsage.listenable,
       builder: (context, _) {
-        if (!Cloud.linked || !Cloud.entitled) return const SizedBox.shrink();
+        if (!Cloud.linked || !Cloud.entitled || Cloud.onServer) return const SizedBox.shrink();
         final pl = CloudUsage.plugins, sk = CloudUsage.skins, k = CloudUsage.known;
         return Padding(
           padding: EdgeInsets.only(top: 0.9 * rem),

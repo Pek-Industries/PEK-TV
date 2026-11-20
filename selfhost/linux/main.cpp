@@ -2,12 +2,17 @@
 // own that keeps your library and streams it to other devices. Meant for servers, NAS boxes, mini PCs and Docker: no window, logs go to
 // the console (systemd journal / docker logs) and to <data>/server.log, and it stops cleanly on SIGTERM.
 //
+// The same file is the Android edition that runs in Termux (selfhost/termux, built with the NDK): the few differences are under
+// __ANDROID__ (default port 8090, because PEK TV on the same phone already uses 8080; the phone's model as the name; Termux hints).
+//
 //   pek-server                          start (asks for a media folder on the first run when started from a terminal)
 //   pek-server --add-media /srv/movies  add a folder, then start
+//   pek-server --pair                   ask the running server for a 6-digit code to pair a TV / phone with
+//   pek-server --add-user alice         make an account (asks for the password; the first account is the owner)
 //   pek-server --help
 //
 // Settings can also come from the environment (handy for Docker and systemd):
-//   PEK_DATA=/data  PEK_MEDIA=/media/movies:/media/music  PEK_PORT=8080  PEK_BIND=0.0.0.0  PEK_TOKEN=<access key>
+//   PEK_DATA=/data  PEK_MEDIA=/media/movies:/media/music  PEK_PORT=8080  PEK_BIND=0.0.0.0  PEK_TOKEN=<access key>  PEK_NAME=<shown name>
 // Remote access is the server's own PEK_BIND / PEK_TOKEN mechanism (backend/server.cpp): every request from another device must carry
 // the access key. Unless PEK_TOKEN is given, the key is made once and kept in <data>/access-key.txt (readable by its owner only),
 // so paired devices stay paired across restarts.
@@ -17,7 +22,11 @@
 #include <netinet/in.h>
 #include <pwd.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <unistd.h>
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -36,12 +45,21 @@
 #include "media_scanner.h"
 #include "vfs.h"
 #include "torrent_routes.h"
+#include "selfhost.h"          // /api/server/info + pairing codes
+#include "accounts.h"          // username + password accounts and sync
+#include "selfhost_beacon.h"   // found by the app's Connect screen (UDP 8768)
 
 #ifndef PEK_SERVER_VERSION
 #define PEK_SERVER_VERSION "dev"
 #endif
 
 namespace fs = std::filesystem;
+
+#ifdef __ANDROID__
+static constexpr int kDefaultPort = 8090;   // PEK TV on the same phone runs its own server on 8080
+#else
+static constexpr int kDefaultPort = 8080;
+#endif
 
 static volatile std::sig_atomic_t g_stop = 0;
 static void onSignal(int) { g_stop = 1; }
@@ -173,10 +191,13 @@ static std::vector<std::pair<std::string, std::string>> lanAddresses() {   // {i
 // ---- command line ------------------------------------------------------------------------------------------------------------
 struct Options {
     std::string dataDir;
-    int port = 8080;
+    int port = kDefaultPort;
     std::string bind = "0.0.0.0";
+    std::string name;
     std::vector<std::string> media;
-    bool newKey = false, noScan = false, printKey = false, help = false, version = false;
+    bool newKey = false, noScan = false, printKey = false, pair = false, help = false, version = false;
+    std::string addUser, removeUser, setPassword, email;   // account commands (run, then exit)
+    bool listUsers = false;
     int rescanMinutes = 60;
 };
 
@@ -187,10 +208,18 @@ static void usage() {
         "  --add-media <folder>   add a movie / show / music folder (can be repeated; or PEK_MEDIA=/a:/b)\n"
         "  --data <folder>        where the server keeps its library and settings (or PEK_DATA)\n"
         "                         default: /var/lib/pek-server when run as root, else ~/.local/share/pek-server\n"
-        "  --port <number>        port to listen on (default 8080, or PEK_PORT)\n"
+        "  --port <number>        port to listen on (default " + std::to_string(kDefaultPort) + ", or PEK_PORT)\n"
         "  --local-only           answer this machine only (no other device can connect)\n"
         "  --new-key              make a new access key (every paired device must pair again)\n"
         "  --print-key            print the access key and exit\n"
+        "  --pair                 get a 6-digit code from the running server to pair a TV / phone (works 10 minutes)\n"
+        "  --name <text>          the name devices show for this server (default: the machine's name, or PEK_NAME)\n"
+        "\n  Accounts (people sign in with these; history, resume points and favorites sync between their devices):\n"
+        "  --add-user <name>      make an account; asks for the password (or PEK_PASSWORD). The first one is the owner\n"
+        "  --email <address>      with --add-user: lets them sign in with their email too\n"
+        "  --set-password <name>  give an account a new password (signs it out everywhere)\n"
+        "  --remove-user <name>   delete an account and everything it synced\n"
+        "  --list-users           show the accounts\n\n"
         "  --rescan-minutes <n>   look for new files every n minutes, 0 = never (default 60)\n"
         "  --no-scan              do not scan at start-up\n"
         "  --version, --help\n";
@@ -217,6 +246,13 @@ static bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--local-only") o.bind = "127.0.0.1";
         else if (a == "--new-key") o.newKey = true;
         else if (a == "--print-key") o.printKey = true;
+        else if (a == "--pair") o.pair = true;
+        else if (a == "--name") { if (!next(v)) return false; o.name = trim(v); }
+        else if (a == "--add-user") { if (!next(v)) return false; o.addUser = trim(v); }
+        else if (a == "--remove-user") { if (!next(v)) return false; o.removeUser = trim(v); }
+        else if (a == "--set-password") { if (!next(v)) return false; o.setPassword = trim(v); }
+        else if (a == "--email") { if (!next(v)) return false; o.email = trim(v); }
+        else if (a == "--list-users") o.listUsers = true;
         else if (a == "--no-scan") o.noScan = true;
         else if (a == "--rescan-minutes") { if (!next(v)) return false; o.rescanMinutes = (std::max)(0, atoi(v.c_str())); }
         else { std::cerr << "Unknown option: " << a << "  (try --help)" << std::endl; return false; }
@@ -240,8 +276,108 @@ static bool onPath(const std::string& program) {
     return false;
 }
 
+// The id devices remember this server by (its address can change): made once, kept in <data>/server-id.txt.
+static std::string loadOrMakeId(const fs::path& file) {
+    {
+        std::ifstream in(file);
+        std::string k;
+        if (in && std::getline(in, k)) { k = trim(k); if (k.size() >= 8) return k; }
+    }
+    const std::string k = randomHex(8);
+    if (!k.empty()) { std::ofstream out(file, std::ios::trunc); out << k << "\n"; }
+    return k;
+}
+
+static std::string machineName() {
+#ifdef __ANDROID__
+    // Android's host name is just "localhost": the phone's model ("Pixel 7", "SHIELD Android TV") says more.
+    char model[PROP_VALUE_MAX] = {};
+    if (__system_property_get("ro.product.model", model) > 0 && model[0]) return std::string(model) + " (Termux)";
+#endif
+    char h[256] = {};
+    if (gethostname(h, sizeof h - 1) == 0 && h[0]) return h;
+    return "PEK Server";
+}
+
+// pek-server --pair: asks the server already running on this machine for a new code (loopback needs no key).
+static int askForPairingCode(int port) {
+    httplib::Client c("127.0.0.1", port);
+    c.set_connection_timeout(3, 0);
+    c.set_read_timeout(5, 0);
+    auto r = c.Post("/api/pair/new", "", "application/x-www-form-urlencoded");
+    if (!r) {
+        std::cerr << "PEK Server is not running on port " << port << " (start it first, or pass --port)." << std::endl;
+        return 1;
+    }
+    if (r->status != 200) {
+        std::cerr << "The server said HTTP " << r->status << ". Is it an older PEK Server without pairing codes?" << std::endl;
+        return 1;
+    }
+    const std::string& b = r->body;
+    const size_t at = b.find("\"code\": \"");
+    const std::string code = at == std::string::npos ? std::string() : b.substr(at + 9, 6);
+    if (code.size() != 6) { std::cerr << "Unexpected answer: " << b << std::endl; return 1; }
+    std::cout << "\nPairing code:  " << pekself::spaced(code) << "\n\n"
+              << "In PEK TV open Settings > Library > Connect to a server, pick this server and type the code.\n"
+              << "It works for " << pekself::kCodeMinutes << " minutes, for one device.\n" << std::endl;
+    return 0;
+}
+
+// A password typed at the terminal without showing it (PEK_PASSWORD wins, for scripts and Docker).
+static std::string readSecret(const char* prompt) {
+    std::cout << prompt << std::flush;
+    termios old{};
+    const bool tty = isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &old) == 0;
+    if (tty) { termios t = old; t.c_lflag &= ~static_cast<tcflag_t>(ECHO); tcsetattr(STDIN_FILENO, TCSANOW, &t); }
+    std::string s;
+    std::getline(std::cin, s);
+    if (tty) { tcsetattr(STDIN_FILENO, TCSANOW, &old); std::cout << std::endl; }
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+    return s;
+}
+static std::string newPassword() {
+    const std::string fromEnv = envOr("PEK_PASSWORD");
+    if (!fromEnv.empty()) return fromEnv;
+    const std::string a = readSecret("Password (8 or more characters): ");
+    const std::string b = readSecret("The same password again: ");
+    if (a != b) { std::cerr << "The two passwords are not the same." << std::endl; return {}; }
+    return a;
+}
+
+/// --add-user / --set-password / --remove-user / --list-users. Returns the exit code.
+static int accountCommand(const Options& opt) {
+    if (!pekacct::open(opt.dataDir + "/accounts.db")) return 1;
+    std::string err;
+    if (opt.listUsers) {
+        const auto users = pekacct::listUsers();
+        if (users.empty()) std::cout << "No accounts yet. Make one:  pek-server --add-user <name>" << std::endl;
+        for (const auto& u : users)
+            std::cout << "  " << u.username << (u.email.empty() ? "" : "  <" + u.email + ">") << (u.owner ? "  (owner)" : "")
+                      << "  - signed in on " << u.sessions << " device(s)" << std::endl;
+        return 0;
+    }
+    if (!opt.addUser.empty()) {
+        const std::string pw = newPassword();
+        if (pw.empty()) return 1;
+        err = pekacct::addUser(opt.addUser, pw, opt.email);
+        if (err.empty()) std::cout << "Account " << opt.addUser << " made. In PEK TV: Settings > Account > Sign in." << std::endl;
+    } else if (!opt.setPassword.empty()) {
+        const std::string pw = newPassword();
+        if (pw.empty()) return 1;
+        err = pekacct::setPassword(opt.setPassword, pw);
+        if (err.empty()) std::cout << "New password set for " << opt.setPassword << "; it was signed out on every device." << std::endl;
+    } else if (!opt.removeUser.empty()) {
+        err = pekacct::removeUser(opt.removeUser);
+        if (err.empty()) std::cout << "Account " << opt.removeUser << " and everything it synced are deleted." << std::endl;
+    }
+    if (!err.empty()) { std::cerr << err << std::endl; return 1; }
+    return 0;
+}
+
 static std::string defaultDataDir() {
-    if (geteuid() == 0) return "/var/lib/pek-server";
+#ifndef __ANDROID__
+    if (geteuid() == 0) return "/var/lib/pek-server";   // Termux (even with su) keeps everything in its home folder
+#endif
     const std::string xdg = envOr("XDG_DATA_HOME");
     if (!xdg.empty()) return xdg + "/pek-server";
     std::string home = envOr("HOME");
@@ -257,8 +393,10 @@ int main(int argc, char** argv) {
 
     // environment fills in what the command line did not say
     if (opt.dataDir.empty()) opt.dataDir = envOr("PEK_DATA", defaultDataDir());
-    if (const std::string p = envOr("PEK_PORT"); !p.empty() && opt.port == 8080) { const int n = atoi(p.c_str()); if (n >= 1 && n <= 65535) opt.port = n; }
+    if (const std::string p = envOr("PEK_PORT"); !p.empty() && opt.port == kDefaultPort) { const int n = atoi(p.c_str()); if (n >= 1 && n <= 65535) opt.port = n; }
     if (const std::string b = envOr("PEK_BIND"); !b.empty() && opt.bind == "0.0.0.0") opt.bind = b;
+    if (opt.name.empty()) opt.name = envOr("PEK_NAME", machineName());
+    if (opt.pair) return askForPairingCode(opt.port);   // talks to the running server; touches nothing here
     {
         const std::string m = envOr("PEK_MEDIA");
         size_t start = 0;
@@ -283,6 +421,9 @@ int main(int argc, char** argv) {
     if (ec) { std::cerr << "Cannot create the data folder " << opt.dataDir << ": " << ec.message() << std::endl; return 1; }
 
     const bool remote = opt.bind != "127.0.0.1";
+    if (opt.listUsers || !opt.addUser.empty() || !opt.removeUser.empty() || !opt.setPassword.empty())
+        return accountCommand(opt);   // works whether the server is running or not (SQLite keeps them apart)
+
     if (opt.printKey) {   // no log, no server: just the key
         bool made = false;
         const std::string k = loadOrMakeKey(opt.dataDir + "/access-key.txt", opt.newKey, made);
@@ -306,7 +447,11 @@ int main(int argc, char** argv) {
     const fs::path here = exeDir();
     if (fs::exists(here / "cacert.pem", ec)) setenv("SSL_CERT_FILE", (here / "cacert.pem").c_str(), 0);   // minimal containers have no CA bundle
     if (fs::exists(here / "ffprobe", ec)) setenv("PEK_FFPROBE", (here / "ffprobe").c_str(), 1);
+#ifdef __ANDROID__
+    else if (!onPath("ffprobe")) std::cout << "[warning] ffprobe not found: the library scan cannot read file details. Run:  pkg install ffmpeg" << std::endl;
+#else
     else if (!onPath("ffprobe")) std::cout << "[warning] ffprobe not found (next to pek-server or on PATH): the library scan cannot read file details. Install ffmpeg." << std::endl;
+#endif
 
     std::string key;
     if (remote) {
@@ -321,6 +466,14 @@ int main(int argc, char** argv) {
             if (made) std::cout << "A new access key was made." << std::endl;
         }
         setenv("PEK_TOKEN", key.c_str(), 1);
+        pekself::Info si;
+        si.key = key;
+        si.name = opt.name;
+        si.id = loadOrMakeId(fs::path(opt.dataDir) / "server-id.txt");
+        si.version = PEK_SERVER_VERSION;
+        si.port = opt.port;
+        pekacct::open(opt.dataDir + "/accounts.db");   // accounts + sync (/v1/...); logs why when it cannot
+        pekself::enable(si);   // before PekServer::start: it registers /api/server/info and /api/pair when this is on
     }
     setenv("PEK_BIND", opt.bind.c_str(), 1);
 
@@ -340,9 +493,24 @@ int main(int argc, char** argv) {
         if (scanner->addMediaDir(m)) std::cout << "Media folder: " << m << std::endl;
         else std::cerr << "Not a folder, skipped: " << m << std::endl;
     }
+#ifdef __ANDROID__
+    // Termux cannot see the phone's shared storage (/storage/emulated/0, /sdcard, SD cards) until termux-setup-storage was run once.
+    for (const auto& m : opt.media) {
+        if ((m.rfind("/storage/", 0) == 0 || m.rfind("/sdcard", 0) == 0) && access(m.c_str(), R_OK) != 0) {
+            std::cerr << "Cannot read " << m << ": run  termux-setup-storage  once and allow access to files, then start again." << std::endl;
+            break;
+        }
+    }
+#endif
     if (scanner->getMediaDirs().empty() && isatty(STDIN_FILENO)) {
+#ifdef __ANDROID__
+        std::cout << "\nNo media folders yet. Type the folder that holds your movies / shows / music\n"
+                     "(for example /storage/emulated/0/Movies; run termux-setup-storage first),\n"
+                     "or press Enter to add one later with --add-media: " << std::flush;
+#else
         std::cout << "\nNo media folders yet. Type the folder that holds your movies / shows / music\n"
                      "(for example /srv/movies), or press Enter to add one later with --add-media: " << std::flush;
+#endif
         std::string m;
         std::getline(std::cin, m);
         m = trim(m);
@@ -380,14 +548,27 @@ int main(int argc, char** argv) {
 
     // ---- how to connect ------------------------------------------------------------------------------------------------------
     std::ostringstream info;
-    info << "PEK Server " PEK_SERVER_VERSION " is running.\n\n";
+    info << "PEK Server " PEK_SERVER_VERSION " (\"" << opt.name << "\") is running.\n\n";
     if (remote) {
         const auto addrs = lanAddresses();
         info << "Connect your devices to one of these addresses:\n";
         if (addrs.empty()) info << "  (no network connection found)\n";
         for (const auto& a : addrs) info << "  http://" << a.second << ":" << port << "    (" << a.first << ")\n";
         if (fs::exists("/.dockerenv", ec)) info << "  Running in Docker: use the address of the machine Docker runs on, not the one above.\n";
-        info << "\nAccess key:\n  " << key << "\n"
+#ifdef __ANDROID__
+        info << "  Keep this phone on Wi-Fi and plugged in. So Android does not stop the server: run  termux-wake-lock  and turn off\n"
+                "  battery optimisation for Termux (Android settings > Apps > Termux > Battery > Unrestricted).\n";
+#endif
+        pekself::startBeacon([]() { return g_stop != 0; });
+        const std::string code = pekself::newCode();
+        info << "\nPairing code (for one TV / phone, works " << pekself::kCodeMinutes << " minutes):  " << pekself::spaced(code) << "\n"
+             << "  In PEK TV: Settings > Library > Connect to a server. Need another code later? Run  pek-server --pair\n";
+        if (pekacct::isOn()) {
+            const long long n = pekacct::userCount();
+            if (n == 0) info << "\nAccounts: none yet. Make one so people can sign in and sync:  pek-server --add-user <name>\n";
+            else info << "\nAccounts: " << n << " (pek-server --list-users). People sign in with them in Settings > Account.\n";
+        }
+        info << "\nAccess key (typing this instead of a code also works):\n  " << key << "\n"
              << "\nAnyone with this key can use your library - keep it private.\n"
              << "To test from a browser on another device, open  http://<address>:" << port << "/api/movies?token=" << key << "\n";
     } else {

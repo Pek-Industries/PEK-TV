@@ -1,0 +1,147 @@
+name: Build PEK Server (Termux, Android)
+
+# Manual run only (Actions tab > "Build PEK Server (Termux, Android)" > Run workflow).
+# Builds the ready-made Termux program with the Android NDK (nobody builds on the phone), for 64-bit ARM (almost every phone and
+# TV box since 2017) and 32-bit ARM (older / cheap TV boxes). Result in the run's Artifacts. With "publish" ticked it also goes to
+# two GitHub releases (neither is marked "latest", so the app's own releases stay on top):
+#   server-v<version>   kept for good
+#   server-latest       always the newest: install-termux.sh downloads from here, so the one-line install never changes:
+#     curl -fsSL https://github.com/Pek-Industries/PEK-TV/releases/download/server-latest/install-termux.sh | bash
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to the server-v<version> and server-latest releases'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (NDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ver
+        run: |
+          echo "version=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' flutter_ui/pubspec.yaml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build file
+
+      # Same cache key as the APK build (build_android.yml): both use android/scripts/build-openssl.sh.
+      - name: Cache OpenSSL
+        uses: actions/cache@v4
+        with:
+          path: android/openssl
+          key: openssl-${{ hashFiles('android/scripts/build-openssl.sh') }}
+
+      - name: Build
+        env:
+          PEK_SERVER_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # The runner image ships an NDK; ANDROID_NDK_LATEST_HOME points at it.
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          bash selfhost/termux/build.sh arm64-v8a armeabi-v7a
+
+      - name: Check the programs are Android ARM programs
+        run: |
+          file build/termux-arm64-v8a/pek-server | tee /dev/stderr | grep -q 'ARM aarch64' || { echo "::error::arm64 build is not an aarch64 program"; exit 1; }
+          file build/termux-armeabi-v7a/pek-server | tee /dev/stderr | grep -q 'ARM, EABI5' || { echo "::error::armeabi-v7a build is not a 32-bit ARM program"; exit 1; }
+          for f in build/termux-*/pek-server; do
+            file "$f" | grep -q '/system/bin/linker' || { echo "::error::$f is not linked for Android"; exit 1; }
+          done
+
+      - name: Package
+        env:
+          PEK_SERVER_VERSION: ${{ steps.ver.outputs.version }}
+        run: bash selfhost/termux/package.sh arm64-v8a armeabi-v7a
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PEK-Server-termux
+          path: |
+            dist-selfhost/*.tar.gz
+            dist-selfhost/*.sha256
+            dist-selfhost/install-termux.sh
+          if-no-files-found: error
+          retention-days: 30
+
+  # Starts the arm64 program inside a real Termux environment (termux-docker: Android's libc and linker) on an ARM runner.
+  # Informational: a problem with the container image itself must not block a release, so a failure here only warns.
+  smoke:
+    name: Smoke test (Termux container, arm64)
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PEK-Server-termux
+          path: dist
+      - name: Start it in Termux
+        run: |
+          mkdir -p smoke && tar -xzf dist/PEK-Server-termux-arm64-v8a.tar.gz -C smoke
+          chmod -R a+rX smoke
+          docker run --rm --privileged -v "$PWD/smoke:/smoke:ro" termux/termux-docker:aarch64 bash -c '
+            set -e
+            D=$TMPDIR/pek; mkdir -p $D/media; cp -r /smoke/PEK-Server-termux-arm64-v8a/. $D/; chmod 755 $D/pek-server
+            $D/pek-server --version
+            $D/pek-server --data $D/data --add-media $D/media --no-scan > $D/out.log 2>&1 &
+            for i in $(seq 1 20); do grep -q "is running" $D/out.log 2>/dev/null && break; sleep 1; done
+            cat $D/out.log
+            grep -q "is running" $D/out.log
+            $D/pek-server --pair
+          '
+
+  publish:
+    name: Publish releases
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PEK-Server-termux
+          path: dist
+      - name: server-v${{ needs.build.outputs.version }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-v${{ needs.build.outputs.version }}
+          name: PEK Server ${{ needs.build.outputs.version }} (Termux)
+          make_latest: false
+          body: |
+            PEK Server for Termux (Android phones and TV boxes). Install or update in Termux:
+            ```
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash
+            ```
+            See SELFHOST.md.
+          files: |
+            dist/PEK-Server-${{ needs.build.outputs.version }}-termux-*.tar.gz
+            dist/PEK-Server-${{ needs.build.outputs.version }}-termux-*.tar.gz.sha256
+            dist/install-termux.sh
+      # The tag stays where it was first made; only the files are replaced. That is all install-termux.sh needs.
+      - name: server-latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-latest
+          name: PEK Server (Termux) - newest
+          make_latest: false
+          body: |
+            Always the newest PEK Server for Termux (now ${{ needs.build.outputs.version }}). Install or update in Termux:
+            ```
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash
+            ```
+          files: |
+            dist/PEK-Server-termux-*.tar.gz
+            dist/PEK-Server-termux-*.tar.gz.sha256
+            dist/install-termux.sh

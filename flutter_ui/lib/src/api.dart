@@ -10,10 +10,36 @@ import 'package:http/http.dart' as http;
 
 import 'activity.dart' show Busy;
 import 'art_cache.dart';
+import 'server_target.dart';
 
-/// Talks to the existing C++ server (backend/server.cpp) on the loopback port. Nothing in the backend changes.
+/// Talks to the C++ server (backend/server.cpp): the one this app runs on the loopback port, and for the library a self-hosted
+/// PEK Server when one is paired (server_target.dart).
 class Api {
+  /// This device's own server. Plugins, skins, torrents and trailers always go here.
   static const base = 'http://127.0.0.1:8080';
+
+  /// Where the library is: [base], or the paired PEK Server ('http://192.168.1.20:8080').
+  static String get lib => ServerTarget.remote ? ServerTarget.address : base;
+
+  // What stays on this device even with a server paired: the Python plugin host belongs to the app, not to the server.
+  static const _deviceOnly = ['/api/plugins', '/plugins/', '/api/skins', '/skins/', '/api/torrent', '/api/trailer', '/api/status'];
+
+  /// The full address for a server path: the library server, or this device for [_deviceOnly] paths.
+  static String urlFor(String path) {
+    for (final d in _deviceOnly) {
+      if (path.startsWith(d)) return '$base$path';
+    }
+    return '$lib$path';
+  }
+
+  static bool _under(String url, String root) => root.isNotEmpty && (url == root || url.startsWith('$root/') || url.startsWith('$root?'));
+
+  /// The key for [url]: the paired server's access key, this device's per-launch token, or '' for any other address.
+  static String _tokenFor(String url) {
+    if (ServerTarget.remote && _under(url, ServerTarget.address)) return ServerTarget.key;
+    if (_under(url, base)) return token;
+    return '';
+  }
 
   // ---- Per-launch access token --------------------------------------------------------------------------------------
   // The local server answers 401 to every request that does not carry the random token Boot made at this launch (other apps on
@@ -35,20 +61,30 @@ class Api {
         }
       }();
 
-  static bool isLocal(String url) => url == base || url.startsWith('$base/');
+  /// One of OUR servers: this device's, or the paired PEK Server.
+  static bool isLocal(String url) => _under(url, base) || (ServerTarget.remote && _under(url, ServerTarget.address));
 
-  /// Headers for a request to [url]: the token when it is this app's own server, nothing for any other address (the token never
-  /// leaves the device and is never sent to a remote site).
-  static Map<String, String> headersFor(String url) => token.isNotEmpty && isLocal(url) ? {'X-Pek-Token': token} : const {};
+  /// Headers for a request to [url]: the matching key when it is one of our servers, nothing for any other address (a key is
+  /// never sent to a site it does not belong to).
+  static Map<String, String> headersFor(String url) {
+    final t = _tokenFor(url);
+    return t.isEmpty ? const {} : {'X-Pek-Token': t};
+  }
 
-  /// [url] with ?pek_t=<token> added when it is this app's own server (for libmpv, the trailer page and the lock-screen artwork).
-  /// An edl:// address (several files played as one) gets the token on each file in it.
+  /// [url] with ?pek_t=<key> added when it is one of our servers (for libmpv, the trailer page and the lock-screen artwork).
+  /// An edl:// address (several files played as one) gets the key on each file in it.
   static String withToken(String url) {
-    if (token.isEmpty) return url;
-    return url.replaceAllMapped(RegExp('${RegExp.escape(base)}/[^;]*'), (m) {
-      final u = m[0]!;
-      return u.contains('pek_t=') ? u : '$u${u.contains('?') ? '&' : '?'}pek_t=$token';
-    });
+    String add(String u, String root, String t) {
+      if (t.isEmpty) return u;
+      return u.replaceAllMapped(RegExp('${RegExp.escape(root)}/[^;]*'), (m) {
+        final x = m[0]!;
+        return x.contains('pek_t=') ? x : '$x${x.contains('?') ? '&' : '?'}pek_t=$t';
+      });
+    }
+
+    var out = add(url, base, token);
+    if (ServerTarget.remote && ServerTarget.address != base) out = add(out, ServerTarget.address, ServerTarget.key);
+    return out;
   }
 
   /// The one HTTP client for calls to the local server (adds the token header). Use it instead of the top-level http.get / http.post.
@@ -59,7 +95,7 @@ class Api {
   static Future<dynamic> _get(String path, {Duration timeout = const Duration(seconds: 20)}) => Busy.run(path, () => _getRaw(path, timeout));
 
   static Future<dynamic> _getRaw(String path, [Duration timeout = const Duration(seconds: 20)]) async {
-    final r = await _client.get(Uri.parse('$base$path')).timeout(timeout);
+    final r = await _client.get(Uri.parse(urlFor(path))).timeout(timeout);
     if (r.statusCode != 200) throw Exception('HTTP ${r.statusCode} for $path');
     return jsonDecode(utf8.decode(r.bodyBytes, allowMalformed: true));
   }
@@ -70,7 +106,7 @@ class Api {
   static Future<Map<String, dynamic>> _postFormRaw(String path, Map<String, String> body, [Map<String, String>? headers]) async {
     http.Response r;
     try {
-      r = await _client.post(Uri.parse('$base$path'), headers: {'Content-Type': 'application/x-www-form-urlencoded', ...?headers}, body: body).timeout(const Duration(seconds: 30));
+      r = await _client.post(Uri.parse(urlFor(path)), headers: {'Content-Type': 'application/x-www-form-urlencoded', ...?headers}, body: body).timeout(const Duration(seconds: 30));
     } catch (_) {
       throw ApiError('Could not reach the app. Check your connection.');
     }
@@ -124,7 +160,7 @@ class Api {
   static Future<int?> rescan() => Busy.run('/api/rescan', _rescanRaw);
 
   static Future<int?> _rescanRaw() async {
-    final r = await _client.post(Uri.parse('$base/api/rescan')).timeout(const Duration(seconds: 20));
+    final r = await _client.post(Uri.parse('$lib/api/rescan')).timeout(const Duration(seconds: 20));
     if (r.statusCode == 429) {
       try {
         return ((jsonDecode(r.body) as Map)['retry_after'] as num?)?.toInt() ?? 10;
@@ -151,6 +187,18 @@ class Api {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Another library server was chosen (server_target.dart): nothing looked up from the old one may be shown.
+  static void switchedLibrary() {
+    forgetLibrary();
+    _noArt.clear();
+    _episodeInfo.clear();
+    _diskSave?.cancel();
+    _diskLoad = null; // the saved synopses of the new library are another file (ServerTarget.savedName)
+    _artSeen = null;
+    libraryRevision.value++;
+    artRevision.value++;
   }
 
   /// A rescan changes what the library holds, so cached lookups and lists are dropped.
@@ -265,11 +313,11 @@ class Api {
     try {
       final j = await _get('/api/movies');
       final list = _movieList(j);
-      unawaited(ArtCache.writeText('movies.json', jsonEncode(j)));
+      unawaited(ArtCache.writeText(ServerTarget.savedName('movies.json'), jsonEncode(j)));
       _seedMovies(j);
       return list;
     } catch (_) {
-      final t = await ArtCache.readText('movies.json');
+      final t = await ArtCache.readText(ServerTarget.savedName('movies.json'));
       if (t != null) {
         try {
           final o = jsonDecode(t);
@@ -285,11 +333,11 @@ class Api {
     try {
       final j = await _get('/api/shows');
       final list = _showList(j);
-      unawaited(ArtCache.writeText('shows.json', jsonEncode(j)));
+      unawaited(ArtCache.writeText(ServerTarget.savedName('shows.json'), jsonEncode(j)));
       _seedShows(j);
       return list;
     } catch (_) {
-      final t = await ArtCache.readText('shows.json');
+      final t = await ArtCache.readText(ServerTarget.savedName('shows.json'));
       if (t != null) {
         try {
           final o = jsonDecode(t);
@@ -433,7 +481,7 @@ class Api {
   static Timer? _diskSave;
 
   static Future<Map<String, dynamic>> _disk() => _diskLoad ??= () async {
-        final t = await ArtCache.readText('details.json');
+        final t = await ArtCache.readText(ServerTarget.savedName('details.json'));
         if (t != null) {
           try {
             final o = jsonDecode(t);
@@ -475,7 +523,7 @@ class Api {
       }
     }
     _diskSave?.cancel();
-    _diskSave = Timer(const Duration(seconds: 3), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
+    _diskSave = Timer(const Duration(seconds: 3), () => unawaited(ArtCache.writeText(ServerTarget.savedName('details.json'), jsonEncode(m))));
   }
 
   /// Bumped when the server says a stored poster or synopsis really changed (a replaced poster.jpg, an edited .nfo, a TMDb
@@ -491,7 +539,7 @@ class Api {
       final m = await _disk();
       m.removeWhere((_, e) => e is Map && ArtCache.isLocalArt('${e['p'] ?? ''}'));
       _diskSave?.cancel();
-      _diskSave = Timer(const Duration(seconds: 1), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
+      _diskSave = Timer(const Duration(seconds: 1), () => unawaited(ArtCache.writeText(ServerTarget.savedName('details.json'), jsonEncode(m))));
     } catch (_) {}
     await ArtCache.clearLocal();
   }
@@ -528,7 +576,7 @@ class Api {
 
   static Future<void> discoverStart() async {
     try {
-      await _client.post(Uri.parse('$base/api/discover')).timeout(const Duration(seconds: 10));
+      await _client.post(Uri.parse('$lib/api/discover')).timeout(const Duration(seconds: 10));
     } catch (_) {}
   }
 
@@ -544,7 +592,7 @@ class Api {
   /// POST /api/net/browse. The reply is `{ok, ...}`; `auth` asks for a login, `canTypeShare` for a typed share name.
   static Future<Map<String, dynamic>> netBrowse(String url, {String? user, String? pass}) async {
     final r = await _client
-        .post(Uri.parse('$base/api/net/browse'), body: {'url': url, if (user != null) 'user': user, if (pass != null) 'pass': pass})
+        .post(Uri.parse('$lib/api/net/browse'), body: {'url': url, if (user != null) 'user': user, if (pass != null) 'pass': pass})
         .timeout(const Duration(seconds: 60));
     final o = jsonDecode(utf8.decode(r.bodyBytes));
     return o is Map ? Map<String, dynamic>.from(o) : <String, dynamic>{'ok': false, 'error': 'Could not open that location.'};
@@ -554,7 +602,7 @@ class Api {
   static Future<String?> addNetSource(String url, {String user = '', String pass = ''}) async {
     try {
       final r = await _client
-          .post(Uri.parse('$base/api/sources'), body: {'path': url, if (user.isNotEmpty) 'user': user, if (user.isNotEmpty) 'pass': pass})
+          .post(Uri.parse('$lib/api/sources'), body: {'path': url, if (user.isNotEmpty) 'user': user, if (user.isNotEmpty) 'pass': pass})
           .timeout(const Duration(seconds: 60));
       if (r.statusCode == 200) {
         libraryChanged();
@@ -677,7 +725,7 @@ class Api {
   /// {synced, plain} or null when there are no lyrics (404) or online lookups are off.
   static Future<({String synced, String plain})?> lyrics(String trackId) async {
     try {
-      final r = await _client.get(Uri.parse('$base/api/music/lyrics?track=${Uri.encodeQueryComponent(trackId)}')).timeout(const Duration(seconds: 20));
+      final r = await _client.get(Uri.parse('$lib/api/music/lyrics?track=${Uri.encodeQueryComponent(trackId)}')).timeout(const Duration(seconds: 20));
       if (r.statusCode != 200) return null;
       final j = jsonDecode(utf8.decode(r.bodyBytes));
       if (j is! Map) return null;
@@ -694,12 +742,12 @@ class Api {
   }
 
   static Future<void> setMusicOnline(bool on) async {
-    await _client.post(Uri.parse('$base/api/music/online?enabled=${on ? 1 : 0}')).timeout(const Duration(seconds: 20));
+    await _client.post(Uri.parse('$lib/api/music/online?enabled=${on ? 1 : 0}')).timeout(const Duration(seconds: 20));
   }
 
   /// DELETE /api/sources?path=... (the folder is only forgotten, never deleted).
   static Future<void> removeSource(String path) async {
-    await _client.delete(Uri.parse('$base/api/sources?path=${Uri.encodeQueryComponent(path)}')).timeout(const Duration(seconds: 20));
+    await _client.delete(Uri.parse('$lib/api/sources?path=${Uri.encodeQueryComponent(path)}')).timeout(const Duration(seconds: 20));
     libraryChanged();
   }
 
@@ -712,7 +760,7 @@ class Api {
 
   /// POST /api/sources?path=... confirms a folder as a source (the server starts a scan).
   static Future<bool> addSource(String path) async {
-    final r = await _client.post(Uri.parse('$base/api/sources?path=${Uri.encodeQueryComponent(path)}')).timeout(const Duration(seconds: 20));
+    final r = await _client.post(Uri.parse('$lib/api/sources?path=${Uri.encodeQueryComponent(path)}')).timeout(const Duration(seconds: 20));
     if (r.statusCode == 200) {
       libraryChanged();
     } else {
@@ -897,12 +945,12 @@ class Api {
     );
   }
 
-  static String musicStream(String id) => '$base/api/music/stream/${Uri.encodeComponent(id)}';
-  static String albumArt(String id) => '$base/api/music/art?album=${Uri.encodeQueryComponent(id)}';
-  static String artistArt(String id) => '$base/api/music/art?artist=${Uri.encodeQueryComponent(id)}';
-  static String trackArt(Track t) => t.albumId.isNotEmpty ? albumArt(t.albumId) : '$base/api/music/art?track=${Uri.encodeQueryComponent(t.id)}';
+  static String musicStream(String id) => '$lib/api/music/stream/${Uri.encodeComponent(id)}';
+  static String albumArt(String id) => '$lib/api/music/art?album=${Uri.encodeQueryComponent(id)}';
+  static String artistArt(String id) => '$lib/api/music/art?artist=${Uri.encodeQueryComponent(id)}';
+  static String trackArt(Track t) => t.albumId.isNotEmpty ? albumArt(t.albumId) : '$lib/api/music/art?track=${Uri.encodeQueryComponent(t.id)}';
 
-  static String streamUrl(String id) => '$base/api/stream/${Uri.encodeComponent(id)}';
+  static String streamUrl(String id) => '$lib/api/stream/${Uri.encodeComponent(id)}';
 
   /// GET /api/parts/<id>: for a movie split over several files ("Movie - Disk1.mkv", "Movie - Disk2.mkv") the ids of all its files in
   /// playing order; an empty list for an ordinary file (or when the lookup fails, so a normal file always just plays).
@@ -972,7 +1020,7 @@ class Api {
       final m = await _disk();
       if (m.remove(k) != null) {
         _diskSave?.cancel();
-        _diskSave = Timer(const Duration(seconds: 1), () => unawaited(ArtCache.writeText('details.json', jsonEncode(m))));
+        _diskSave = Timer(const Duration(seconds: 1), () => unawaited(ArtCache.writeText(ServerTarget.savedName('details.json'), jsonEncode(m))));
       }
     } catch (_) {}
     artRevision.value++;
@@ -980,7 +1028,7 @@ class Api {
 
   static String abs(String p) {
     if (p.isEmpty) return '';
-    return p.startsWith('http') ? p : '$base$p';
+    return p.startsWith('http') ? p : urlFor(p);
   }
 }
 
@@ -1341,18 +1389,23 @@ class LibSuggest {
   }
 }
 
-/// Adds the per-launch token to every request that goes to the local server, whatever code made it.
+/// Adds the right key to every request that goes to one of our servers, whatever code made it: this device's per-launch token,
+/// or the paired PEK Server's access key. A 401 from the paired server means its key was changed: Settings asks to pair again.
 class _AuthClient extends http.BaseClient {
   _AuthClient(this._inner);
   final http.Client _inner;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    if (Api.isLocal(request.url.toString())) {
-      await Api.loadToken();
-      if (Api.token.isNotEmpty) request.headers['X-Pek-Token'] = Api.token;
+    final url = request.url.toString();
+    if (Api.isLocal(url)) {
+      if (Api._under(url, Api.base)) await Api.loadToken();
+      final t = Api._tokenFor(url);
+      if (t.isNotEmpty) request.headers['X-Pek-Token'] = t;
     }
-    return _inner.send(request);
+    final r = await _inner.send(request);
+    if (r.statusCode == 401 && ServerTarget.remote && Api._under(url, ServerTarget.address)) ServerTarget.needsPairing.value = true;
+    return r;
   }
 
   @override

@@ -212,6 +212,7 @@ Commands run as the app's user, with no root. They can break the app. Stop kills
     add('version      ${v ?? 'unknown'}');
     add('files dir    ${await _dir()}');
     add('server       ${Api.base}');
+    add('library      ${Api.lib}');
     add('system       ${Platform.operatingSystem} ${Platform.operatingSystemVersion}');
     add('cpus         ${Platform.numberOfProcessors}');
     add('process id   $pid');
@@ -225,7 +226,7 @@ Commands run as the app's user, with no root. They can break the app. Stop kills
     }
     final p = path.startsWith('/') ? path : '/$path';
     final sw = Stopwatch()..start();
-    final r = await Api.client.get(Uri.parse('${Api.base}$p')).timeout(const Duration(seconds: 20));
+    final r = await Api.client.get(Uri.parse(Api.urlFor(p))).timeout(const Duration(seconds: 20));
     var body = utf8.decode(r.bodyBytes, allowMalformed: true);
     try {
       body = const JsonEncoder.withIndent('  ').convert(jsonDecode(body));

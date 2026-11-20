@@ -24,4 +24,11 @@ The server side (Cloudflare workers) is run by PEK Industries. It is proprietary
 - **Weather** (`weather.dart`): `forecast`, `search`
 - **Trailers** (`backend/trailer.h`): `player`
 
+## Self-hosted PEK Server
+
+A paired PEK Server with accounts answers the account and sync routes itself (`backend/accounts.h`): `auth/login`, `auth/logout`,
+`auth/confirm`, `me` (plan `self-hosted`), `profiles/sync`, `sync` and `account`. The app then sends those there (`Cloud.onServer`
+in `cloud.dart`); every other route keeps going to the hosts above, and the server answers `404 not_on_server` for the rest of `/v1`.
+When a change to `sync` or `profiles/sync` touches the request or answer shape, change `accounts.h` in the same step.
+
 When you change one of these on the server, update the app (or this page) in the same step.

@@ -16,6 +16,7 @@ import 'store.dart';
 import 'layouts.dart' show Layouts;
 import 'recs.dart' show Recs;
 import 'ratings.dart' show RatingEntry;
+import 'server_target.dart' show ServerTarget;
 import 'cloud_usage.dart';
 import 'skins.dart' show Skins;
 import 'weather.dart' show Weather;
@@ -42,6 +43,38 @@ class CloudResult {
 /// (Favorites > Saved from plugins). Favorites a plugin screen saves here already have their TMDb id and sync as they are.
 class Cloud {
   static const api = 'https://api.pekindustries.com';
+
+  // ---------------------------------------------------------------- PEK Cloud, or the household's own PEK Server
+  // A paired PEK Server that has accounts (backend/accounts.h) answers the same account and sync calls as PEK Cloud, so with one
+  // paired, signing in, profiles and sync go there instead. Everything else that lives on PEK Cloud (news, weather, the plugin store,
+  // subtitles) keeps using [api]. Plugin backup and Discord linking need a PEK Cloud account and are not on a self-hosted server.
+
+  /// Signing in and syncing go to the paired PEK Server.
+  static bool get onServer => ServerTarget.remote && ServerTarget.accounts;
+
+  /// Where account and sync calls go.
+  static String get _base => onServer ? ServerTarget.address : api;
+
+  static const _kOrigin = 'pek_account_origin'; // where the current session was made ([_originTag] at sign-in)
+
+  /// Who holds the accounts: PEK Cloud, or one PEK Server by its id (not its address, which can change with the router).
+  static String get _originTag => onServer ? 'server:${ServerTarget.id.isNotEmpty ? ServerTarget.id : ServerTarget.address}' : api;
+  static Future<void>? _originCheck;
+
+  /// The library server changed (or this is the first start after it did): a session made somewhere else cannot be used here, so
+  /// this device signs out of it. Like every sign-out, that account's data leaves the device; its own server or cloud keeps it.
+  static Future<void> checkOrigin() => _originCheck ??= _checkOrigin().whenComplete(() => _originCheck = null);
+
+  static Future<void> _checkOrigin() async {
+    if (!linked) return;
+    final origin = Store.strGet(_kOrigin, scoped: false) ?? api; // sessions from before this existed were PEK Cloud's
+    if (origin == _originTag) return;
+    debugPrint('[cloud] signed in at $origin, but accounts are now at $_originTag: signing out here');
+    await _unlink();
+    await Store.wipeAccountData();
+    Profiles.reload();
+    changes.value++;
+  }
 
   static const _kToken = 'pek_account_token';
   static const _kEmail = 'pek_account_email';
@@ -123,6 +156,8 @@ class Cloud {
         return 'PEK Cloud (lifetime)';
       case 'grandfathered':
         return 'PEK Cloud (included with your account)';
+      case 'self-hosted':
+        return 'Your own PEK Server (everything included)';
       default:
         return 'Free';
     }
@@ -212,6 +247,20 @@ class Cloud {
 
   /// What a failure code means in words.
   static String errorText(String code) {
+    if (onServer) {
+      switch (code) {
+        case 'offline':
+          return 'Could not reach ${ServerTarget.name}. Check that it is running.';
+        case 'bad_credentials':
+          return 'Wrong username or password.';
+        case 'session_expired':
+          return 'You were signed out (the server owner may have changed your password). Please sign in again.';
+        case 'not_on_server':
+          return 'That needs a PEK Cloud account; it is not part of a self-hosted server.';
+        case 'server_owner':
+          return 'This is the server owner\'s account. Remove accounts on the server itself (pek-server --remove-user).';
+      }
+    }
     switch (code) {
       case 'offline':
         return 'Could not reach the PEK cloud. Check your connection.';
@@ -275,8 +324,12 @@ class Cloud {
   }
 
   static Future<({int status, Map<String, dynamic> body})> _request(String method, String path, {Object? body, bool withToken = false}) async {
-    final headers = <String, String>{'Content-Type': 'application/json', if (withToken) 'Authorization': 'Bearer $_token'};
-    final uri = Uri.parse('$api$path');
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (withToken) 'Authorization': 'Bearer $_token',
+      if (onServer) 'X-Pek-Token': ServerTarget.key, // the paired device's access key: the server answers nothing without it
+    };
+    final uri = Uri.parse('$_base$path');
     http.Response r;
     if (method == 'GET') {
       r = await _c.get(uri, headers: headers).timeout(const Duration(seconds: 20));
@@ -314,6 +367,7 @@ class Cloud {
 
   static Future<void> _startSession(String token, String mail, String user) async {
     await Store.clearSyncState(Profiles.ids);
+    await Store.strSet(_kOrigin, _originTag, scoped: false);
     await Store.strSet(_kToken, token, scoped: false);
     await Store.strSet(_kEmail, mail, scoped: false);
     if (user.isEmpty) {
@@ -327,6 +381,7 @@ class Cloud {
   static Future<void> _unlink() async {
     await Store.clearSyncState(Profiles.ids);
     await Store.strDel(_kToken, scoped: false);
+    await Store.strDel(_kOrigin, scoped: false);
     await Store.strDel(_kEmail, scoped: false);
     await Store.strDel(_kUser, scoped: false);
     await Store.strDel(_kPlan, scoped: false);
@@ -376,9 +431,43 @@ class Cloud {
   }
 
   static Future<CloudResult> signIn(String mail, String password) async {
+    if (onServer) {
+      // A self-hosted server's accounts have a username (an email is optional): either one is sent as "email", like PEK Cloud's field.
+      final id = mail.trim();
+      if (id.isEmpty || password.isEmpty) return const CloudResult(ok: false, error: 'bad_credentials');
+      return _session('/v1/auth/login', {'email': id, 'password': password, 'device': await DeviceInfo.read()});
+    }
     if (!validEmail(mail) || password.isEmpty) return const CloudResult(ok: false, error: 'bad_credentials');
     // The device goes along so the sign-in email can say which device is signing in, what it is called and when.
     return _session('/v1/auth/login', {'email': cleanEmail(mail), 'password': password, 'device': await DeviceInfo.read()});
+  }
+
+  /// Signs in to the PEK Server at [address] before it is paired (the Connect screen's "Sign in instead"). The answer carries the
+  /// session and the server's access key ("key"); call [adoptServerSession] with it once the server is in use.
+  static Future<CloudResult> serverLogin(String address, String id, String password) async {
+    if (id.trim().isEmpty || password.isEmpty) return const CloudResult(ok: false, error: 'bad_credentials');
+    try {
+      final r = await _c
+          .post(Uri.parse('$address/v1/auth/login'), headers: {'Content-Type': 'application/json'}, body: jsonEncode({'email': id.trim(), 'password': password, 'device': await DeviceInfo.read()}))
+          .timeout(const Duration(seconds: 20));
+      Map<String, dynamic> b = {};
+      try {
+        b = Map<String, dynamic>.from(jsonDecode(utf8.decode(r.bodyBytes)) as Map);
+      } catch (_) {}
+      if (r.statusCode == 200 && b['ok'] == true && '${b['token'] ?? ''}'.isNotEmpty && '${b['key'] ?? ''}'.isNotEmpty) return CloudResult(ok: true, status: 200, body: b);
+      return CloudResult(ok: false, status: r.statusCode, error: _failure(r.statusCode, b), body: b);
+    } catch (_) {
+      return const CloudResult(ok: false, error: 'offline');
+    }
+  }
+
+  /// Starts the session [serverLogin] returned, now that its server is the one in use.
+  static Future<void> adoptServerSession(Map<String, dynamic> body) async {
+    await checkOrigin(); // signed in somewhere else before: that session ends first
+    final mail = '${body['email'] ?? body['username'] ?? ''}'.toLowerCase();
+    await _startSession('${body['token']}', mail, '${body['username'] ?? ''}');
+    await _savePlan(body);
+    await Profiles.afterSignIn(mail, created: false);
   }
 
   /// TV link login, step 1: asks for a 6-digit code to show on screen. The body has `code`, `poll` (the secret this device

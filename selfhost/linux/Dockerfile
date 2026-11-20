@@ -25,6 +25,6 @@ COPY --from=build /build/pek-server /usr/local/bin/pek-server
 USER pek
 ENV PEK_DATA=/data PEK_MEDIA=/media
 VOLUME /data
-EXPOSE 8080
+EXPOSE 8080 8768/udp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD nc -z 127.0.0.1 8080 || exit 1
 ENTRYPOINT ["pek-server"]

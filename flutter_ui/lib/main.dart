@@ -20,6 +20,7 @@ import 'src/profiles.dart';
 import 'src/recs.dart';
 import 'src/onboarding_flow.dart';
 import 'src/remote_host.dart';
+import 'src/server_target.dart';
 import 'src/skins.dart';
 import 'src/mpv.dart';
 import 'src/nav_sound.dart';
@@ -51,10 +52,15 @@ Future<void> main() async {
       // Asked right away so it runs alongside the storage load instead of after it.
       final phoneAsk = PekPlayer.isPhone();
       await Store.init();
+      ServerTarget.load(); // the library on this device, or on a paired PEK Server (server_target.dart)
+      ServerTarget.changes.addListener(Api.switchedLibrary);
       L10n.init(); // the saved language, before the first screen is built
       DevConsole.init();
       NavSounds.install(); // the move sound (nav_sound.dart); select and back are hooked in PekFocusable and the navigator
       Profiles.load();
+      // Signed in to PEK Cloud, but now paired with a PEK Server that has accounts (or the other way round): that session ends here.
+      unawaited(Cloud.checkOrigin());
+      ServerTarget.changes.addListener(() => unawaited(Cloud.checkOrigin()));
       MusicController.instance.restore(); // the song the active profile was playing when the app closed
       Net.start(); // the green / red dot and offline mode (net.js)
       final phone = await phoneAsk;
@@ -136,10 +142,22 @@ class _BootState extends State<_Boot> {
     final notes = WhatsNew.pending(); // local, instant; any problem = no screen
     unawaited(News.refresh()); // the Updates feed (news.dart): fetched in the background so Settings can show "N new"
     final ok = await Api.waitForServer();
+    if (ok && ServerTarget.remote) unawaited(_checkLibraryServer()); // never holds up the start: the saved lists show meanwhile
     _update = await check;
     _notes = await notes;
     _announceReady();
     return ok;
+  }
+
+  /// The paired PEK Server is away (switched off, another network) or no longer takes this device: say so once, the app still
+  /// opens with the library lists saved from last time. Settings > Library has the details and "Pair again".
+  Future<void> _checkLibraryServer() async {
+    final ok = await ServerTarget.check();
+    if (ok) return;
+    final why = ServerTarget.needsPairing.value
+        ? '{name} no longer accepts this device. Pair it again in Settings > Library.'.trp({'name': ServerTarget.name})
+        : 'Could not reach {name}. Showing the library saved on this device.'.trp({'name': ServerTarget.name});
+    Net.messenger.currentState?.showSnackBar(SnackBar(content: Text(why), duration: const Duration(seconds: 6)));
   }
 
   /// Tells the native splash video that the app has loaded, so it can lift as soon as it has finished playing (the video covers
@@ -176,7 +194,7 @@ class _BootState extends State<_Boot> {
           }
           // With an account, "Who's watching?" comes first; the app below is rebuilt for each profile.
           return ListenableBuilder(
-            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Store.simpleModeN, Recs.changed, Welcome.changed]),
+            listenable: Listenable.merge([Profiles.changes, Cloud.changes, Store.musicModeN, Store.simpleModeN, Recs.changed, Welcome.changed, ServerTarget.changes]),
             builder: (context, _) {
               if (Profiles.gateNeeded) return const ProfileGate();
               // First launch: the language question (l10n_ui.dart), the welcome tour (welcome.dart), the taste picker (recs_onboarding.dart), the Simple / Advanced question and sign in,
@@ -193,7 +211,7 @@ class _BootState extends State<_Boot> {
                   },
                 );
               }
-              return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}-${Store.simpleMode}'));
+              return AppShell(key: ValueKey('shell-${Profiles.currentId}-${Store.musicMode}-${Store.simpleMode}-${ServerTarget.changes.value}'));
             },
           );
         }

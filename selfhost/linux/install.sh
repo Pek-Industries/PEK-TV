@@ -40,5 +40,6 @@ echo
 if [ -s /var/lib/pek-server/pairing.txt ]; then cat /var/lib/pek-server/pairing.txt
 else echo "It did not report in yet. Look at:  journalctl -u pek-server -e"; fi
 echo
+echo "Pair another TV / phone:  /opt/pek-server/pek-server --pair${PORT:+ --port $PORT}"
 echo "Later:  sudo cat /var/lib/pek-server/pairing.txt   |   journalctl -u pek-server -f   |   sudo systemctl restart pek-server"
-echo "If the machine has a firewall (ufw / firewalld) allow the port, e.g.  sudo ufw allow ${PORT:-8080}/tcp"
+echo "If the machine has a firewall (ufw / firewalld) allow the ports, e.g.  sudo ufw allow ${PORT:-8080}/tcp && sudo ufw allow 8768/udp"

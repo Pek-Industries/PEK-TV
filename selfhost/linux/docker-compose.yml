@@ -1,6 +1,9 @@
 # docker compose -f selfhost/linux/docker-compose.yml up -d     (run from the repository root)
 # then:  docker compose -f selfhost/linux/docker-compose.yml logs pek-server     -> shows the access key
 # Use the address of THIS machine (not the container's) in your apps. Change the left side of the /media line to your media folder.
+# Pair a TV / phone:  docker compose -f selfhost/linux/docker-compose.yml exec pek-server pek-server --pair
+# The app finds the server on the network by a UDP broadcast, which Docker's normal (bridge) network does not pass in. Either type
+# the address in the app, or use  network_mode: host  (Linux only) instead of the ports: list below so the server can be found.
 services:
   pek-server:
     build:
@@ -8,8 +11,12 @@ services:
       dockerfile: selfhost/linux/Dockerfile
     image: pek-server
     restart: unless-stopped
+    hostname: pek-server            # the name the app shows; or set PEK_NAME below
+    # environment:
+    #   PEK_NAME: "Living room server"     # the name the app shows (default: the container's host name)
     ports:
       - "8080:8080"
+      - "8768:8768/udp"
     volumes:
       - pek-data:/data
       - /srv/media:/media:ro

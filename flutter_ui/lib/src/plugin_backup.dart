@@ -84,7 +84,8 @@ class PluginBackup {
   static final ValueNotifier<List<BackupOffer>> offers = ValueNotifier(_loadOffers());
   static final ValueNotifier<int> lastRun = ValueNotifier(0);
 
-  static bool get enabled => Store.strGet(_kOn, scoped: false) != '0';
+  // Plugin backup is a PEK Cloud service: signed in to a self-hosted PEK Server (Cloud.onServer) it is off, nothing is sent anywhere.
+  static bool get enabled => Store.strGet(_kOn, scoped: false) != '0' && !Cloud.onServer;
   static Future<void> setEnabled(bool on) async {
     await Store.strSet(_kOn, on ? '1' : '0', scoped: false);
     if (!on) offers.value = const [];

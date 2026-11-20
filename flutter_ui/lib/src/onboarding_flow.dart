@@ -12,6 +12,8 @@ import 'plan_ui.dart' show openSignUpPage;
 import 'profiles.dart';
 import 'recs.dart';
 import 'recs_onboarding.dart';
+import 'server_connect.dart' show ServerChoiceScreen;
+import 'server_target.dart' show ServerTarget;
 import 'skins.dart';
 import 'store.dart';
 import 'tokens.dart';
@@ -56,7 +58,7 @@ class SignInStep {
   }
 }
 
-enum _Step { language, welcome, recs, layout, signIn }
+enum _Step { language, welcome, recs, layout, server, signIn }
 
 /// First launch, start to finish: the language question (first, so everything after it is already in the person's language), the welcome tour, the taste picker, the layout question, then sign in / sign up. Each screen slides in
 /// from the right when the one before it is answered (or skipped); the last one (signing in, or "Sign in later") opens the app
@@ -76,6 +78,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     if (Welcome.pending) _Step.welcome,
     if (Recs.onboardingPending) _Step.recs,
     if (LayoutChoice.pending || Welcome.pending) _Step.layout,
+    // Brand new install only: is the library here or on a PEK Server at home (server_connect.dart).
+    if (Welcome.pending && !ServerTarget.remote) _Step.server,
     if (SignInStep.pending || Welcome.pending) _Step.signIn,
   ];
   int _i = 0;
@@ -98,6 +102,8 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
         return RecsOnboardingScreen(key: ValueKey('recs-first-${Profiles.currentId}'), firstRun: true, onDone: _next);
       case _Step.layout:
         return LayoutChoiceScreen(key: const ValueKey(_Step.layout), onDone: _next);
+      case _Step.server:
+        return ServerChoiceScreen(key: const ValueKey(_Step.server), onDone: _next);
       case _Step.signIn:
         return const SignInScreen(key: ValueKey(_Step.signIn));
     }
@@ -298,23 +304,28 @@ class SignInScreen extends StatelessWidget {
                     ),
                   ).animate().fadeIn(duration: 450.ms).scale(begin: const Offset(0.94, 0.94), end: const Offset(1, 1), duration: 500.ms, curve: Curves.easeOutCubic),
                   SizedBox(height: 1.25 * rem),
-                  Text('Sign in to PEK TV'.tr, textAlign: TextAlign.center, style: TextStyle(color: t.text, fontSize: 1.7 * rem, fontWeight: FontWeight.w800)),
+                  Text(Cloud.onServer ? 'Sign in to {name}'.trp({'name': ServerTarget.name}) : 'Sign in to PEK TV'.tr, textAlign: TextAlign.center, style: TextStyle(color: t.text, fontSize: 1.7 * rem, fontWeight: FontWeight.w800)),
                   SizedBox(height: 0.5 * rem),
                   Text(
-                    'Keep your watch history and resume points on every device, and give everyone at home their own profile.'.tr,
+                    Cloud.onServer
+                        ? 'Use your account on your PEK Server: your watch history and resume points follow you to every device. The server owner makes the accounts.'.tr
+                        : 'Keep your watch history and resume points on every device, and give everyone at home their own profile.'.tr,
                     textAlign: TextAlign.center,
                     style: TextStyle(color: t.textMuted, fontSize: rem, height: 1.4),
                   ),
                   SizedBox(height: 1.5 * rem),
-                  PekButton(label: tv ? 'Sign in with your phone'.tr : 'Sign in'.tr, primary: true, autofocus: true, onTap: () => push(tv ? const LinkScreen() : const AccountScreen(mode: AccountMode.signIn))),
-                  SizedBox(height: 0.6 * rem),
-                  PekButton(label: 'Sign up'.tr, onTap: () {
-                    if (tv) {
-                      push(const SignUpQrScreen());
-                    } else {
-                      openSignUpPage(context);
-                    }
-                  }),
+                  // A self-hosted server has no website to approve a phone sign-in on: username and password on every device.
+                  PekButton(label: tv && !Cloud.onServer ? 'Sign in with your phone'.tr : 'Sign in'.tr, primary: true, autofocus: true, onTap: () => push(tv && !Cloud.onServer ? const LinkScreen() : const AccountScreen(mode: AccountMode.signIn))),
+                  if (!Cloud.onServer) ...[
+                    SizedBox(height: 0.6 * rem),
+                    PekButton(label: 'Sign up'.tr, onTap: () {
+                      if (tv) {
+                        push(const SignUpQrScreen());
+                      } else {
+                        openSignUpPage(context);
+                      }
+                    }),
+                  ],
                   SizedBox(height: 0.9 * rem),
                   Center(child: PekButton(compact: true, shrink: true, label: 'Sign in later'.tr, onTap: SignInStep.finish)),
                 ]).animate().fadeIn(delay: 150.ms, duration: 400.ms).slideY(begin: 0.08, end: 0, duration: 450.ms, curve: Curves.easeOutCubic),
