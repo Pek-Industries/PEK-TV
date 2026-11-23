@@ -1,8 +1,14 @@
-# PEK Server (self-hosted): Windows and Linux
+# PEK Server (self-hosted): Windows, Linux and Android (Termux)
 
 The same C++ server the apps run inside themselves (`backend/`), as a program of its own: `pek-server.exe`. It keeps your library
 (scan, posters and titles from TMDb, Fix match data) and streams it to other devices on your network. It runs on the owner's own PC;
-there is no cloud.
+there is no cloud. Ready-made downloads for every device, a quick start and the full command list are on the website:
+https://pekindustries.com/pektv/server.html
+
+The parts below cover Windows first; then **Linux** and **Android (Termux)**, which share the same options. Accounts, TMDb and
+subtitle keys and updating work the same everywhere.
+
+# Windows
 
 ```
 selfhost/linux/                see "Linux" below
@@ -40,7 +46,9 @@ bash selfhost/windows/package.sh win64  # -> dist-selfhost/PEK-Server-<version>-
 6. Connect PEK TV: see **Connecting the apps** below. Another device later: double-click **Pair a device.bat** for a new code.
 
 Hide it and start it with Windows: **Start with Windows (on).bat**. Stop a hidden one: **Stop PEK Server.bat**.
-Options: `pek-server.exe --help` (`--add-media`, `--port`, `--local-only`, `--new-key`, `--pair`, `--name`, `--rescan-minutes`, `--data`).
+Options: `pek-server.exe --help` (`--add-media`, `--port`, `--local-only`, `--new-key`, `--pair`, `--name`, `--rescan-minutes`, `--data`,
+the account options, `--tmdb-key`, `--subtitles-key`, `--check-update`). The .bat helpers in the folder: **Add a user**, **Pair a device**,
+**Set TMDb key**, **Set subtitles key**, **Update PEK Server**, **Allow network access**, **Start with Windows (on / off)**, **Stop PEK Server**.
 
 ## Where things are
 `%LOCALAPPDATA%\PEK Server\`: `server.log` (look here first), `pairing.txt`, `access-key.txt`, `server-id.txt`, `sources.tsv` (media folders),
@@ -155,9 +163,18 @@ Library, accounts and settings live in the data folder and are kept every time.
 - **DVD images and VIDEO_TS folders on the server** are listed but do not play yet (the player opens them as a local path).
 - **No plugins.** On Windows and Android the Python plugin host belongs to the app, not to the C++ server.
 - **No SMB / NFS / torrent streaming** in this build (FTP, WebDAV and DLNA sources work). They can be added like in `windows/backend`.
+- **No built-in remote access.** See "Watching away from home" below.
 - **No HTTPS.** The access key travels in plain HTTP, fine on a home network. For use away from home put it behind Tailscale
   or a reverse proxy with TLS; do not just forward the port on your router. The app warns when a typed address looks like the
   internet without https.
+
+## Watching away from home
+The server has no relay or remote-access service of its own. The simple, safe way is **Tailscale** (free for personal use):
+install it on the server and on each phone / TV, then pair PEK TV with the server's Tailscale address (`100.x.y.z` or the
+`.ts.net` name). That address works at home and away, and everything is encrypted. A reverse proxy with HTTPS
+(`https://pek.example.com`, also under a path such as `/pek`) works too. Do not just forward port 8080 on the router: the key and
+the video would cross the internet unencrypted (the app warns about such addresses). The server sends the original file, so
+smooth playback away from home needs a home upload speed above the file's bitrate (about 5-10 Mbps for 1080p).
 
 ---
 
@@ -192,7 +209,11 @@ bash selfhost/linux/package.sh      # -> dist-selfhost/PEK-Server-<version>-linu
 ```
 
 ## Run it
-**As a service (systemd):**
+**In one line (installs or updates the service):**
+```
+curl -fsSL https://github.com/Pek-Industries/PEK-TV/releases/download/server-latest/install-linux.sh | sudo bash -s -- --media /srv/movies
+```
+**As a service (systemd), from the downloaded file:**
 ```
 tar xzf PEK-Server-*-linux-x64.tar.gz && cd PEK-Server-*
 sudo ./install.sh --media /srv/movies --media /srv/music        # [--port 8080]
@@ -219,7 +240,7 @@ With a bind-mounted data folder, run the container as its owner: `--user $(id -u
 **Test with no app:** on another device open `http://<address>:8080/api/movies?token=<key>`.
 Options: `pek-server --help` (also `--print-key`, `--pair`, `--name`; settings from `PEK_DATA`, `PEK_MEDIA`, `PEK_PORT`, `PEK_BIND`, `PEK_TOKEN`, `PEK_NAME`).
 
-Same limits as the Windows version (no accounts / logins yet, no plugins, no SMB / NFS / torrent, no built-in HTTPS).
+Same limits as the Windows version (no plugins, no SMB / NFS / torrent, no built-in HTTPS).
 
 ---
 
@@ -268,5 +289,5 @@ adb shell "/system/bin/device_config set_sync_disabled_for_tests persistent; /sy
 ```
 Best on a spare phone or an Android TV box (Shield, Chromecast with Google TV + storage, Fire TV with Termux sideloaded).
 
-Same limits as the other versions (no accounts yet, no plugins, no SMB / NFS, no built-in HTTPS). Build it yourself on a PC:
+Same limits as the other versions (no plugins, no SMB / NFS, no built-in HTTPS). Build it yourself on a PC:
 `ANDROID_NDK_HOME=/path/to/ndk bash selfhost/termux/build.sh && bash selfhost/termux/package.sh`.

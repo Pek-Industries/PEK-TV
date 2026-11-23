@@ -14,8 +14,12 @@ exists only for 64-bit Intel/AMD (x64) and 64-bit ARM (arm64). So the same "one 
 | `PEK-TV-<version>-windows-arm64-setup.exe` | the installer for Windows on ARM (Snapdragon / Copilot+ PCs) |
 | `PEK-TV-<version>-windows-x64.zip` / `-arm64.zip` | portable copy: unzip into a folder you can write to and run `pek_tv.exe` |
 
+Download them from https://pekindustries.com/pektv/download.html or the GitHub release page.
+
 Run the setup program: it installs for the current user (no administrator prompt; the wizard can switch to "all users"), adds a Start menu
-entry (and an optional desktop shortcut) and an uninstaller. Data lives in `%LOCALAPPDATA%\PEK TV` and is kept when the app is uninstalled.
+entry (and an optional desktop shortcut) and an uninstaller. The installers are not code-signed yet, so Windows SmartScreen may say
+"Windows protected your PC" the first time: choose **More info**, then **Run anyway**. Data lives in `%LOCALAPPDATA%\PEK TV` and is kept
+when the app is uninstalled.
 The file names end in `-windows-<arch>-setup.exe` / `-windows-<arch>.zip` because that is what the in-app updater looks for
 (`app_update.dart`): an installed copy (it has `unins000.exe` beside the exe) updates through the setup program, a portable copy through the zip.
 

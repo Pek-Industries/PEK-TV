@@ -1,7 +1,8 @@
 # In-app updates
 
 PEK TV checks GitHub for a newer release every time it starts. If there is one, an "A new version is available"
-screen comes up before the app. **Update now** downloads the apk and hands it to Android to install.
+screen comes up before the app. **Update now** downloads the apk and hands it to Android to install (on Windows it downloads the setup program or the zip, see
+"Windows" below).
 **Not now** opens the app; nothing is remembered, so the screen is back at the next start until the app is updated.
 
 ## Publishing a release (what the app looks for)
@@ -26,6 +27,20 @@ Rules the app follows:
 Android never lets a normal app update itself with no prompt at all. The person turns on "Install unknown apps" for PEK TV once
 (the screen sends them there), and Android shows its own confirmation. On Android 12+ Android may skip that confirmation for
 updates of an app it already installed this way.
+
+## Windows
+`build_windows.yml` runs on the same tag push and attaches four files to the same GitHub release, next to the apks:
+- `PEK-TV-<version>-windows-x64-setup.exe` and `PEK-TV-<version>-windows-arm64-setup.exe` (the installer, per CPU type)
+- `PEK-TV-<version>-windows-x64.zip` and `PEK-TV-<version>-windows-arm64.zip` (the portable copy)
+
+The Windows app uses the same version numbers and the same "A new version is available" screen. The file it downloads is chosen
+by the name ending (`app_update.dart`): an installed copy (it has `unins000.exe` beside the exe) takes `-windows-<arch>-setup.exe`
+and runs it, an unzipped copy takes `-windows-<arch>.zip` and swaps its files after the app closes. The CPU type comes from the
+running exe, not from a versionCode. Windows has no "Install unknown apps" switch; the installers are not code-signed yet, so
+Windows SmartScreen may show "Windows protected your PC" on the first run (**More info** > **Run anyway**). The website's Download
+page lists the newest release that has Windows files, which can be an older tag than the newest apk if one workflow failed.
+
+PEK Server is updated separately and never by itself: see "Updating" in SELFHOST.md.
 
 ## "What's new" screen (after an update)
 
