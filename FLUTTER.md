@@ -217,10 +217,10 @@ it whenever it redraws the notification. Details: `MUSIC.md` > "Home-screen widg
 - To add or change lines edit `_any` (any time) and `_byPart` (one list per part of the day) in `greeting.dart`. Tests: `test/greeting_test.dart`.
 
 ## PEK Cloud plans in the app
-Accounts are free and are created on the website (an invite code is needed while sign-up is invite-only); the app only signs in.
+Accounts are free and are created on the website; the app only signs in.
 **PEK Cloud** is the paid part: cloud backup (watch history, resume points, plugins) and up to 5 profiles. A free account has 1 profile
 and no cloud backup. Plans, bought on the website with Stripe (never inside the app): **$5.99 a month**, **$59.99 a year** (just $5.00 a month:
-it saves $11.89 a year, 17%, compared with paying monthly) or **$399 once** (lifetime). Accounts made before plans existed are
+it saves $11.89 a year, 17%, compared with paying monthly) or **$399.99 once** (lifetime). Accounts made before plans existed are
 "grandfathered" and have everything. The prices shown in the app are in `PlanPrices` (`plan_ui.dart`); keep them in step with Stripe
 (the billing worker) and the website's account page.
 

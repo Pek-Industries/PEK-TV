@@ -89,7 +89,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
   static String _planPrice(String plan) => switch (plan) {
         'monthly' => '\$${PlanPrices.monthly} a month',
         'yearly' => '\$${PlanPrices.yearly.toStringAsFixed(2)} a year',
-        'lifetime' => '\$${PlanPrices.lifetime.toStringAsFixed(0)} once (lifetime)',
+        'lifetime' => '\$${PlanPrices.lifetime.toStringAsFixed(2)} once (lifetime)',
         'grandfathered' => 'Nothing to pay, included with your account',
         _ => 'Free',
       };
@@ -202,7 +202,7 @@ class _AccountSectionState extends State<AccountSection> with WidgetsBindingObse
         if (!Cloud.linked) {
           return Section(
             title: 'Account',
-            hint: 'One account for the household. Each profile keeps its own history and resume points, synced across your devices. Create the account on our website (invite code needed), then sign in here.' + (p.tvDevice ? ' On a TV, sign in with your phone: no typing.' : ''),
+            hint: 'One account for the household. Each profile keeps its own history and resume points, synced across your devices. Create the account on our website, then sign in here.' + (p.tvDevice ? ' On a TV, sign in with your phone: no typing.' : ''),
             children: [
               Wrap(spacing: 8, runSpacing: 8, children: [
                 // Phone sign-in is for a TV (no keyboard); on a phone it would mean signing in with the phone you are holding.

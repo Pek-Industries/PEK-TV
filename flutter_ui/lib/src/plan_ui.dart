@@ -15,7 +15,7 @@ import 'link_text.dart';
 class PlanPrices {
   static const monthly = 5.99;
   static const yearly = 59.99;
-  static const lifetime = 399.0;
+  static const lifetime = 399.99;
 
   /// What twelve monthly payments cost minus the yearly price.
   static double get yearlySaving => monthly * 12 - yearly; // 11.89
@@ -160,7 +160,7 @@ class _SubscribeBoxState extends State<SubscribeBox> with WidgetsBindingObserver
       Text('\$${PlanPrices.yearly.toStringAsFixed(2)} a year \u00b7 just \$${PlanPrices.yearlyPerMonth} a month', style: price),
       Text('Save \$${PlanPrices.yearlySaving.toStringAsFixed(2)} a year (${PlanPrices.yearlySavingPercent}% off) vs paying monthly', style: TextStyle(color: t.accent, fontWeight: FontWeight.w600, fontSize: 0.9 * rem)),
       SizedBox(height: 0.15 * rem),
-      Text('\$${PlanPrices.lifetime.toStringAsFixed(0)} once (lifetime)', style: price),
+      Text('\$${PlanPrices.lifetime.toStringAsFixed(2)} once (lifetime)', style: price),
       SizedBox(height: 0.8 * rem),
       Text('Scan the QR code with your phone, or type this into a browser:', style: muted),
       SizedBox(height: 0.2 * rem),
