@@ -35,6 +35,14 @@ class WhatsNew {
 
   /// Newest first.
   static const releases = <ReleaseNotes>[
+    ReleaseNotes('2.2.8', 'Your own PEK Server', [
+      'Run your own PEK Server at home (Windows, Linux, Docker, or an Android box with Termux) and watch its library on every TV and phone.',
+      'Connect in Settings > Library > Connect to a server. Servers on your network show up by themselves; pair with a 6-digit code.',
+      'Sign in with an account on your server: watch history, resume points, favorites and profiles sync between your devices.',
+      'When PEK Cloud or your server can\u2019t be reached, PEK TV now says so and pauses syncing until it is back.',
+      'You are told when you were signed out, removed from a server or your password was changed.',
+      'Fixes: e-mail links in news and messages, voice search for titles that start with \u201cThe\u201d, and a greeting that could repeat.',
+    ]),
     ReleaseNotes('2.2.7', 'Bug fixes', [
       'Minor UI bug fixes.',
     ]),

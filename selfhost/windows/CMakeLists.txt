@@ -1,6 +1,6 @@
 # PEK Server (self-hosted, Windows): the same C++ server as the apps (backend/), as a stand-alone program with no window.
 # Built with the MSYS2 clang toolchain (CLANG64 for x64, CLANGARM64 for ARM64), exactly like windows/backend/CMakeLists.txt.
-#   cmake -S selfhost/windows -B build/selfhost -G Ninja -DCMAKE_BUILD_TYPE=Release [-DPEK_SERVER_VERSION=2.2.7]
+#   cmake -S selfhost/windows -B build/selfhost -G Ninja -DCMAKE_BUILD_TYPE=Release [-DPEK_SERVER_VERSION=2.2.8]
 cmake_minimum_required(VERSION 3.18)
 project(pek_selfhost C CXX)
 

@@ -1,5 +1,5 @@
 ; PEK TV for Windows - Inno Setup script. Built by windows/scripts/make-installer.sh (run by package.sh and the workflow):
-;   ISCC /DAppVersion=2.2.7 /DArch=x64 /DSourceDir=<folder with pek_tv.exe and everything beside it> /DOutDir=<dist> pek_tv.iss
+;   ISCC /DAppVersion=2.2.8 /DArch=x64 /DSourceDir=<folder with pek_tv.exe and everything beside it> /DOutDir=<dist> pek_tv.iss
 ; One setup program per CPU type: PEK-TV-<version>-windows-<arch>-setup.exe (the in-app updater looks for that name, app_update.dart).
 #ifndef AppVersion
   #define AppVersion "0.0.0"

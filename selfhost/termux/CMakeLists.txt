@@ -3,7 +3,7 @@
 # static, so the only thing it needs from the phone is Android's own libc. Used by selfhost/termux/build.sh:
 #   cmake -S selfhost/termux -B build/termux-arm64-v8a -G Ninja \
 #     -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=26 \
-#     -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release [-DPEK_SERVER_VERSION=2.2.7]
+#     -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release [-DPEK_SERVER_VERSION=2.2.8]
 # Inputs made by the app's own scripts: android/openssl/<abi> (android/scripts/build-openssl.sh), android/sqlite (fetch-sqlite.sh).
 cmake_minimum_required(VERSION 3.18)
 project(pek_selfhost_termux C CXX)

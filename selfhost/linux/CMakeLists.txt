@@ -1,5 +1,5 @@
 # PEK Server (self-hosted, Linux): the same C++ server as the apps (backend/), as a stand-alone program with no window.
-#   cmake -S selfhost/linux -B build/selfhost-linux -G Ninja -DCMAKE_BUILD_TYPE=Release [-DPEK_STATIC=ON] [-DPEK_SERVER_VERSION=2.2.7]
+#   cmake -S selfhost/linux -B build/selfhost-linux -G Ninja -DCMAKE_BUILD_TYPE=Release [-DPEK_STATIC=ON] [-DPEK_SERVER_VERSION=2.2.8]
 # PEK_STATIC=ON makes a fully static program (use it on Alpine / musl: one file that runs on any Linux distribution). See Dockerfile.
 cmake_minimum_required(VERSION 3.18)
 project(pek_selfhost C CXX)
