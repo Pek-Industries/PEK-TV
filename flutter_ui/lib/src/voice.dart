@@ -251,7 +251,8 @@ VoiceIntent parseVoice(String heard, {bool player = false}) {
 
   final play = RegExp(r'^(play|watch|start|put on) (the movie |the show |the film |some )?(.+)$').firstMatch(t);
   if (play != null) return tail(_titleIntent(VoiceKind.play, play.group(3)!));
-  final find = RegExp(r'^(search for|search|find|look for|look up) (the )?(.+)$').firstMatch(t);
+  // "The" belongs to titles (The Matrix, The Bear); only "the movie / show / film", as with play, is not part of one.
+  final find = RegExp(r'^(search for|search|find|look for|look up) (the movie |the show |the film )?(.+)$').firstMatch(t);
   if (find != null) return tail(_titleIntent(VoiceKind.search, find.group(3)!));
   return tail(_titleIntent(VoiceKind.search, t), guess: true); // anything else is treated as something to look for
 }

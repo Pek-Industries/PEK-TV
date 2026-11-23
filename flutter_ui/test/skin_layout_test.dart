@@ -10,7 +10,6 @@ import 'package:pek_tv_ui/src/skin_install.dart';
 import 'package:pek_tv_ui/src/skin_layout.dart';
 import 'package:pek_tv_ui/src/skins.dart';
 
-import 'skin_zip_writer.dart';
 
 PluginFile f(String path, String text) => PluginFile(path, Uint8List.fromList(utf8.encode(text)));
 

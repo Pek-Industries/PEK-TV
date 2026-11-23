@@ -85,7 +85,9 @@ class Greeting {
 
   /// A random template for [part], never the same one twice in a row.
   static String pick(DayPart part, {Random? rnd}) {
-    final pool = [..._any, ...?_byPart[part]];
+    // A set: a line in both lists ("Hello {user}, how are we feeling {tod}?") must not count twice, or the step below
+    // could move from one copy to the other and show the same line again.
+    final pool = {..._any, ...?_byPart[part]}.toList();
     final r = rnd ?? _rnd;
     var t = pool[r.nextInt(pool.length)];
     if (pool.length > 1 && t == _last) t = pool[(pool.indexOf(t) + 1 + r.nextInt(pool.length - 1)) % pool.length];

@@ -9,7 +9,9 @@ import 'tokens.dart';
 class Links {
   Links._();
 
-  static final _url = RegExp(r'((?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s<>"]*)?)|([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})', caseSensitive: false);
+  // The e-mail pattern comes first: "r3ct.info@gmail.com" also starts like a web address (r3ct.info), and the first pattern
+  // that fits wins.
+  static final _url = RegExp(r'([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})|((?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s<>"]*)?)', caseSensitive: false);
 
   /// Link-shaped pieces of [text]: (start, end, target). Trailing sentence punctuation stays outside the link.
   static List<(int, int, String)> find(String text) {
@@ -22,7 +24,7 @@ class Links {
         end--;
       }
       if (s.isEmpty) continue;
-      if (m.group(2) != null) {
+      if (m.group(1) != null) {
         out.add((m.start, end, 'mailto:$s'));
       } else {
         // A file name such as "backend.py" or "ui.js" is not an address: a bare host needs a real-looking ending.
