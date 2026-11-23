@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Collects pek-server.exe + its DLLs + ffprobe.exe + cacert.pem + the .bat helpers into one folder and zips it:
-#   dist-selfhost/PEK-Server-<version>-windows-<arch>/   and   dist-selfhost/PEK-Server-<version>-windows-<arch>.zip
+#   dist-selfhost/PEK-Server-<version>-windows-<arch>/   and   dist-selfhost/PEK-Server-<version>-windows-<arch>.zip (+ .sha256)
 # Run in the MSYS2 shell after build.sh.   Usage: bash selfhost/windows/package.sh [win64|winarm64]
 set -euo pipefail
 KIND="${1:-win64}"
@@ -19,5 +19,5 @@ curl -fsSL --retry 5 --retry-all-errors https://curl.se/ca/cacert.pem -o "$OUT/c
 cp build/selfhost/deps/*.dll "$OUT/"      # OpenSSL, SQLite ... (collect-deps.sh)
 cp selfhost/windows/bundle/*.bat "$OUT/"
 cp selfhost/windows/bundle/README.txt "$OUT/"
-( cd dist-selfhost && 7z a -tzip -mx=9 "$NAME.zip" "$NAME" >/dev/null )
+( cd dist-selfhost && 7z a -tzip -mx=9 "$NAME.zip" "$NAME" >/dev/null && sha256sum "$NAME.zip" > "$NAME.zip.sha256" )
 ls -l dist-selfhost

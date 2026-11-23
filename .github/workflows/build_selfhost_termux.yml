@@ -106,6 +106,10 @@ jobs:
     needs: build
     if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
+    # Shared with the other server workflows, so two of them never edit the same release at once.
+    concurrency:
+      group: pek-server-release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -117,14 +121,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: server-v${{ needs.build.outputs.version }}
-          name: PEK Server ${{ needs.build.outputs.version }} (Termux)
+          name: PEK Server ${{ needs.build.outputs.version }}
           make_latest: false
           body: |
-            PEK Server for Termux (Android phones and TV boxes). Install or update in Termux:
-            ```
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash
-            ```
-            See SELFHOST.md.
+            PEK Server ${{ needs.build.outputs.version }}: your own server for PEK TV. Download the file for the machine that will run it:
+            - **Windows PC (Intel / AMD):** `PEK-Server-${{ needs.build.outputs.version }}-windows-x64.zip`
+            - **Windows on ARM:** `PEK-Server-${{ needs.build.outputs.version }}-windows-arm64.zip`
+            - **Linux, NAS (Intel / AMD):** `PEK-Server-${{ needs.build.outputs.version }}-linux-x64.tar.gz`
+            - **Raspberry Pi 4/5, ARM Linux:** `PEK-Server-${{ needs.build.outputs.version }}-linux-arm64.tar.gz`
+            - **Android (Termux):** in Termux run
+              `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
+
+            Each platform's files appear once its build is published. Setup: [SELFHOST.md](https://github.com/${{ github.repository }}/blob/main/SELFHOST.md).
           files: |
             dist/PEK-Server-${{ needs.build.outputs.version }}-termux-*.tar.gz
             dist/PEK-Server-${{ needs.build.outputs.version }}-termux-*.tar.gz.sha256
@@ -134,13 +142,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: server-latest
-          name: PEK Server (Termux) - newest
+          name: PEK Server - newest
           make_latest: false
           body: |
-            Always the newest PEK Server for Termux (now ${{ needs.build.outputs.version }}). Install or update in Termux:
-            ```
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash
-            ```
+            Always the newest PEK Server (now ${{ needs.build.outputs.version }}). These links never change:
+            - Windows PC (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-x64.zip
+            - Windows on ARM: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-arm64.zip
+            - Linux, NAS (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-x64.tar.gz
+            - Raspberry Pi 4/5, ARM Linux: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-arm64.tar.gz
+            - Android (Termux): `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
           files: |
             dist/PEK-Server-termux-*.tar.gz
             dist/PEK-Server-termux-*.tar.gz.sha256

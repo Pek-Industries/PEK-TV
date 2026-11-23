@@ -17,8 +17,11 @@ selfhost/windows/
 
 ## Build it
 
-**A. On GitHub (nothing to install).** Push the repo, open **Actions > Build PEK Server (Windows, self-hosted) > Run workflow**.
-When it finishes, download `PEK-Server-windows-x64` from the run's Artifacts (it is a zip that contains the real zip).
+**A. On GitHub (nothing to install).** Push the repo, open **Actions > Build PEK Server (Windows, self-hosted) > Run workflow** and tick
+**publish**. Each CPU type then goes to the releases page as its own zip: `PEK-Server-<version>-windows-x64.zip` and
+`PEK-Server-<version>-windows-arm64.zip` in `server-v<version>`, and the same files without the version in `server-latest`
+(fixed links, e.g. `https://github.com/Pek-Industries/PEK-TV/releases/download/server-latest/PEK-Server-windows-x64.zip`).
+Without "publish" they are only in the run's Artifacts (where GitHub wraps each one in another zip).
 
 **B. On a Windows PC.** Install [MSYS2](https://www.msys2.org), open **MSYS2 CLANG64** (ARM64 PCs: CLANGARM64), then:
 ```
@@ -127,7 +130,8 @@ folder, and drives mounted under `/mnt`, `/media`, `/run/media`, `/srv`. The And
 ## Build it
 **A. On GitHub:** Actions > **Build PEK Server (Linux, self-hosted)** > Run workflow. It builds, starts the program and checks that
 `/api/movies` answers, then gives you two downloads: `PEK-Server-linux-x64` and `PEK-Server-linux-arm64`
-(each holds a `.tar.gz` and its `.sha256`).
+(each holds a `.tar.gz` and its `.sha256`). Tick **publish** to also put them on the releases page as separate files, like the
+Windows build: versioned in `server-v<version>`, fixed names (`PEK-Server-linux-x64.tar.gz`, `...-arm64.tar.gz`) in `server-latest`.
 
 **B. On a Linux machine with Docker:**
 ```

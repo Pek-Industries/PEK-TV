@@ -2,12 +2,18 @@ name: Build PEK Server (Windows, self-hosted)
 
 # Manual run only (Actions tab > "Build PEK Server (Windows, self-hosted)" > Run workflow).
 # It does not start on tags, so it never runs next to the Android / Windows app builds.
-# Result: one zip per CPU type, downloadable from the run's "Artifacts":
+# Result: one zip per CPU type in the run's "Artifacts". With "publish" ticked, each zip also goes to the
+# server-v<version> and server-latest releases as its own download (same releases as the Termux and Linux builds):
 #   PEK-Server-<version>-windows-x64.zip     (normal Intel / AMD PCs)
 #   PEK-Server-<version>-windows-arm64.zip   (Windows on ARM)
 # Unzip, double-click "Start PEK Server.bat". See SELFHOST.md.
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to the server-v<version> and server-latest releases'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,8 +38,15 @@ jobs:
     defaults:
       run:
         shell: bash
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - id: ver
+        shell: bash
+        run: |
+          echo "version=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' flutter_ui/pubspec.yaml | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: Set up MSYS2 (${{ matrix.msystem }})
         uses: msys2/setup-msys2@v2
@@ -65,6 +78,73 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: PEK-Server-windows-${{ matrix.arch }}
-          path: dist-selfhost/*.zip
+          path: |
+            dist-selfhost/*.zip
+            dist-selfhost/*.sha256
           if-no-files-found: error
           retention-days: 30
+
+  # Puts each CPU type on the release page as its own file (no zip around it), next to the Termux files.
+  publish:
+    name: Publish releases
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    # Shared with the other server workflows, so two of them never edit the same release at once.
+    concurrency:
+      group: pek-server-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: PEK-Server-windows-*
+          path: dist
+          merge-multiple: true
+      - name: Fixed-name copies for server-latest
+        run: |
+          cd dist
+          V="${{ needs.build.outputs.version }}"
+          for f in PEK-Server-$V-windows-*.zip; do
+            n="${f/-$V-/-}"
+            cp "$f" "$n"
+            sha256sum "$n" > "$n.sha256"
+          done
+          ls -l
+      - name: server-v${{ needs.build.outputs.version }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-v${{ needs.build.outputs.version }}
+          name: PEK Server ${{ needs.build.outputs.version }}
+          make_latest: false
+          body: |
+            PEK Server ${{ needs.build.outputs.version }}: your own server for PEK TV. Download the file for the machine that will run it:
+            - **Windows PC (Intel / AMD):** `PEK-Server-${{ needs.build.outputs.version }}-windows-x64.zip`
+            - **Windows on ARM:** `PEK-Server-${{ needs.build.outputs.version }}-windows-arm64.zip`
+            - **Linux, NAS (Intel / AMD):** `PEK-Server-${{ needs.build.outputs.version }}-linux-x64.tar.gz`
+            - **Raspberry Pi 4/5, ARM Linux:** `PEK-Server-${{ needs.build.outputs.version }}-linux-arm64.tar.gz`
+            - **Android (Termux):** in Termux run
+              `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
+
+            Each platform's files appear once its build is published. Setup: [SELFHOST.md](https://github.com/${{ github.repository }}/blob/main/SELFHOST.md).
+          files: |
+            dist/PEK-Server-${{ needs.build.outputs.version }}-windows-*.zip
+            dist/PEK-Server-${{ needs.build.outputs.version }}-windows-*.zip.sha256
+      # The tag stays where it was first made; only the files are replaced.
+      - name: server-latest
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: server-latest
+          name: PEK Server - newest
+          make_latest: false
+          body: |
+            Always the newest PEK Server (now ${{ needs.build.outputs.version }}). These links never change:
+            - Windows PC (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-x64.zip
+            - Windows on ARM: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-arm64.zip
+            - Linux, NAS (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-x64.tar.gz
+            - Raspberry Pi 4/5, ARM Linux: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-arm64.tar.gz
+            - Android (Termux): `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
+          files: |
+            dist/PEK-Server-windows-*.zip
+            dist/PEK-Server-windows-*.zip.sha256
