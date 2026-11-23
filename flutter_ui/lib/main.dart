@@ -21,6 +21,7 @@ import 'src/recs.dart';
 import 'src/onboarding_flow.dart';
 import 'src/remote_host.dart';
 import 'src/server_target.dart';
+import 'src/account_gate.dart';
 import 'src/skins.dart';
 import 'src/mpv.dart';
 import 'src/nav_sound.dart';
@@ -61,6 +62,7 @@ Future<void> main() async {
       // Signed in to PEK Cloud, but now paired with a PEK Server that has accounts (or the other way round): that session ends here.
       unawaited(Cloud.checkOrigin());
       ServerTarget.changes.addListener(() => unawaited(Cloud.checkOrigin()));
+      AccountGate.start(); // blocks the app while the signed-in account's server is unreachable, says why a session ended
       MusicController.instance.restore(); // the song the active profile was playing when the app closed
       Net.start(); // the green / red dot and offline mode (net.js)
       final phone = await phoneAsk;
@@ -101,7 +103,7 @@ class PekApp extends StatelessWidget {
           supportedLocales: L10n.supportedLocales,
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
           // Tokens, TV mode and the rem size are available to every route (dialogs and the player included).
-          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [const PekVideoSurface(), child ?? const SizedBox.shrink(), const NetDot(), const ActivityOverlay(), const BusyRing(), const WinSplash()]))))),
+          builder: (context, child) => MediaQuery(data: A11y.apply(MediaQuery.of(context)), child: PekRoot(isPhone: isPhone, tokens: tokens, layout: Skins.layout, child: TvNav.root(context, KeyGuard(child: Stack(fit: StackFit.expand, children: [const PekVideoSurface(), AccountGate.shield(child ?? const SizedBox.shrink()), const NetDot(), const ActivityOverlay(), const AccountGateLayer(), const BusyRing(), const WinSplash()]))))),
           home: const _Boot(),
         );
       },

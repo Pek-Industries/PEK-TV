@@ -14,7 +14,7 @@ CONNECT A TV / PHONE
 
 ACCOUNTS (sign in, and sync history between devices)
   /opt/pek-server/pek-server --add-user alice      (asks for the password; the first account is the owner)
-  In PEK TV: Settings > Account > Sign in. --list-users | --set-password <name> | --remove-user <name>
+  In PEK TV: Settings > Account > Sign in. --list-users | --set-password <name> | --sign-out <name> | --remove-user <name>
   Run these as the pek user so the files stay theirs:  sudo -u pek /opt/pek-server/pek-server --data /var/lib/pek-server --add-user alice
 
 JUST RUN IT

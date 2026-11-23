@@ -72,8 +72,13 @@ pek-server --add-user alice                 # asks for the password twice (or PE
 pek-server --add-user bob --email bob@example.com   # bob can then sign in with his email too
 pek-server --list-users                     # who has an account, and on how many devices they are signed in
 pek-server --set-password bob               # a new password; bob is signed out everywhere
+pek-server --sign-out bob                   # signs bob out on every device; his account and data stay
 pek-server --remove-user bob                # deletes bob's account and everything it synced; his devices are signed out at once
 ```
+Their devices are told why: "You were removed from …", "Your password was changed" or "You were signed out" (the server keeps
+the reason for each ended session for six months). If the server stops answering, a signed-in device shows "Can't access the
+server right now", pauses syncing, and tries again by itself (15 s, 30 s, 60 s, then every 2 minutes) until it is back.
+After `--new-key`, paired devices show "This device was disconnected" with a button to pair again.
 Windows: **Add a user.bat** (or the same options on `pek-server.exe`). Docker: `docker exec -it pek-server pek-server --add-user alice`.
 These work while the server is running.
 

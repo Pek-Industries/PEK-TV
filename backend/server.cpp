@@ -997,7 +997,8 @@ void PekServer::start(int port, const std::string& plugins_dir,
                 return httplib::Server::HandlerResponse::Handled;
             }
             res.status = 401;
-            res.set_content("{\"error\": \"Access token required\"}", "application/json");
+            // code: the app tells "this device must connect again" (a new key on a self-hosted server) apart from other errors
+            res.set_content("{\"error\": \"Access token required\", \"code\": \"device_unpaired\"}", "application/json");
             return httplib::Server::HandlerResponse::Handled;
         }
         return httplib::Server::HandlerResponse::Unhandled;

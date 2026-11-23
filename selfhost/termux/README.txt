@@ -18,7 +18,7 @@ CONNECT A TV / PHONE
 
 ACCOUNTS (sign in, and sync history between devices)
   pek-server --add-user alice          asks for the password; the first account is the owner
-  In PEK TV: Settings > Account > Sign in.   Also: --list-users, --set-password <name>, --remove-user <name>
+  In PEK TV: Settings > Account > Sign in.   Also: --list-users, --set-password <name>, --sign-out <name>, --remove-user <name>
 
 IN THE BACKGROUND
   pek-server-start       start (with a wake lock)        pek-server-stop    stop

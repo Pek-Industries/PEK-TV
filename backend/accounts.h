@@ -14,6 +14,8 @@
 //   DELETE /v1/account      deletes the account and its data (not the server owner's account)
 //   any other /v1 route     404 not_on_server (plugin backup, Discord, news ... belong to PEK Cloud)
 // Everything except login needs the access key (X-Pek-Token, checked by server.cpp) AND "Authorization: Bearer <session>".
+// A session the owner ended answers 401 with why, so the app can tell the person: "account_removed" (--remove-user),
+// "password_changed" (--set-password) or "signed_out_by_owner" (--sign-out). Any other unknown session: "bad_session".
 //
 // Accounts are made on the server: pek-server --add-user <name> (the first one is the owner). The data lives in <data>/accounts.db.
 // Unlike the library database it is never thrown away when it cannot be read: the server refuses to start accounts instead.
@@ -232,6 +234,11 @@ CREATE TABLE IF NOT EXISTS items(
   PRIMARY KEY(user, profile, kind, key)
 );
 CREATE INDEX IF NOT EXISTS items_seq ON items(user, profile, seq);
+CREATE TABLE IF NOT EXISTS ended(
+  token TEXT PRIMARY KEY,
+  reason TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
 )SQL";
 
 /// Opens <dataDir>/accounts.db. A file that cannot be read is NOT replaced (it holds people's accounts): accounts stay off and the
@@ -249,8 +256,29 @@ inline bool open(const std::string& path) {
         delete d;
         return false;
     }
+    {   // why a session ended is only needed until its device has come back once; half a year is plenty
+        St q(*d, "DELETE FROM ended WHERE at < ?");
+        q.bind(1, nowMs() - 180LL * 24 * 3600 * 1000);
+        q.run();
+    }
     dbPtr() = d;
     return true;
+}
+
+/// Ends every session of [user] and remembers [reason] for each, so its devices learn why. Call with d.m held.
+inline void endSessions(Db& d, long long user, const std::string& reason) {
+    St keep(d, "INSERT OR REPLACE INTO ended(token, reason, at) SELECT token, ?, ? FROM sessions WHERE user = ?");
+    keep.bind(1, reason).bind(2, nowMs()).bind(3, user);
+    keep.run();
+    St del(d, "DELETE FROM sessions WHERE user = ?");
+    del.bind(1, user);
+    del.run();
+}
+
+inline long long userId(Db& d, const std::string& username) {
+    St q(d, "SELECT id FROM users WHERE username = ?");
+    q.bind(1, username);
+    return q.row() ? q.i(0) : 0;
 }
 
 inline bool isOn() { return dbPtr() != nullptr; }
@@ -312,9 +340,18 @@ inline std::string setPassword(const std::string& username, const std::string& p
     St q(*d, "UPDATE users SET salt = ?, hash = ?, iterations = ? WHERE username = ?");
     q.bind(1, salt).bind(2, hash).bind(3, static_cast<long long>(kIterations)).bind(4, username);
     if (!q.run() || sqlite3_changes(d->h) == 0) return "There is no account called " + username + ".";
-    St s(*d, "DELETE FROM sessions WHERE user = (SELECT id FROM users WHERE username = ?)");
-    s.bind(1, username);
-    s.run();
+    endSessions(*d, userId(*d, username), "password_changed");
+    return "";
+}
+
+/// Signs the account out on every device (pek-server --sign-out); the account and its data stay.
+inline std::string signOutUser(const std::string& username) {
+    Db* d = dbPtr();
+    if (!d) return "Accounts are not available (see the log).";
+    std::lock_guard<std::mutex> lk(d->m);
+    const long long id = userId(*d, username);
+    if (id == 0) return "There is no account called " + username + ".";
+    endSessions(*d, id, "signed_out_by_owner");
     return "";
 }
 
@@ -323,6 +360,9 @@ inline std::string removeUser(const std::string& username) {
     Db* d = dbPtr();
     if (!d) return "Accounts are not available (see the log).";
     std::lock_guard<std::mutex> lk(d->m);
+    const long long id = userId(*d, username);
+    if (id == 0) return "There is no account called " + username + ".";
+    endSessions(*d, id, "account_removed");
     St q(*d, "DELETE FROM users WHERE username = ?");
     q.bind(1, username);
     if (!q.run() || sqlite3_changes(d->h) == 0) return "There is no account called " + username + ".";
@@ -337,7 +377,9 @@ struct Who {
     bool owner = false;
 };
 
-inline bool lookupSession(const httplib::Request& req, Who& who, std::string& tokenHash) {
+/// [why] is set when there is no such session: the reason the owner ended it, or "bad_session".
+inline bool lookupSession(const httplib::Request& req, Who& who, std::string& tokenHash, std::string& why) {
+    why = "bad_session";
     Db* d = dbPtr();
     if (!d) return false;
     const std::string auth = req.get_header_value("Authorization");
@@ -345,7 +387,12 @@ inline bool lookupSession(const httplib::Request& req, Who& who, std::string& to
     tokenHash = sha256Hex(auth.substr(7));
     St q(*d, "SELECT u.id, u.username, u.email, u.owner FROM sessions s JOIN users u ON u.id = s.user WHERE s.token = ?");
     q.bind(1, tokenHash);
-    if (!q.row()) return false;
+    if (!q.row()) {
+        St e(*d, "SELECT reason FROM ended WHERE token = ?");
+        e.bind(1, tokenHash);
+        if (e.row()) why = e.s(0);
+        return false;
+    }
     who = {q.i(0), q.s(1), q.s(2), q.i(3) != 0};
     St t(*d, "UPDATE sessions SET seen = ? WHERE token = ?");
     t.bind(1, nowMs()).bind(2, tokenHash);
@@ -465,8 +512,8 @@ inline void registerRoutes(httplib::Server& svr, const std::string& accessKey) {
     auto guarded = [](std::function<void(const httplib::Request&, httplib::Response&, const Who&, const std::string&)> h) {
         return [h](const httplib::Request& req, httplib::Response& res) {
             Who who;
-            std::string tok;
-            if (!lookupSession(req, who, tok)) { fail(res, 401, "bad_session"); return; }
+            std::string tok, why;
+            if (!lookupSession(req, who, tok, why)) { fail(res, 401, why); return; }
             h(req, res, who, tok);
         };
     };

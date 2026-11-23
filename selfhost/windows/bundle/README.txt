@@ -25,7 +25,7 @@ ACCOUNTS (sign in, and sync history between devices)
   Double-click "Add a user.bat" for each person. In PEK TV they sign in under Settings > Account
   (or with "Sign in instead" on the pairing screen, which also pairs the device). Their watch history,
   resume points, favorites and profiles then sync between their devices through this PC.
-  pek-server.exe --list-users | --set-password <name> | --remove-user <name>
+  pek-server.exe --list-users | --set-password <name> | --sign-out <name> | --remove-user <name>
 
 RUN IN THE BACKGROUND, START WITH WINDOWS
   "Start with Windows (on).bat"   starts the server hidden each time you sign in

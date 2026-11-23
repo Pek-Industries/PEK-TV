@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'account_gate.dart';
 import 'activity.dart';
 import 'device_info.dart';
 
@@ -314,8 +315,52 @@ class Cloud {
     }
   }
 
+  /// The session was ended elsewhere: PEK Cloud's own expiry, or a self-hosted server's owner (accounts.h says which).
+  static const endedCodes = {'session_expired', 'account_removed', 'password_changed', 'signed_out_by_owner'};
+
+  /// This device is signed out because [code] says the session is over; the account gate tells the person why.
+  static Future<void> _endSession(String code) async {
+    await _unlink();
+    AccountGate.sessionEnded(code);
+  }
+
+  /// Signs out without asking the server (it is unreachable): this device forgets the session and the account's data.
+  static Future<void> signOutOffline() async {
+    await _unlink();
+    await Store.wipeAccountData();
+    Profiles.reload();
+    changes.value++;
+  }
+
+  /// Is the account's server there, and does it still take this session? 'ok', 'unreachable', 'ended' (signed out here and the
+  /// account gate told, or the account was deleted) or 'device_unpaired' (a self-hosted server with a new key). For AccountGate.
+  static Future<String> ping() async {
+    if (!linked) return 'ok';
+    try {
+      final r = await _request('GET', '/v1/me', withToken: true).timeout(const Duration(seconds: 10));
+      if (r.status == 200) return 'ok';
+      final code = _failure(r.status, r.body);
+      if (code == 'device_unpaired') {
+        ServerTarget.needsPairing.value = true;
+        return 'device_unpaired';
+      }
+      if (endedCodes.contains(code)) {
+        await _endSession(code);
+        return 'ended';
+      }
+      if (code == 'account_deleted') {
+        await _gone();
+        return 'ended';
+      }
+      return r.status >= 500 ? 'unreachable' : 'ok'; // anything else is an answer: it is there
+    } catch (_) {
+      return 'unreachable';
+    }
+  }
+
   static String _failure(int status, Map<String, dynamic> body) {
     final e = body['error'];
+    if (status == 401 && body['code'] == 'device_unpaired') return 'device_unpaired';
     if (status == 410 || e == 'account_deleted') return 'account_deleted';
     if (status == 401 && (e == null || e == 'bad_session')) return 'session_expired';
     if (status == 413) return 'too_large';
@@ -355,10 +400,13 @@ class Cloud {
       if (r.status == 200 && r.body['ok'] == true) return CloudResult(ok: true, status: 200, body: r.body);
       final e = r.body['error'];
       final code = (e is String && e.isNotEmpty && r.status != 401) ? e : _failure(r.status, r.body);
-      if (code == 'session_expired') await _unlink(); // signed out elsewhere or expired: ask to sign in again
+      if (endedCodes.contains(code)) await _endSession(code); // signed out elsewhere or expired: the gate says why
       if (code == 'account_deleted') await _gone();
+      if (code == 'device_unpaired') ServerTarget.needsPairing.value = true;
+      if (r.status >= 500) AccountGate.suspect();
       return CloudResult(ok: false, status: r.status, error: code, body: r.body);
     } catch (_) {
+      AccountGate.suspect();
       return const CloudResult(ok: false, error: 'offline');
     }
   }
@@ -618,12 +666,17 @@ class Cloud {
     final running = _inflight;
     if (running != null) return running;
     if (!linked) return Future.value(const CloudResult(ok: false, error: 'not_linked'));
+    // The account's server is unreachable and the app is behind the account gate: nothing to send it to. The gate syncs when it is back.
+    if (AccountGate.blocked) return Future.value(const CloudResult(ok: false, error: 'offline'));
     Activity.begin('sync', 'Syncing watch history\u2026');
     final f = _syncGuarded(light).catchError((Object _) => const CloudResult(ok: false, error: 'offline')).then((res) async {
       _inflight = null;
       Activity.end('sync', res.ok ? 'Sync complete' : (res.error == 'subscription_required' ? 'Cloud backup is off' : 'Sync failed'));
-      if (res.error == 'session_expired') await _unlink(); // signed out elsewhere or expired: ask to sign in again
-      if (res.error == 'account_deleted') await _gone();
+      final err = res.error;
+      if (endedCodes.contains(err)) await _endSession(err); // signed out elsewhere or expired: the gate says why
+      if (err == 'account_deleted') await _gone();
+      if (err == 'device_unpaired') ServerTarget.needsPairing.value = true;
+      if (err == 'offline' || err == 'server') AccountGate.suspect(); // down, or one dropped request: the gate checks twice
       return res;
     });
     _inflight = f;
@@ -647,7 +700,7 @@ class Cloud {
       if (!light) {
         final pr = await _syncProfiles();
         if (!pr.ok) {
-          if (pr.error == 'session_expired' || pr.error == 'account_deleted' || pr.error == 'rate_limited') { if (pr.error == 'account_deleted') await _gone(); return pr; }
+          if (endedCodes.contains(pr.error) || pr.error == 'device_unpaired' || pr.error == 'account_deleted' || pr.error == 'rate_limited') { if (pr.error == 'account_deleted') await _gone(); return pr; }
           // No profile support in the cloud yet: the original profile still works, the others must wait.
           if (pid != 'p1') return CloudResult(ok: false, error: pr.status == 404 ? 'cloud_outdated' : pr.error);
         }

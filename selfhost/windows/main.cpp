@@ -208,7 +208,7 @@ struct Options {
     std::string name;
     std::vector<std::string> media;
     bool newKey = false, noScan = false, hideConsole = false, pair = false, help = false, version = false;
-    std::string addUser, removeUser, setPassword, email;   // account commands (run, then exit)
+    std::string addUser, removeUser, setPassword, signOut, email;   // account commands (run, then exit)
     bool listUsers = false;
     int rescanMinutes = 60;
 };
@@ -229,6 +229,7 @@ static void usage() {
         "  --add-user <name>      make an account; asks for the password. The first one is the owner\n"
         "  --email <address>      with --add-user: lets them sign in with their email too\n"
         "  --set-password <name>  give an account a new password (signs it out everywhere)\n"
+        "  --sign-out <name>      sign an account out on every device (the account and its data stay)\n"
         "  --remove-user <name>   delete an account and everything it synced\n"
         "  --list-users           show the accounts\n\n"
         "  --rescan-minutes <n>   look for new files every n minutes, 0 = never (default 60)\n"
@@ -262,6 +263,7 @@ static bool parseArgs(int argc, wchar_t** argv, Options& o) {
         else if (a == "--add-user") { if (!next(v)) return false; o.addUser = trim(v); }
         else if (a == "--remove-user") { if (!next(v)) return false; o.removeUser = trim(v); }
         else if (a == "--set-password") { if (!next(v)) return false; o.setPassword = trim(v); }
+        else if (a == "--sign-out") { if (!next(v)) return false; o.signOut = trim(v); }
         else if (a == "--email") { if (!next(v)) return false; o.email = trim(v); }
         else if (a == "--list-users") o.listUsers = true;
         else if (a == "--no-scan") o.noScan = true;
@@ -372,6 +374,9 @@ static int accountCommand(const Options& opt) {
         if (pw.empty()) return 1;
         err = pekacct::setPassword(opt.setPassword, pw);
         if (err.empty()) std::cout << "New password set for " << opt.setPassword << "; it was signed out on every device." << std::endl;
+    } else if (!opt.signOut.empty()) {
+        err = pekacct::signOutUser(opt.signOut);
+        if (err.empty()) std::cout << opt.signOut << " is signed out on every device; PEK TV tells them so. They can sign in again." << std::endl;
     } else if (!opt.removeUser.empty()) {
         err = pekacct::removeUser(opt.removeUser);
         if (err.empty()) std::cout << "Account " << opt.removeUser << " and everything it synced are deleted." << std::endl;
@@ -406,7 +411,7 @@ int wmain(int argc, wchar_t** argv) {
     fs::create_directories(pathOf(opt.dataDir + "/skins"), ec);
     if (ec) { std::cerr << "Cannot create the data folder " << opt.dataDir << ": " << ec.message() << std::endl; return 1; }
 
-    if (opt.listUsers || !opt.addUser.empty() || !opt.removeUser.empty() || !opt.setPassword.empty())
+    if (opt.listUsers || !opt.addUser.empty() || !opt.removeUser.empty() || !opt.setPassword.empty() || !opt.signOut.empty())
         return accountCommand(opt);   // works whether the server is running or not (SQLite keeps them apart)
 
     static std::ofstream logFile;
