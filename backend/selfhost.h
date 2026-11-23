@@ -3,7 +3,8 @@
 // Only the stand-alone server (selfhost/linux, selfhost/windows) turns this on with pekself::enable(). In the apps it stays off:
 // the routes below are not registered and nothing changes.
 //
-//   GET  /api/server/info   no key needed. Who this is: {"app":"pek-server","name","id","version","pairing":bool}. The app's
+//   GET  /api/server/info   no key needed. Who this is: {"app":"pek-server","name","id","version","pairing":bool,"tmdb":bool,"subtitles":bool,
+//                           "platform":"windows|linux|termux|docker","update":"<newer version>" or ""}. The app's
 //                           Connect screen calls it to check an address really is a PEK Server before asking for a code.
 //   POST /api/pair          no key needed. Form field code=<6 digits>. Right code: {"ok":true,"key":"<access key>",...}, which the
 //                           app keeps and sends as X-Pek-Token from then on. Wrong code: 403. A code works for 10 minutes and dies
@@ -24,6 +25,8 @@
 
 #include "httplib.h"
 #include "accounts.h"   // username + password accounts and sync (self-hosted only)
+#include "tmdb_key.h"   // the owner's own TMDb key
+#include "server_update.h"   // "a newer PEK Server is out" (never updates by itself)
 
 namespace pekself {
 
@@ -119,6 +122,11 @@ inline std::string infoJson() {
     return std::string("{\"app\": \"pek-server\", \"name\": \"") + esc(s.info.name) + "\", \"id\": \"" + esc(s.info.id) +
            "\", \"version\": \"" + esc(s.info.version) + "\", \"port\": " + std::to_string(s.info.port) +
            ", \"pairing\": " + (codeOpen(s) ? "true" : "false") +
+           ", \"tmdb\": " + (pektmdb::key().empty() ? "false" : "true") +
+           ", \"platform\": \"" + pekupdate::platform() + "\", \"update\": \"" + pekupdate::available() + "\"" +
+#if defined(CPPHTTPLIB_OPENSSL_SUPPORT) && defined(PEK_SELFHOST_BUILD)
+           ", \"subtitles\": " + (peksubs::own::hasKey() ? "true" : "false") +
+#endif
            ", \"accounts\": " + (pekacct::userCount() > 0 ? "true" : "false") + "}";
 }
 

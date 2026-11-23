@@ -117,6 +117,8 @@ jobs:
         with:
           name: PEK-Server-termux
           path: dist
+      # What running servers read to say "a newer version is out" (they only check; they never update by themselves).
+      - run: echo "${{ needs.build.outputs.version }}" > dist/server-version-termux.txt
       - name: server-v${{ needs.build.outputs.version }}
         uses: softprops/action-gh-release@v2
         with:
@@ -150,8 +152,12 @@ jobs:
             - Windows on ARM: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-arm64.zip
             - Linux, NAS (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-x64.tar.gz
             - Raspberry Pi 4/5, ARM Linux: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-arm64.tar.gz
+            - Linux install or update in one line: `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-linux.sh | sudo bash`
+
+            Running servers check this release for new versions and tell their owner; they never update by themselves.
             - Android (Termux): `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
           files: |
             dist/PEK-Server-termux-*.tar.gz
             dist/PEK-Server-termux-*.tar.gz.sha256
             dist/install-termux.sh
+            dist/server-version-termux.txt

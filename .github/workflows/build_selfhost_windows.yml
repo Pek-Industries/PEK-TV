@@ -111,6 +111,8 @@ jobs:
             cp "$f" "$n"
             sha256sum "$n" > "$n.sha256"
           done
+          # What running servers read to say "a newer version is out" (they only check; they never update by themselves).
+          echo "$V" > server-version-windows.txt
           ls -l
       - name: server-v${{ needs.build.outputs.version }}
         uses: softprops/action-gh-release@v2
@@ -144,7 +146,11 @@ jobs:
             - Windows on ARM: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-arm64.zip
             - Linux, NAS (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-x64.tar.gz
             - Raspberry Pi 4/5, ARM Linux: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-arm64.tar.gz
+            - Linux install or update in one line: `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-linux.sh | sudo bash`
+
+            Running servers check this release for new versions and tell their owner; they never update by themselves.
             - Android (Termux): `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
           files: |
             dist/PEK-Server-windows-*.zip
             dist/PEK-Server-windows-*.zip.sha256
+            dist/server-version-windows.txt

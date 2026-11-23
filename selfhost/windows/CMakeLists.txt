@@ -29,7 +29,8 @@ add_executable(pek-server
     ${BACKEND}/torrent_routes.cpp
 )
 target_include_directories(pek-server PRIVATE ${BACKEND} ${COMPAT})
-target_compile_definitions(pek-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN
+# PEK_SELFHOST_BUILD: TMDb only with the owner's own key, never through PEK's proxy (backend/tmdb_key.h)
+target_compile_definitions(pek-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT PEK_SELFHOST_BUILD _WIN32_WINNT=0x0A00 NOMINMAX WIN32_LEAN_AND_MEAN
     PEK_SERVER_VERSION="${PEK_SERVER_VERSION}")
 target_compile_options(pek-server PRIVATE -include ${COMPAT}/pek_posix.h -Wno-deprecated-declarations)
 

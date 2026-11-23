@@ -201,4 +201,13 @@ const Map<String, String> stringsPt = {
   'Later': 'Depois',
   'This device was disconnected from {name}': 'Este dispositivo foi desconectado de {name}',
   'The server has a new access key, so every TV and phone has to connect to it again.': 'O servidor tem uma chave de acesso nova, então cada TV e celular precisa se conectar de novo.',
+  'PEK Server {version} is available (this one runs {current}).': 'O PEK Server {version} está disponível (este usa a {current}).',
+  'How to update': 'Como atualizar',
+  'Update PEK Server': 'Atualizar o PEK Server',
+  'PEK Server never updates by itself. Your library, accounts and settings are kept.': 'O PEK Server nunca se atualiza sozinho. Sua biblioteca, contas e ajustes são mantidos.',
+  'On the server PC, double-click "Update PEK Server.bat" in the PEK Server folder.': 'No PC do servidor, clique duas vezes em "Update PEK Server.bat" na pasta do PEK Server.',
+  'On the phone that runs the server, open Termux and run:': 'No celular que roda o servidor, abra o Termux e execute:',
+  'Rebuild the image, then start it again:': 'Recrie a imagem e depois inicie-a de novo:',
+  'On the server, run:': 'No servidor, execute:',
+  'If you start PEK Server yourself instead of as a service, run  pek-server --update  in its folder, then restart it.': 'Se você inicia o PEK Server por conta própria em vez de como serviço, execute  pek-server --update  na pasta dele e depois reinicie-o.',
 };

@@ -282,13 +282,15 @@ class ServerTarget {
 
 /// A PEK Server that answered (discovery or GET /api/server/info).
 class FoundServer {
-  const FoundServer({required this.address, required this.name, required this.id, required this.version, required this.pairing, this.accounts = false});
+  const FoundServer({required this.address, required this.name, required this.id, required this.version, required this.pairing, this.accounts = false, this.update = '', this.platform = ''});
   final String address;
   final String name;
   final String id;
   final String version;
   final bool pairing; // a code is open on it right now
   final bool accounts; // people can sign in with a username and password (and then do not need a pairing code)
+  final String update; // a newer PEK Server version the server found, or '' (servers only check; they never update by themselves)
+  final String platform; // windows | linux | termux | docker: how the owner updates it
 
   factory FoundServer.fromJson(Map<String, dynamic> j, String address) => FoundServer(
         address: address,
@@ -297,6 +299,8 @@ class FoundServer {
         version: '${j['version'] ?? ''}',
         pairing: j['pairing'] == true,
         accounts: j['accounts'] == true,
+        update: '${j['update'] ?? ''}',
+        platform: '${j['platform'] ?? ''}',
       );
 }
 

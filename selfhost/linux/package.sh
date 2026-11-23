@@ -26,5 +26,6 @@ cp "$FFPROBE" "$OUT/ffprobe"; chmod 755 "$OUT/ffprobe"
 curl -fsSL --retry 5 --retry-all-errors https://curl.se/ca/cacert.pem -o "$OUT/cacert.pem"
 cp selfhost/linux/install.sh selfhost/linux/uninstall.sh selfhost/linux/pek-server.service selfhost/linux/README.txt "$OUT/"
 chmod 755 "$OUT/pek-server" "$OUT/install.sh" "$OUT/uninstall.sh"
+cp selfhost/linux/install-linux.sh dist-selfhost/install-linux.sh   # published on its own to server-latest
 ( cd dist-selfhost && tar -czf "$NAME.tar.gz" "$NAME" && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
 ls -l dist-selfhost

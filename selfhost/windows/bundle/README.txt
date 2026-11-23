@@ -21,6 +21,16 @@ QUICK TEST (no app needed)
   On another device on the same Wi-Fi open  http://<address>:8080/api/movies?token=<key>
   and you should see your movies as text.
 
+TMDB (titles, posters, plots) - needs YOUR OWN free key: themoviedb.org > Settings > API
+  Double-click "Set TMDb key.bat", paste the key, then restart PEK Server.
+  Without a key only your own .nfo files and pictures are used.
+
+SUBTITLES - subtitle search needs YOUR OWN free OpenSubtitles key: https://www.opensubtitles.com/en/consumers
+  Double-click "Set subtitles key.bat", paste the key (and, if you like, your OpenSubtitles login), then restart PEK Server.
+
+UPDATES - PEK Server never updates by itself; it only tells you (log, and PEK TV's Settings > Library) when a new one is out.
+  Double-click "Update PEK Server.bat" when you want to update. Your library, accounts and settings are kept.
+
 ACCOUNTS (sign in, and sync history between devices)
   Double-click "Add a user.bat" for each person. In PEK TV they sign in under Settings > Account
   (or with "Sign in instead" on the pairing screen, which also pairs the device). Their watch history,

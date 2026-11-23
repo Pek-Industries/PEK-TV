@@ -201,4 +201,13 @@ const Map<String, String> stringsDe = {
   'Later': 'Später',
   'This device was disconnected from {name}': 'Dieses Gerät wurde von {name} getrennt',
   'The server has a new access key, so every TV and phone has to connect to it again.': 'Der Server hat einen neuen Zugangsschlüssel, daher muss sich jeder Fernseher und jedes Telefon neu verbinden.',
+  'PEK Server {version} is available (this one runs {current}).': 'PEK Server {version} ist verfügbar (dieser läuft mit {current}).',
+  'How to update': 'So aktualisierst du',
+  'Update PEK Server': 'PEK Server aktualisieren',
+  'PEK Server never updates by itself. Your library, accounts and settings are kept.': 'PEK Server aktualisiert sich nie von selbst. Deine Mediathek, Konten und Einstellungen bleiben erhalten.',
+  'On the server PC, double-click "Update PEK Server.bat" in the PEK Server folder.': 'Doppelklicke auf dem Server-PC im Ordner von PEK Server auf "Update PEK Server.bat".',
+  'On the phone that runs the server, open Termux and run:': 'Öffne auf dem Handy, auf dem der Server läuft, Termux und führe aus:',
+  'Rebuild the image, then start it again:': 'Baue das Image neu und starte es dann wieder:',
+  'On the server, run:': 'Führe auf dem Server aus:',
+  'If you start PEK Server yourself instead of as a service, run  pek-server --update  in its folder, then restart it.': 'Wenn du PEK Server selbst startest statt als Dienst, führe in seinem Ordner  pek-server --update  aus und starte ihn dann neu.',
 };

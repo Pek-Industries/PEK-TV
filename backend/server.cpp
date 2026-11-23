@@ -12,6 +12,7 @@
 #include "skin_install.h"
 #include "subtitles.h"
 #include "tmdb_match.h"
+#include "tmdb_key.h"   // the self-hosted server's own TMDb key
 #include "selfhost.h"
 #include <iostream>
 #include <fstream>
@@ -464,17 +465,27 @@ long long nowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// TMDb lookups go through our Cloudflare Worker, which holds the API key.
+#ifdef PEK_SELFHOST_BUILD
+// The self-hosted PEK Server (selfhost/*) never talks to PEK's TMDb proxy: PEK's key is for the apps only. It asks
+// api.themoviedb.org directly with the owner's own key (tmdb_key.h), and pictures come straight from image.tmdb.org.
+// This branch is compiled in, not switched at run time, so no setting or environment variable can point it at the proxy.
+static std::string tmdbHost() { return pektmdb::kApiHost; }
+static std::string tmdbImagePrefix() { return pektmdb::kImageBase; }
+#else
+// The apps: TMDb lookups go through our Cloudflare Worker, which holds the API key.
 // Override with the TMDB_PROXY_URL env var if needed.
 static std::string tmdbProxyUrl() {
     const char* env = std::getenv("TMDB_PROXY_URL");
     if (env && *env) return env;
     return "https://tmdb.pekindustries.com";
 }
-
+static std::string tmdbHost() { return tmdbProxyUrl(); }
 // Posters and stills come from the same worker (it caches them at the edge): /t/p/<size>/<file> like image.tmdb.org.
+static std::string tmdbImagePrefix() { return tmdbProxyUrl() + "/t/p/"; }
+#endif
+
 static std::string tmdbImageUrl(const char* size, const std::string& path) {
-    return tmdbProxyUrl() + "/t/p/" + size + path;
+    return tmdbImagePrefix() + size + path;
 }
 
 } // namespace
@@ -516,6 +527,21 @@ static bool tmdbSearch(const std::string& path, std::string& body, bool fresh = 
         if (it != g_tmdbCache.end() && now - it->second.first < 6LL * 3600 * 1000) { body = it->second.second; return true; }
     }
     if (now < g_tmdbBlockedUntil.load()) return false;   // the Worker said "too many requests": wait it out
+#ifdef PEK_SELFHOST_BUILD
+    // Self-hosted: only with the owner's own key. None set: no TMDb at all (titles, posters and plots then come from the
+    // owner's own .nfo files and pictures, and from the file names). Said once in the log.
+    const std::string ownKey = pektmdb::key();
+    if (ownKey.empty()) {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true))
+            std::cout << "[PEK Server] No TMDb key: posters and titles come only from your own files. Get a free key at "
+                      << pektmdb::kSignUp << " and run  pek-server --tmdb-key <key>" << std::endl;
+        return false;
+    }
+    const std::string wire = pektmdb::apiPath(path, ownKey);
+#else
+    const std::string& wire = path;
+#endif
     // Connections to the Worker are kept in one shared pool, not per thread: the server's worker threads are dropped after 3 s
     // idle, and a thread_local connection died with its thread, so the next look-up paid a full TLS handshake again (the
     // slow first posters after the app had been quiet for a moment).
@@ -526,13 +552,16 @@ static bool tmdbSearch(const std::string& path, std::string& body, bool fresh = 
             if (!g_tmdbClients.empty()) { client = std::move(g_tmdbClients.back()); g_tmdbClients.pop_back(); }
         }
         if (!client) {
-            client = std::make_unique<httplib::Client>(tmdbProxyUrl());
+            client = std::make_unique<httplib::Client>(tmdbHost());
             applyTls(*client);
+#ifdef PEK_SELFHOST_BUILD
+            pektmdb::authorize(*client, ownKey);
+#endif
             client->set_keep_alive(true);
             client->set_connection_timeout(5);
             client->set_read_timeout(8);
         }
-        auto r = client->Get(path.c_str());
+        auto r = client->Get(wire.c_str());
         if (r && r->status == 200) {
             body = r->body;
             {
@@ -1878,7 +1907,7 @@ void PekServer::start(int port, const std::string& plugins_dir,
         pin.poster = req.get_param_value("poster");
         pin.overview = req.get_param_value("overview");
         // Only a picture from the TMDb proxy can be stored: this is not a way to point the grid at some other address.
-        const std::string posterPrefix = tmdbProxyUrl() + "/t/p/";
+        const std::string posterPrefix = tmdbImagePrefix();
         if (!pin.poster.empty() && pin.poster.compare(0, posterPrefix.size(), posterPrefix) != 0) pin.poster.clear();
         const bool movie = kind == "movie";
         // The person's own files still win (poster.jpg / .nfo plot next to the video), as everywhere else.
@@ -1960,18 +1989,14 @@ void PekServer::start(int port, const std::string& plugins_dir,
         std::string imdb;
         { std::lock_guard<std::mutex> lk(g_skip_mu); auto it = g_imdb_by_show.find(showKey); if (it != g_imdb_by_show.end()) imdb = it->second; }
         if (imdb.empty()) {
-            httplib::Client tm(tmdbProxyUrl());
-            applyTls(tm);
-            tm.set_connection_timeout(5);
-            tm.set_read_timeout(6);
             std::string skipBase, skipTmdb; int skipYear = 0;
             splitShowGuess(show, skipBase, skipYear, skipTmdb);
             const TmdbPick tvPick = tmdbPickShow(skipBase, skipYear, skipTmdb, scanner->episodeNumbersForShow(show));
             if (!tvPick.ok) { reply(false, "", ""); return; }
             const std::string tvId = tvPick.id;
-            auto s2 = tm.Get(("/tv/" + tvId + "?append_to_response=external_ids").c_str());
-            if (!s2 || s2->status != 200) { reply(false, "", ""); return; }
-            imdb = extractJsonString(s2->body, "imdb_id");
+            std::string tvBody;   // same pool, cache and key rules as every other TMDb look-up
+            if (!tmdbSearch("/tv/" + tvId + "?append_to_response=external_ids", tvBody)) { reply(false, "", ""); return; }
+            imdb = extractJsonString(tvBody, "imdb_id");
             if (imdb.empty()) { reply(false, "", ""); return; }
             std::lock_guard<std::mutex> lk(g_skip_mu);
             g_imdb_by_show[showKey] = imdb;

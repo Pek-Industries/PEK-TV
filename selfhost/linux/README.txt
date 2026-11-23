@@ -12,6 +12,17 @@ CONNECT A TV / PHONE
   then type the pairing code. A code works for 10 minutes, for one device. New code:  /opt/pek-server/pek-server --pair
   (Docker:  docker exec pek-server pek-server --pair). Typing the access key instead of a code works too.
 
+TMDB (titles, posters, plots) - needs YOUR OWN free key: themoviedb.org > Settings > API
+  sudo -u pek /opt/pek-server/pek-server --data /var/lib/pek-server --tmdb-key <key>    then: sudo systemctl restart pek-server
+  (or TMDB_API_KEY in the service / Docker). Without a key only your own .nfo files and pictures are used.
+
+SUBTITLES - subtitle search needs YOUR OWN free OpenSubtitles key: https://www.opensubtitles.com/en/consumers
+  sudo -u pek /opt/pek-server/pek-server --data /var/lib/pek-server --subtitles-key <key>   (optional: --subtitles-user <name>)
+  then: sudo systemctl restart pek-server   (or OPENSUBTITLES_API_KEY in the service / Docker)
+
+UPDATES - PEK Server never updates by itself; it only tells you (log, and PEK TV's Settings > Library) when a new one is out.
+  sudo /opt/pek-server/pek-server --update      (a copy you start yourself: pek-server --update in its folder, then restart)
+
 ACCOUNTS (sign in, and sync history between devices)
   /opt/pek-server/pek-server --add-user alice      (asks for the password; the first account is the owner)
   In PEK TV: Settings > Account > Sign in. --list-users | --set-password <name> | --sign-out <name> | --remove-user <name>

@@ -19,6 +19,7 @@ class LibraryServerSection extends StatefulWidget {
 
 class _LibraryServerSectionState extends State<LibraryServerSection> {
   bool _checking = false;
+  FoundServer? _info; // version / "a newer version is out" from GET /api/server/info
 
   @override
   void initState() {
@@ -29,7 +30,57 @@ class _LibraryServerSectionState extends State<LibraryServerSection> {
   Future<void> _recheck() async {
     setState(() => _checking = true);
     await ServerTarget.check();
-    if (mounted) setState(() => _checking = false);
+    FoundServer? info;
+    if (ServerTarget.reachable.value) {
+      try {
+        info = await ServerTarget.probe(ServerTarget.address);
+      } catch (_) {}
+    }
+    if (mounted) setState(() { _checking = false; _info = info; });
+  }
+
+  /// The server only tells us a newer version is out; updating is the owner's choice, done on the server itself.
+  Future<void> _howToUpdate(FoundServer info) async {
+    final p = context.pek;
+    final String intro;
+    final List<String> commands;
+    String extra = '';
+    switch (info.platform) {
+      case 'windows':
+        intro = 'On the server PC, double-click "Update PEK Server.bat" in the PEK Server folder.'.tr;
+        commands = const [];
+      case 'termux':
+        intro = 'On the phone that runs the server, open Termux and run:'.tr;
+        commands = const ['pek-server --update'];
+      case 'docker':
+        intro = 'Rebuild the image, then start it again:'.tr;
+        commands = const ['docker compose build --pull', 'docker compose up -d'];
+      default:
+        intro = 'On the server, run:'.tr;
+        commands = const ['sudo /opt/pek-server/pek-server --update'];
+        extra = 'If you start PEK Server yourself instead of as a service, run  pek-server --update  in its folder, then restart it.'.tr;
+    }
+    await showDialog<void>(
+      context: context,
+      barrierColor: p.tokens.overlay,
+      builder: (c) => AlertDialog(
+        backgroundColor: p.tokens.glassStrong,
+        title: Text('Update PEK Server'.tr),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('PEK Server {version} is available (this one runs {current}).'.trp({'version': info.update, 'current': info.version})),
+          SizedBox(height: p.rem),
+          Text(intro),
+          for (final cmd in commands) ...[
+            SizedBox(height: 0.5 * p.rem),
+            SelectableText(cmd, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600)),
+          ],
+          if (extra.isNotEmpty) ...[SizedBox(height: p.rem), Text(extra, style: TextStyle(color: p.tokens.textMuted))],
+          SizedBox(height: p.rem),
+          Text('PEK Server never updates by itself. Your library, accounts and settings are kept.'.tr, style: TextStyle(color: p.tokens.textMuted)),
+        ]),
+        actions: [TextButton(autofocus: true, onPressed: () => Navigator.pop(c), child: Text('Done'.tr))],
+      ),
+    );
   }
 
   Future<void> _connect() => openServerConnect(context);
@@ -112,6 +163,8 @@ class _LibraryServerSectionState extends State<LibraryServerSection> {
         } else {
           status = 'Connected'.tr;
         }
+        final info = _info;
+        final update = info != null && info.update.isNotEmpty && !_checking ? info : null;
         return Section(
           title: 'Library server'.tr,
           hint: 'Movies, shows and music come from your PEK Server. Plugins and skins stay on this device.'.tr,
@@ -122,6 +175,13 @@ class _LibraryServerSectionState extends State<LibraryServerSection> {
               subtitle: '${ServerTarget.address} · $status',
               onTap: _recheck,
             ),
+            if (update != null)
+              ListRow(
+                leading: Icon(Icons.system_update_alt, color: p.tokens.accent),
+                title: 'PEK Server {version} is available (this one runs {current}).'.trp({'version': update.update, 'current': update.version}),
+                subtitle: 'How to update'.tr,
+                onTap: () => _howToUpdate(update),
+              ),
             SizedBox(height: 0.5 * rem),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (ServerTarget.needsPairing.value) PekButton(label: 'Pair again'.tr, primary: true, onTap: _connect),

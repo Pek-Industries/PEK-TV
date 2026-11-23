@@ -14,6 +14,10 @@ services:
     hostname: pek-server            # the name the app shows; or set PEK_NAME below
     # environment:
     #   PEK_NAME: "Living room server"     # the name the app shows (default: the container's host name)
+    #   TMDB_API_KEY: "your own key"       # titles, posters, plots (free: https://www.themoviedb.org/settings/api)
+    #   OPENSUBTITLES_API_KEY: "your own key"   # subtitle search (free: https://www.opensubtitles.com/en/consumers)
+    #   OPENSUBTITLES_USER: "name"         # optional, more downloads a day; with OPENSUBTITLES_PASSWORD
+    #   OPENSUBTITLES_PASSWORD: "password"
     ports:
       - "8080:8080"
       - "8768:8768/udp"

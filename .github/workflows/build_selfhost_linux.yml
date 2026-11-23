@@ -68,6 +68,7 @@ jobs:
           path: |
             dist-selfhost/*.tar.gz
             dist-selfhost/*.sha256
+            dist-selfhost/install-linux.sh
           if-no-files-found: error
           retention-days: 30
 
@@ -101,6 +102,8 @@ jobs:
             cp "$f" "$n"
             sha256sum "$n" > "$n.sha256"
           done
+          # What running servers read to say "a newer version is out" (they only check; they never update by themselves).
+          echo "$V" > server-version-linux.txt
           ls -l
       - name: server-v${{ needs.build.outputs.version }}
         uses: softprops/action-gh-release@v2
@@ -134,7 +137,12 @@ jobs:
             - Windows on ARM: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-windows-arm64.zip
             - Linux, NAS (Intel / AMD): https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-x64.tar.gz
             - Raspberry Pi 4/5, ARM Linux: https://github.com/${{ github.repository }}/releases/download/server-latest/PEK-Server-linux-arm64.tar.gz
+            - Linux install or update in one line: `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-linux.sh | sudo bash`
+
+            Running servers check this release for new versions and tell their owner; they never update by themselves.
             - Android (Termux): `curl -fsSL https://github.com/${{ github.repository }}/releases/download/server-latest/install-termux.sh | bash`
           files: |
             dist/PEK-Server-linux-*.tar.gz
             dist/PEK-Server-linux-*.tar.gz.sha256
+            dist/server-version-linux.txt
+            dist/install-linux.sh

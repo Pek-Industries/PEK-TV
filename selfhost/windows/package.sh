@@ -17,7 +17,7 @@ cp build/selfhost/pek-server.exe "$OUT/"
 cp windows/ffmpeg/ffprobe.exe "$OUT/"
 curl -fsSL --retry 5 --retry-all-errors https://curl.se/ca/cacert.pem -o "$OUT/cacert.pem"
 cp build/selfhost/deps/*.dll "$OUT/"      # OpenSSL, SQLite ... (collect-deps.sh)
-cp selfhost/windows/bundle/*.bat "$OUT/"
+cp selfhost/windows/bundle/*.bat selfhost/windows/bundle/*.ps1 "$OUT/"
 cp selfhost/windows/bundle/README.txt "$OUT/"
 ( cd dist-selfhost && 7z a -tzip -mx=9 "$NAME.zip" "$NAME" >/dev/null && sha256sum "$NAME.zip" > "$NAME.zip.sha256" )
 ls -l dist-selfhost

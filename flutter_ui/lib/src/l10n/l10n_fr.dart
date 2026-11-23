@@ -201,4 +201,13 @@ const Map<String, String> stringsFr = {
   'Later': 'Plus tard',
   'This device was disconnected from {name}': 'Cet appareil a été déconnecté de {name}',
   'The server has a new access key, so every TV and phone has to connect to it again.': 'Le serveur a une nouvelle clé d’accès : chaque téléviseur et téléphone doit s’y reconnecter.',
+  'PEK Server {version} is available (this one runs {current}).': 'PEK Server {version} est disponible (celui-ci utilise la {current}).',
+  'How to update': 'Comment mettre à jour',
+  'Update PEK Server': 'Mettre à jour PEK Server',
+  'PEK Server never updates by itself. Your library, accounts and settings are kept.': 'PEK Server ne se met jamais à jour tout seul. Votre bibliothèque, vos comptes et vos réglages sont conservés.',
+  'On the server PC, double-click "Update PEK Server.bat" in the PEK Server folder.': 'Sur le PC serveur, double-cliquez sur "Update PEK Server.bat" dans le dossier de PEK Server.',
+  'On the phone that runs the server, open Termux and run:': 'Sur le téléphone qui fait tourner le serveur, ouvrez Termux et lancez :',
+  'Rebuild the image, then start it again:': 'Reconstruisez l’image, puis relancez-la :',
+  'On the server, run:': 'Sur le serveur, lancez :',
+  'If you start PEK Server yourself instead of as a service, run  pek-server --update  in its folder, then restart it.': 'Si vous lancez PEK Server vous-même plutôt qu’en service, lancez  pek-server --update  dans son dossier, puis redémarrez-le.',
 };

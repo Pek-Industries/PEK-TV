@@ -16,6 +16,15 @@ CONNECT A TV / PHONE
   e.g. 192.168.1.30:8090), then type the 6-digit code. A code works 10 minutes, for one device.
   New code:  pek-server --pair
 
+TMDB (titles, posters, plots) - needs YOUR OWN free key: themoviedb.org > Settings > API
+  pek-server --tmdb-key <key>         then restart the server. Without a key only your own .nfo files and pictures are used.
+
+SUBTITLES - subtitle search needs YOUR OWN free OpenSubtitles key: https://www.opensubtitles.com/en/consumers
+  pek-server --subtitles-key <key>    (optional: --subtitles-user <name>), then restart the server.
+
+UPDATES - PEK Server never updates by itself; it only tells you (log, and PEK TV's Settings > Library) when a new one is out.
+  pek-server --update      (or run the install line again)
+
 ACCOUNTS (sign in, and sync history between devices)
   pek-server --add-user alice          asks for the password; the first account is the owner
   In PEK TV: Settings > Account > Sign in.   Also: --list-users, --set-password <name>, --sign-out <name>, --remove-user <name>

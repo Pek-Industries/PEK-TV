@@ -47,7 +47,8 @@ add_executable(pek-server
     ${BACKEND}/torrent_routes.cpp
 )
 target_include_directories(pek-server PRIVATE ${BACKEND} ${OPENSSL_ROOT}/include)
-target_compile_definitions(pek-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT _FILE_OFFSET_BITS=64 PEK_SERVER_VERSION="${PEK_SERVER_VERSION}")
+# PEK_SELFHOST_BUILD: TMDb only with the owner's own key, never through PEK's proxy (backend/tmdb_key.h)
+target_compile_definitions(pek-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT PEK_SELFHOST_BUILD _FILE_OFFSET_BITS=64 PEK_SERVER_VERSION="${PEK_SERVER_VERSION}")
 target_compile_options(pek-server PRIVATE -Wno-deprecated-declarations)
 
 # The pinned official plugin-signing keys, same parsing as the other builds (server.cpp needs PEK_OFFICIAL_KEYS).

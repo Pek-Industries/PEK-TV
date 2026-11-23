@@ -48,6 +48,7 @@
 #include "selfhost.h"          // /api/server/info + pairing codes
 #include "accounts.h"          // username + password accounts and sync
 #include "selfhost_beacon.h"   // found by the app's Connect screen (UDP 8768)
+#include "tmdb_key.h"          // the owner's own TMDb key (never PEK's)
 
 #ifndef PEK_SERVER_VERSION
 #define PEK_SERVER_VERSION "dev"
@@ -198,6 +199,10 @@ struct Options {
     bool newKey = false, noScan = false, printKey = false, pair = false, help = false, version = false;
     std::string addUser, removeUser, setPassword, signOut, email;   // account commands (run, then exit)
     bool listUsers = false;
+    std::string tmdbKey;   // --tmdb-key <key | off> (run, then exit)
+    bool tmdbKeySet = false;
+    bool noUpdateCheck = false, checkUpdate = false, update = false, yes = false;   // update check (never automatic)
+    std::string subsKey, subsUser;   // --subtitles-key <key | off> / --subtitles-user <name> (run, then exit)
     int rescanMinutes = 60;
 };
 
@@ -221,8 +226,18 @@ static void usage() {
         "  --sign-out <name>      sign an account out on every device (the account and its data stay)\n"
         "  --remove-user <name>   delete an account and everything it synced\n"
         "  --list-users           show the accounts\n\n"
+        "  Titles, posters and plots from TMDb need your own free TMDb key (" + std::string(pektmdb::kSignUp) + "):\n"
+        "  --tmdb-key <key>       save and test your key (or TMDB_API_KEY); --tmdb-key off removes it. Restart after.\n"
+        "                         Without a key, only your own .nfo files and pictures are used.\n"
+        "  Subtitle search needs your own free OpenSubtitles API key (" + std::string(peksubs::own::kSignUp) + "):\n"
+        "  --subtitles-key <key>  save and test it (or OPENSUBTITLES_API_KEY); --subtitles-key off removes it and the login\n"
+        "  --subtitles-user <name> optional: your OpenSubtitles account, for more downloads a day (asks for the password)\n\n"
         "  --rescan-minutes <n>   look for new files every n minutes, 0 = never (default 60)\n"
         "  --no-scan              do not scan at start-up\n"
+        "  Updates (PEK Server only checks; it never updates by itself):\n"
+        "  --check-update         say whether a newer PEK Server is out\n"
+        "  --update [--yes]       download, check and install the newest version, after asking (Linux service: run with sudo)\n"
+        "  --no-update-check      do not look for new versions (or PEK_NO_UPDATE_CHECK=1)\n\n"
         "  --version, --help\n";
 }
 
@@ -255,6 +270,13 @@ static bool parseArgs(int argc, char** argv, Options& o) {
         else if (a == "--sign-out") { if (!next(v)) return false; o.signOut = trim(v); }
         else if (a == "--email") { if (!next(v)) return false; o.email = trim(v); }
         else if (a == "--list-users") o.listUsers = true;
+        else if (a == "--subtitles-key") { if (!next(v)) return false; o.subsKey = trim(v); if (o.subsKey.empty()) o.subsKey = "off"; }
+        else if (a == "--subtitles-user") { if (!next(v)) return false; o.subsUser = trim(v); }
+        else if (a == "--no-update-check") o.noUpdateCheck = true;
+        else if (a == "--check-update") o.checkUpdate = true;
+        else if (a == "--update") o.update = true;
+        else if (a == "--yes" || a == "-y") o.yes = true;
+        else if (a == "--tmdb-key") { if (!next(v)) return false; o.tmdbKey = trim(v); o.tmdbKeySet = true; }
         else if (a == "--no-scan") o.noScan = true;
         else if (a == "--rescan-minutes") { if (!next(v)) return false; o.rescanMinutes = (std::max)(0, atoi(v.c_str())); }
         else { std::cerr << "Unknown option: " << a << "  (try --help)" << std::endl; return false; }
@@ -379,6 +401,41 @@ static int accountCommand(const Options& opt) {
     return 0;
 }
 
+/// --check-update / --update. Never runs on its own: the owner asks for it, and --update asks again before changing anything.
+static int updateCommand(const Options& opt) {
+    const fs::path here = exeDir();
+    std::error_code ec;
+    if (fs::exists(here / "cacert.pem", ec)) setenv("SSL_CERT_FILE", (here / "cacert.pem").c_str(), 0);
+    pekupdate::setCurrent(PEK_SERVER_VERSION);
+    bool ok = false;
+    const std::string v = pekupdate::checkNow(&ok);
+    if (!ok) { std::cerr << "Could not read the newest version from GitHub (no internet, or nothing published yet)." << std::endl; return 1; }
+    if (v.empty()) { std::cout << "PEK Server " PEK_SERVER_VERSION " is the newest version." << std::endl; return 0; }
+    std::cout << "PEK Server " << v << " is available (this is " PEK_SERVER_VERSION ")." << std::endl;
+    if (!opt.update) { std::cout << pekupdate::howTo() << std::endl; return 0; }
+    const std::string p = pekupdate::platform();
+    if (p == "docker") { std::cout << pekupdate::howTo() << std::endl; return 0; }
+    std::string cmd;
+#ifdef __ANDROID__
+    cmd = "curl -fsSL '" + pekupdate::base() + "/install-termux.sh' | PEK_BASE='" + pekupdate::base() + "' bash";
+#else
+    const bool service = here == fs::path("/opt/pek-server");
+    if (service && geteuid() != 0) { std::cerr << "Run it as root:  sudo /opt/pek-server/pek-server --update" << std::endl; return 1; }
+    if (!service && access(here.c_str(), W_OK) != 0) { std::cerr << "This folder cannot be written to: " << here.string() << std::endl; return 1; }
+    cmd = "curl -fsSL '" + pekupdate::base() + "/install-linux.sh' | PEK_BASE='" + pekupdate::base() + "' bash" + (service ? std::string() : " -s -- --into '" + here.string() + "'");
+#endif
+    if (!opt.yes) {
+        std::cout << "Update now? Your library, accounts and settings are kept. [y/N] " << std::flush;
+        std::string a;
+        std::getline(std::cin, a);
+        if (a != "y" && a != "Y" && a != "yes") { std::cout << "Nothing was changed." << std::endl; return 0; }
+    }
+    // exec, not system(): the installer stops the running server by its path, and must not find this process.
+    execlp("bash", "bash", "-c", cmd.c_str(), static_cast<char*>(nullptr));
+    std::cerr << "Could not start bash: " << std::strerror(errno) << std::endl;
+    return 1;
+}
+
 static std::string defaultDataDir() {
 #ifndef __ANDROID__
     if (geteuid() == 0) return "/var/lib/pek-server";   // Termux (even with su) keeps everything in its home folder
@@ -428,6 +485,17 @@ int main(int argc, char** argv) {
     const bool remote = opt.bind != "127.0.0.1";
     if (opt.listUsers || !opt.addUser.empty() || !opt.removeUser.empty() || !opt.setPassword.empty() || !opt.signOut.empty())
         return accountCommand(opt);   // works whether the server is running or not (SQLite keeps them apart)
+    if (opt.checkUpdate || opt.update) return updateCommand(opt);   // no log, no server
+    if (opt.tmdbKeySet)   // no log, no server: test and save the key
+        return pektmdb::command(opt.dataDir, opt.tmdbKey, (exeDir() / "cacert.pem").string(), std::cout, std::cerr);
+    if (!opt.subsKey.empty() || !opt.subsUser.empty()) {   // no log, no server: test and save the OpenSubtitles key / login
+        if (fs::exists(exeDir() / "cacert.pem")) setenv("SSL_CERT_FILE", (exeDir() / "cacert.pem").c_str(), 0);
+        std::string pw;
+        if (!opt.subsUser.empty()) { pw = envOr("PEK_PASSWORD"); if (pw.empty()) pw = readSecret("OpenSubtitles password: "); }
+        const int rc = peksubs::own::command(opt.dataDir, opt.subsKey, opt.subsUser, pw, std::cout, std::cerr);
+        ownerOnly(fs::path(peksubs::own::fileIn(opt.dataDir)));
+        return rc;
+    }
 
     if (opt.printKey) {   // no log, no server: just the key
         bool made = false;
@@ -480,6 +548,10 @@ int main(int argc, char** argv) {
         pekacct::open(opt.dataDir + "/accounts.db");   // accounts + sync (/v1/...); logs why when it cannot
         pekself::enable(si);   // before PekServer::start: it registers /api/server/info and /api/pair when this is on
     }
+    pektmdb::setKey(pektmdb::load(opt.dataDir));
+    peksubs::own::set(peksubs::own::load(opt.dataDir));
+    pekupdate::setCurrent(PEK_SERVER_VERSION);
+    if (!opt.noUpdateCheck) pekupdate::start(PEK_SERVER_VERSION, []() { return g_stop != 0; });   // only looks; never updates   // the owner's own OpenSubtitles key: PEK's shared account is never used here   // the owner's own key, or none: PEK's TMDb proxy is never used here
     setenv("PEK_BIND", opt.bind.c_str(), 1);
 
     if (portTaken(opt.bind, opt.port)) {
@@ -579,6 +651,13 @@ int main(int argc, char** argv) {
     } else {
         info << "Local only: http://127.0.0.1:" << port << "  (no other device can connect)\n";
     }
+    if (pektmdb::key().empty())
+        info << "\nTMDb: no key, so posters and titles come only from your own .nfo files and pictures.\n"
+             << "  Get a free key at " << pektmdb::kSignUp << " then run  pek-server --tmdb-key <key>\n";
+    else info << "\nTMDb: using your own key.\n";
+    if (!peksubs::own::hasKey())
+        info << "Subtitles: no OpenSubtitles key, so subtitle search is off. Free key: " << peksubs::own::kSignUp << "  then: pek-server --subtitles-key <key>\n";
+    else info << "Subtitles: using your own OpenSubtitles key" << (peksubs::own::get().user.empty() ? "" : " and account") << ".\n";
     info << "\nData folder: " << opt.dataDir << "\nLog:         " << opt.dataDir << "/server.log\n";
     std::cout << "\n" << info.str() << std::endl;
     {

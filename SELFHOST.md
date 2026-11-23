@@ -98,6 +98,58 @@ session. 10 wrong passwords from one address mean 15 minutes' wait. Sync is last
 items a page, like PEK Cloud. **Back up `accounts.db`** with the rest of the data folder: unlike the library database it cannot
 be rebuilt by a rescan, so the server never replaces it when it cannot be read (accounts then stay off and the log says why).
 
+## TMDb: your own key (Windows, Linux, Termux)
+PEK Server gets titles, posters and plots from TMDb with **the owner's own free TMDb key**. PEK's key (behind
+`tmdb.pekindustries.com`) is for the PEK TV apps only: the server is built with `PEK_SELFHOST_BUILD`, which compiles the proxy
+out, so no setting or environment variable can point a PEK Server at it. It talks to `api.themoviedb.org` and `image.tmdb.org`
+directly.
+
+Get a key: sign in at themoviedb.org, **Settings > API**, and copy the **API Key** (32 letters) or the **API Read Access Token**
+(long, starts with `eyJ`). Either works. Then:
+```
+pek-server --tmdb-key <key>      # tests it with TMDb and saves it in the data folder (tmdb-key.txt). Restart the server.
+pek-server --tmdb-key off        # removes it
+```
+Windows: double-click **Set TMDb key.bat**. Docker / systemd: set `TMDB_API_KEY` (it wins over the saved file).
+
+Without a key the server still works: titles, posters and plots come from the owner's own `.nfo` files and pictures and from the
+file names, and the TMDb look-ups (Fix match, posters for unmatched titles, TMDb rows from plugins, skip-intro look-up) are off.
+The start-up message says which it is, and `/api/server/info` answers `"tmdb": true/false`.
+
+## Subtitles: your own OpenSubtitles key (Windows, Linux, Termux)
+Subtitle search works the same way: the PEK TV apps use PEK's shared OpenSubtitles account (through `api.pekindustries.com`),
+but PEK Server is built without that path and asks `api.opensubtitles.com` with **the owner's own free API key**.
+
+Make a key: sign in at opensubtitles.com, open **API consumers** (https://www.opensubtitles.com/en/consumers), create one and copy
+its key. Then:
+```
+pek-server --subtitles-key <key>     # tests and saves it (data folder, opensubtitles.txt). Restart the server.
+pek-server --subtitles-user <name>   # optional: your OpenSubtitles account (asks for the password) for more downloads a day
+pek-server --subtitles-key off       # removes the key and the login
+```
+Windows: double-click **Set subtitles key.bat**. Docker / systemd: `OPENSUBTITLES_API_KEY` (and optionally `OPENSUBTITLES_USER`,
+`OPENSUBTITLES_PASSWORD`). The password is kept in plain text in the data folder (owner-only on Linux / Termux), like the access key.
+Without a key, subtitle search answers with a message saying how to set one; `/api/server/info` answers `"subtitles": true/false`.
+
+## Updating (the server checks; the owner updates)
+PEK Server **never updates by itself**. A few minutes after it starts, and then twice a day, it reads one small file from the
+`server-latest` release (`server-version-windows.txt`, `-linux.txt` or `-termux.txt`, written by the build workflows when they
+publish) and remembers whether a newer version is out. It writes that to its log, answers `"update":"<version>"` in
+`/api/server/info`, and PEK TV shows it under **Settings > Library > Library server** with the steps for that server. Turn the
+check off with `--no-update-check` or `PEK_NO_UPDATE_CHECK=1`. `pek-server --check-update` checks right now.
+
+When the owner chooses to update:
+- **Windows:** double-click **Update PEK Server.bat**. It downloads the zip for this PC's CPU, checks its checksum, stops the
+  server, replaces the program files in the folder and starts it again if it was running.
+- **Linux service:** `sudo /opt/pek-server/pek-server --update` (asks first; `--yes` skips the question). It runs
+  `install-linux.sh` from `server-latest`, which downloads, checks and re-runs `install.sh` (keeps `/etc/pek-server.env`, restarts
+  the service). The same script installs from scratch: `curl -fsSL https://github.com/Pek-Industries/PEK-TV/releases/download/server-latest/install-linux.sh | sudo bash`.
+- **Linux, started by hand:** `pek-server --update` in its folder replaces the files there; restart it afterwards.
+- **Termux:** `pek-server --update` (runs `install-termux.sh`, which stops, replaces and restarts it).
+- **Docker:** `docker compose build --pull && docker compose up -d`.
+
+Library, accounts and settings live in the data folder and are kept every time.
+
 ## Version 1: what is not there yet
 - **Continue watching from before pairing** points at the old library's files; items started on the server work as usual.
 - **DVD images and VIDEO_TS folders on the server** are listed but do not play yet (the player opens them as a local path).
